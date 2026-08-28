@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 
@@ -46,3 +46,14 @@ next-env.d.ts
 
 # tooling artifacts
 /.claude/tdd-guard/data
+
+# Demo assets copied out of node_modules by `prepare:assets`.
+/examples/*/public/cmaps/
+/examples/*/public/standard_fonts/
+/examples/*/public/pdf.worker.min.mjs
+
+# This repo standardises on pnpm; other lockfiles are incidental.
+bun.lock
+bun.lockb
+package-lock.json
+yarn.lock

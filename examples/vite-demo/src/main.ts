@@ -1,10 +1,13 @@
-import { Pipeline, configure, type Row } from '@stabrise/scaledp'
+import { DataToImage, Pipeline, configure, type Row } from '@stabrise/scaledp'
 import { PdfToImage } from '@stabrise/scaledp/pdf'
-import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import {
+    PaddleTextRecognizer,
+    isCrossOriginIsolated,
+    isWebGpuAvailable,
+} from '@stabrise/scaledp/ocr'
 import { GlinerNer } from '@stabrise/scaledp/ner'
-import { DataToImage } from '@stabrise/scaledp'
-import { isCrossOriginIsolated, isWebGpuAvailable } from '@stabrise/scaledp/ocr'
 
+const progressEl = document.getElementById('progress') as HTMLElement
 const statusEl = document.getElementById('status') as HTMLElement
 const timingsEl = document.getElementById('timings') as HTMLElement
 const entitiesEl = document.getElementById('entities') as HTMLElement
@@ -28,10 +31,19 @@ async function setup() {
             cMapUrl: '/cmaps/',
             standardFontDataUrl: '/standard_fonts/',
         },
-        onProgress: ({ file, loaded, total }) => {
-            if (total > 0) {
-                statusEl.textContent = `downloading ${file}: ${Math.round((loaded / total) * 100)}%`
+        // Progress gets its own element: writing it into #status would wipe the
+        // running log. The terminal 'ready'/'initializing' events carry no
+        // filename, so fall back to the repo name.
+        onProgress: ({ repo, file, loaded, total, phase }) => {
+            if (phase === 'ready') {
+                progressEl.textContent = ''
+                return
             }
+            const what = file || repo
+            progressEl.textContent =
+                total > 0
+                    ? `${phase} ${what}: ${Math.round((loaded / total) * 100)}%`
+                    : `${phase} ${what}...`
         },
     })
     log(`WebGPU: ${webgpu ? 'yes' : 'no'} | cross-origin isolated: ${isCrossOriginIsolated()}`)
@@ -39,6 +51,7 @@ async function setup() {
 
 async function run(file: File) {
     statusEl.textContent = ''
+    progressEl.textContent = ''
     timingsEl.textContent = ''
     entitiesEl.textContent = ''
     log(`processing ${file.name} (${(file.size / 1024).toFixed(0)} KB)`)
@@ -59,6 +72,7 @@ async function run(file: File) {
         onStage: (name, ms) => log(`${name}: ${ms.toFixed(0)}ms`),
     })
 
+    progressEl.textContent = ''
     await render(rows[0])
     await pipeline.dispose()
 }
