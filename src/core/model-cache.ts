@@ -77,8 +77,16 @@ export function cacheKey(spec: ModelSpec, path: string): string {
     return `${spec.repo}@${spec.revision ?? 'main'}/${path}`
 }
 
-/** Resolve a repo-relative path to a URL under the configured model host. */
+/**
+ * Resolve a repo-relative path to a URL under the configured model host.
+ *
+ * A path that is already absolute is returned untouched -- some catalogues
+ * (ppu-paddle-ocr's, for one) publish full URLs against their own host, and
+ * rewriting those against `modelHost` would point at files that do not exist.
+ */
 export function fileUrl(spec: ModelSpec, path: string): string {
+    if (/^https?:\/\//.test(path)) return path
+
     const { modelHost } = getConfig()
     const host = modelHost.replace(/\/+$/, '')
     // A bare directory host (self-hosting) has no HF resolve/<revision> segment.

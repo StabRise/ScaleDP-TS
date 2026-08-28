@@ -1,101 +1,109 @@
 {
-  "name": "@stabrise/scaledp",
-  "version": "0.1.0",
-  "description": "Process documents (PDF, images) in the browser using AI/ML pipelines \u2014 OCR, text detection, and NER on onnxruntime-web. A browser mirror of the ScaleDP Python library.",
-  "keywords": [
-    "ocr",
-    "pdf",
-    "ner",
-    "gliner",
-    "onnx",
-    "onnxruntime-web",
-    "webgpu",
-    "wasm",
-    "document-processing",
-    "pii",
-    "paddleocr",
-    "tesseract",
-    "browser"
-  ],
-  "homepage": "https://stabrise.com/scaledp/",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/StabRise/scaledp-ts.git"
-  },
-  "bugs": "https://github.com/StabRise/scaledp-ts/issues",
-  "license": "AGPL-3.0-or-later",
-  "author": "StabRise",
-  "type": "module",
-  "sideEffects": false,
-  "engines": {
-    "node": ">=20"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+    "name": "@stabrise/scaledp",
+    "version": "0.1.0",
+    "description": "Process documents (PDF, images) in the browser using AI/ML pipelines \u2014 OCR, text detection, and NER on onnxruntime-web. A browser mirror of the ScaleDP Python library.",
+    "keywords": [
+        "ocr",
+        "pdf",
+        "ner",
+        "gliner",
+        "onnx",
+        "onnxruntime-web",
+        "webgpu",
+        "wasm",
+        "document-processing",
+        "pii",
+        "paddleocr",
+        "tesseract",
+        "browser"
+    ],
+    "homepage": "https://stabrise.com/scaledp/",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/StabRise/scaledp-ts.git"
     },
-    "./pdf": {
-      "types": "./dist/pdf/index.d.ts",
-      "import": "./dist/pdf/index.js"
+    "bugs": "https://github.com/StabRise/scaledp-ts/issues",
+    "license": "AGPL-3.0-or-later",
+    "author": "StabRise",
+    "type": "module",
+    "sideEffects": false,
+    "engines": {
+        "node": ">=20"
     },
-    "./package.json": "./package.json"
-  },
-  "scripts": {
-    "build": "tsdown",
-    "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:browser": "vitest run --project browser",
-    "check:pkg": "publint && attw --pack . --profile esm-only"
-  },
-  "peerDependencies": {
-    "@huggingface/transformers": ">=3.7.0",
-    "onnxruntime-web": ">=1.23.0",
-    "pdfjs-dist": ">=5.0.0",
-    "ppu-paddle-ocr": ">=6.0.0",
-    "tesseract-wasm": ">=0.10.0",
-    "tesseract.js": ">=7.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@huggingface/transformers": {
-      "optional": true
+    "publishConfig": {
+        "access": "public"
     },
-    "onnxruntime-web": {
-      "optional": true
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./pdf": {
+            "types": "./dist/pdf/index.d.ts",
+            "import": "./dist/pdf/index.js"
+        },
+        "./ocr": {
+            "types": "./dist/ocr/index.d.ts",
+            "import": "./dist/ocr/index.js"
+        },
+        "./package.json": "./package.json"
     },
-    "pdfjs-dist": {
-      "optional": true
+    "scripts": {
+        "build": "tsdown",
+        "dev": "tsdown --watch",
+        "typecheck": "tsc --noEmit",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:browser": "vitest run --project browser",
+        "check:pkg": "publint && attw --pack . --profile esm-only"
     },
-    "ppu-paddle-ocr": {
-      "optional": true
+    "peerDependencies": {
+        "@huggingface/transformers": ">=3.7.0",
+        "onnxruntime-web": ">=1.23.0",
+        "pdfjs-dist": ">=5.0.0",
+        "ppu-paddle-ocr": ">=6.0.0",
+        "tesseract-wasm": ">=0.10.0",
+        "tesseract.js": ">=7.0.0"
     },
-    "tesseract-wasm": {
-      "optional": true
+    "peerDependenciesMeta": {
+        "@huggingface/transformers": {
+            "optional": true
+        },
+        "onnxruntime-web": {
+            "optional": true
+        },
+        "pdfjs-dist": {
+            "optional": true
+        },
+        "ppu-paddle-ocr": {
+            "optional": true
+        },
+        "tesseract-wasm": {
+            "optional": true
+        },
+        "tesseract.js": {
+            "optional": true
+        }
     },
-    "tesseract.js": {
-      "optional": true
+    "devDependencies": {
+        "@arethetypeswrong/cli": "^0.18.5",
+        "@biomejs/biome": "^2.5.11",
+        "@vitest/coverage-v8": "^4.1.11",
+        "onnxruntime-web": "^1.29.0",
+        "pdfjs-dist": "^6.2.108",
+        "ppu-paddle-ocr": "^6.4.3",
+        "publint": "^0.3.24",
+        "tesseract-wasm": "^0.11.0",
+        "tesseract.js": "^7.0.0",
+        "tsdown": "^0.22.14",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.11"
     }
-  },
-  "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
-    "@biomejs/biome": "^2.5.11",
-    "@vitest/coverage-v8": "^4.1.11",
-    "pdfjs-dist": "^6.2.108",
-    "publint": "^0.3.24",
-    "tsdown": "^0.22.14",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
-  }
 }
