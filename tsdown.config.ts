@@ -10,6 +10,7 @@ export default defineConfig({
         'src/ner/index.ts',
         'src/detect/index.ts',
         'src/worker/index.ts',
+        'src/display/index.ts',
     ],
     format: ['esm'],
     dts: true,

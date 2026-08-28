@@ -1,23 +1,44 @@
-import { DataToImage, Pipeline, configure, type Row } from '@stabrise/scaledp'
-import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DataToImage, ImageDrawBoxes, Pipeline, configure, type Row } from '@stabrise/scaledp'
+import {
+    renderInto,
+    showBoxes,
+    showImage,
+    showNer,
+    showText,
+    visualizeNer,
+} from '@stabrise/scaledp/display'
+import { GlinerNer } from '@stabrise/scaledp/ner'
 import {
     PaddleTextRecognizer,
     isCrossOriginIsolated,
     isPresetCached,
     isWebGpuAvailable,
 } from '@stabrise/scaledp/ocr'
-import { GlinerNer } from '@stabrise/scaledp/ner'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+
+import type { Document, NerOutput, ScaleDpImage } from '@stabrise/scaledp/display'
 
 const OCR_PRESET = 'v6-small'
+const NER_LABELS = ['person', 'organization', 'email', 'phone', 'address', 'date']
 
-const progressEl = document.getElementById('progress') as HTMLElement
-const statusEl = document.getElementById('status') as HTMLElement
-const timingsEl = document.getElementById('timings') as HTMLElement
-const entitiesEl = document.getElementById('entities') as HTMLElement
-const canvas = document.getElementById('canvas') as HTMLCanvasElement
-const dropEl = document.getElementById('drop') as HTMLElement
-const fileEl = document.getElementById('file') as HTMLInputElement
-const nerEl = document.getElementById('ner') as HTMLInputElement
+const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+
+const progressEl = el('progress')
+const statusEl = el('status')
+const timingsEl = el('timings')
+const dropEl = el('drop')
+const fileEl = el<HTMLInputElement>('file')
+const nerEl = el<HTMLInputElement>('ner')
+const copyEl = el<HTMLButtonElement>('copy')
+const wrapEl = el<HTMLInputElement>('wrap')
+const textMetaEl = el('textMeta')
+
+const panels = {
+    text: el<HTMLDetailsElement>('panel-text'),
+    entities: el<HTMLDetailsElement>('panel-entities'),
+    boxes: el<HTMLDetailsElement>('panel-boxes'),
+    image: el<HTMLDetailsElement>('panel-image'),
+}
 
 const log = (message: string) => {
     statusEl.textContent = `${statusEl.textContent}\n${message}`.trim()
@@ -35,8 +56,8 @@ async function setup() {
             standardFontDataUrl: '/standard_fonts/',
         },
         // Progress gets its own element: writing it into #status would wipe the
-        // running log. The terminal 'ready'/'initializing' events carry no
-        // filename, so fall back to the repo name.
+        // running log. The terminal 'ready' event carries no filename, so fall
+        // back to the repo name.
         onProgress: ({ repo, file, loaded, total, phase }) => {
             if (phase === 'ready') {
                 progressEl.textContent = ''
@@ -49,18 +70,11 @@ async function setup() {
                     : `${phase} ${what}...`
         },
     })
-    log(`WebGPU: ${webgpu ? 'yes' : 'no'} | cross-origin isolated: ${isCrossOriginIsolated()}`)
-    await reportCache()
-}
 
-/**
- * Report whether the OCR models are already cached.
- *
- * Worth surfacing: the cache lives in IndexedDB, which is scoped per *origin*.
- * Serving the demo on a different port is a different origin and therefore an
- * empty cache, which looks exactly like caching being broken.
- */
-async function reportCache() {
+    log(`WebGPU: ${webgpu ? 'yes' : 'no'} | cross-origin isolated: ${isCrossOriginIsolated()}`)
+
+    // The cache is scoped per origin, port included, so a dev server that moved
+    // to a different port has an empty cache and looks like caching is broken.
     const cached = await isPresetCached(OCR_PRESET).catch(() => false)
     log(
         `OCR models (${OCR_PRESET}) at ${location.origin}: ` +
@@ -68,24 +82,31 @@ async function reportCache() {
     )
 }
 
-
 async function run(file: File) {
     statusEl.textContent = ''
     progressEl.textContent = ''
-    timingsEl.textContent = ''
-    entitiesEl.textContent = ''
-    log(`processing ${file.name} (${(file.size / 1024).toFixed(0)} KB)`)
+    for (const panel of Object.values(panels)) panel.hidden = true
 
+    log(`processing ${file.name} (${(file.size / 1024).toFixed(0)} KB)`)
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+
     const stages = [
         isPdf ? new PdfToImage({ resolution: 200 }) : new DataToImage(),
         new PaddleTextRecognizer({ preset: OCR_PRESET, keepFormatting: true }),
     ]
     if (nerEl.checked) {
-        stages.push(
-            new GlinerNer({ labels: ['person', 'organization', 'email', 'phone', 'address', 'date'] })
-        )
+        stages.push(new GlinerNer({ labels: NER_LABELS }))
     }
+    // Draw the boxes as a pipeline stage rather than by hand, which is how
+    // ScaleDP does it -- the annotated page is just another Image column.
+    stages.push(
+        new ImageDrawBoxes({
+            inputCols: nerEl.checked ? ['image', 'text', 'ner'] : ['image', 'text'],
+            outputCol: 'annotated',
+            lineWidth: 2,
+            displayDataList: nerEl.checked ? ['entity_group'] : [],
+        })
+    )
 
     const pipeline = new Pipeline(stages)
     const rows = await pipeline.transform(file, {
@@ -93,44 +114,54 @@ async function run(file: File) {
     })
 
     progressEl.textContent = ''
-    await render(rows[0])
+    render(rows[0])
     await pipeline.dispose()
 }
 
-async function render(row: Row | undefined) {
+function render(row: Row | undefined) {
     if (!row) return log('no pages produced')
 
-    const timing = row.execution_time as { stages: Record<string, number>; total: number }
-    timingsEl.innerHTML = `<p>total ${timing.total.toFixed(0)}ms</p>`
+    const timing = row.execution_time as { total: number }
+    timingsEl.textContent = `total ${timing.total.toFixed(0)}ms`
 
-    const document_ = row.text as { text: string; bboxes: { x: number; y: number; width: number; height: number }[]; exception: string }
+    const document_ = row.text as Document
     if (document_.exception) return log(`OCR failed: ${document_.exception}`)
     log(`${document_.bboxes.length} boxes, ${document_.text.length} characters`)
 
-    const image = row.image as { data: Uint8Array }
-    const bitmap = await createImageBitmap(new Blob([image.data as BlobPart]))
-    canvas.width = bitmap.width
-    canvas.height = bitmap.height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.drawImage(bitmap, 0, 0)
-    bitmap.close()
+    // Recognized text. keepFormatting is on, so the layout is preserved.
+    renderInto('#text', showText(document_))
+    textMetaEl.textContent = `${document_.text.length} characters, ${document_.text.split('\n').length} lines`
+    panels.text.hidden = false
 
-    ctx.strokeStyle = 'rgba(0, 102, 204, 0.7)'
-    ctx.lineWidth = 2
-    for (const box of document_.bboxes) ctx.strokeRect(box.x, box.y, box.width, box.height)
+    renderInto('#boxes', showBoxes(document_, 50))
+    panels.boxes.hidden = false
 
-    const ner = row.ner as { entities: { entity_group: string; word: string; score: number; boxes: typeof document_.bboxes }[] } | undefined
-    if (!ner?.entities.length) return
+    const annotated = (row.annotated ?? row.image) as ScaleDpImage | undefined
+    if (annotated) {
+        renderInto('#image', showImage(annotated))
+        panels.image.hidden = false
+    }
 
-    ctx.strokeStyle = 'rgba(220, 20, 60, 0.9)'
-    ctx.lineWidth = 3
-    const rows_ = ner.entities.map((e) => {
-        for (const box of e.boxes) ctx.strokeRect(box.x, box.y, box.width, box.height)
-        return `<tr><td>${e.entity_group}</td><td>${e.word}</td><td>${e.score.toFixed(3)}</td></tr>`
-    })
-    entitiesEl.innerHTML = `<table><tr><th>Type</th><th>Text</th><th>Score</th></tr>${rows_.join('')}</table>`
+    const ner = row.ner as NerOutput | undefined
+    if (!ner || ner.entities.length === 0) return
+
+    renderInto('#entities', showNer(ner, { limit: 0 }))
+    renderInto('#nerText', visualizeNer(document_, ner))
+    panels.entities.hidden = false
 }
+
+copyEl.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(el('text').textContent ?? '')
+    copyEl.textContent = 'Copied'
+    setTimeout(() => {
+        copyEl.textContent = 'Copy'
+    }, 1200)
+})
+
+wrapEl.addEventListener('change', () => {
+    const pre = el('text').querySelector('pre')
+    if (pre) pre.style.whiteSpace = wrapEl.checked ? 'pre-wrap' : 'pre'
+})
 
 dropEl.addEventListener('click', () => fileEl.click())
 fileEl.addEventListener('change', () => {

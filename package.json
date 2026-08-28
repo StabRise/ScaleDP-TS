@@ -63,6 +63,10 @@
             "types": "./dist/worker/index.d.ts",
             "import": "./dist/worker/index.js"
         },
+        "./display": {
+            "types": "./dist/display/index.d.ts",
+            "import": "./dist/display/index.js"
+        },
         "./package.json": "./package.json"
     },
     "scripts": {

@@ -22,7 +22,13 @@ schemas. What differs is the runtime.
 | `Ner` | `GlinerNer` (`/ner`) | GLiNER, not BERT token classification |
 | `LLMOcr`, `LLMNer`, `LLMExtractor` | — | Any fetch-based OpenAI client works |
 | `TextSplitter`, `TextEmbeddings` | — | Not yet ported |
-| `ImageDrawBoxes`, `ImageCropBoxes` | — | Not yet ported |
+| `df.show_image` | `showImage` (`/display`) | Returns an element, not IPython HTML |
+| `df.show_text` | `showText` (`/display`) | |
+| `df.show_json` | `showJson` (`/display`) | |
+| `df.show_ner` | `showNer` (`/display`) | |
+| `df.visualize_ner` | `visualizeNer` (`/display`) | |
+| `ImageDrawBoxes` | `ImageDrawBoxes` | |
+| `ImageCropBoxes` | `ImageCropBoxes` | |
 
 ## API differences
 

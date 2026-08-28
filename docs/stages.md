@@ -32,6 +32,80 @@ decoded bitmap.
 | `imageType` | `'png'` |
 | `resolution` | `0` |
 
+### `ImageDrawBoxes`
+
+Draw detection or NER boxes onto the page. Mirrors `ImageDrawBoxes`. Takes
+several columns: the first is the image, the rest are box or entity sources. A
+source is treated as NER output when it has `entities`, and as boxes when it
+has `bboxes`.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `inputCols` | `['image', 'boxes']` | `[imageColumn, ...boxColumns]` |
+| `outputCol` | `'image_with_boxes'` | |
+| `color` | `null` | Fixed colour; unset colours by group |
+| `filled` | `false` | Fill as well as outline |
+| `lineWidth` | `1` | |
+| `textSize` | `12` | |
+| `displayDataList` | `[]` | Fields to label each box with, e.g. `['entity_group']` |
+| `padding` | `0` | Grow each box before drawing |
+| `whiteList` / `blackList` | `[]` | Entity groups to keep / drop |
+
+Colours are derived by hashing the group name, so a given label is the same
+colour on every render. Python picks a random colour per run, which makes two
+renders of the same document impossible to compare.
+
+### `ImageCropBoxes`
+
+Crop each box out of the page, emitting one row per crop. Mirrors
+`ImageCropBoxes`. Rotated boxes are straightened rather than cropped to their
+envelope, which is what makes the crops usable as recognizer input.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `inputCols` | `['image', 'boxes']` | `[imageColumn, boxColumn]` |
+| `outputCol` | `'cropped_image'` | |
+| `boxCol` | `'box'` | Column the source box is written to |
+| `padding` | `0` | |
+| `limit` | `0` | Maximum crops; 0 means all |
+| `autoRotate` | `true` | Quarter-turn portrait crops so text reads horizontally |
+| `returnEmpty` | `false` | Emit the whole page when nothing was detected |
+
+---
+
+## `@stabrise/scaledp/display`
+
+Browser equivalents of ScaleDP's notebook helpers. Python monkey-patches
+`show_image` and friends onto the DataFrame and renders Jinja into IPython;
+these return an `HTMLElement` you place wherever you like.
+
+```ts
+import { renderInto, showText, showNer, visualizeNer } from '@stabrise/scaledp/display'
+
+renderInto('#text', showText(row.text))
+renderInto('#entities', showNer(row.ner, { limit: 20 }))
+renderInto('#highlighted', visualizeNer(row.text, row.ner))
+```
+
+| Function | Mirrors | Notes |
+|---|---|---|
+| `showImage(image, { width })` | `show_image` | Revokes its object URL once decoded |
+| `showText(document, { preserveLayout })` | `show_text` | `<pre>`; layout preserved by default |
+| `showJson(value, indent)` | `show_json` | |
+| `showNer(ner, { limit, whiteList })` | `show_ner` | Table; `limit` defaults to 20, 0 shows all |
+| `visualizeNer(document, ner, { labelsList, showLabels })` | `visualize_ner` | Text with entities highlighted inline |
+| `showBoxes(output, limit)` | — | Box table |
+| `renderInto(target, node)` | — | Replaces a container's contents |
+
+Everything is built from text nodes rather than interpolated markup: recognized
+text and entity words come straight from the document, and a page containing
+`<` would otherwise corrupt the DOM.
+
+`visualizeNer` splices spans by character offset, which is exactly what
+`Entity.start`/`end` index. Overlapping entities are dropped rather than
+nested -- two spans cannot occupy the same characters in a flat text run -- so
+the rendered text always reads identically to the original.
+
 ---
 
 ## `@stabrise/scaledp/pdf`

@@ -21,6 +21,7 @@ export default defineConfig({
         //
         // Longest specifier first -- Vite tries these in order.
         alias: [
+            { find: '@stabrise/scaledp/display', replacement: dist('display/index.js') },
             { find: '@stabrise/scaledp/worker', replacement: dist('worker/index.js') },
             { find: '@stabrise/scaledp/detect', replacement: dist('detect/index.js') },
             { find: '@stabrise/scaledp/pdf', replacement: dist('pdf/index.js') },

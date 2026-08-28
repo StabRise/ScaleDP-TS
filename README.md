@@ -58,6 +58,12 @@ ever leaves the browser**, which is the point for anything sensitive.
 
 - YOLO object detection, including signature and face detectors
 
+### Displaying results
+
+- `ImageDrawBoxes` / `ImageCropBoxes` stages, as in ScaleDP
+- `showText`, `showNer`, `visualizeNer`, `showImage`, `showBoxes` -- the browser
+  equivalents of ScaleDP's notebook helpers
+
 ## Installation
 
 ```bash
@@ -101,6 +107,23 @@ for (const row of rows) {
     console.log(entity.entity_group, entity.word, entity.boxes)
   }
 }
+```
+
+### Show the results
+
+```ts
+import { ImageDrawBoxes } from '@stabrise/scaledp'
+import { renderInto, showText, showNer, visualizeNer } from '@stabrise/scaledp/display'
+
+// Annotating the page is a pipeline stage, as in ScaleDP -- the result is
+// just another image column.
+pipeline.stages.push(
+  new ImageDrawBoxes({ inputCols: ['image', 'text', 'ner'], outputCol: 'annotated' })
+)
+
+renderInto('#text', showText(row.text))            // layout-preserving text
+renderInto('#entities', showNer(row.ner))          // table of entities
+renderInto('#inline', visualizeNer(row.text, row.ner))  // highlighted inline
 ```
 
 Compare with the Python original:

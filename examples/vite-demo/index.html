@@ -4,29 +4,59 @@
     <meta charset="utf-8" />
     <title>scaledp-ts demo</title>
     <style>
-      body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
-      #drop { border: 2px dashed #999; border-radius: 8px; padding: 3rem; text-align: center; }
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 64rem; }
+      #drop { border: 2px dashed #999; border-radius: 8px; padding: 3rem; text-align: center; cursor: pointer; }
       #drop.over { border-color: #06c; background: #f0f6ff; }
       #status, #progress { white-space: pre-wrap; font-family: ui-monospace, monospace; }
       #progress { color: #06c; }
-      canvas { max-width: 100%; border: 1px solid #ddd; margin-top: 1rem; }
-      table { border-collapse: collapse; margin-top: 1rem; }
-      td, th { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
+      details { margin-top: 1rem; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; }
+      summary { cursor: pointer; font-weight: 600; }
+      .panel { margin-top: 0.75rem; }
+      .row { display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0; }
+      button { font: inherit; padding: 2px 10px; }
+      table { border-collapse: collapse; font-size: 13px; }
+      img { border: 1px solid #ddd; border-radius: 4px; }
     </style>
   </head>
   <body>
     <h1>scaledp-ts</h1>
     <p>Everything runs in this tab. No document is uploaded anywhere.</p>
 
-    <label><input type="checkbox" id="ner" /> Run NER (downloads ~333&nbsp;MB the first time)</label>
+    <div class="row">
+      <label><input type="checkbox" id="ner" /> Run NER (downloads ~333&nbsp;MB the first time)</label>
+    </div>
     <div id="drop">Drop a PDF or image here, or click to choose.</div>
     <input type="file" id="file" accept="application/pdf,image/*" hidden />
 
     <div id="progress"></div>
     <div id="status"></div>
     <div id="timings"></div>
-    <div id="entities"></div>
-    <canvas id="canvas"></canvas>
+
+    <details id="panel-text" hidden open>
+      <summary>Recognized text</summary>
+      <div class="row">
+        <button id="copy" type="button">Copy</button>
+        <label><input type="checkbox" id="wrap" /> wrap lines</label>
+        <span id="textMeta"></span>
+      </div>
+      <div id="text" class="panel"></div>
+    </details>
+
+    <details id="panel-entities" hidden open>
+      <summary>Entities</summary>
+      <div id="entities" class="panel"></div>
+      <div id="nerText" class="panel"></div>
+    </details>
+
+    <details id="panel-boxes" hidden>
+      <summary>Detected boxes</summary>
+      <div id="boxes" class="panel"></div>
+    </details>
+
+    <details id="panel-image" hidden open>
+      <summary>Page</summary>
+      <div id="image" class="panel"></div>
+    </details>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
