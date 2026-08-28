@@ -1,0 +1,426 @@
+[
+    {
+        "fn": "cluster",
+        "args": {
+            "items": [1, 2, 3, 10, 11, 30],
+            "max_gap": 2
+        },
+        "expected": [[1, 2, 3], [10, 11], [30]]
+    },
+    {
+        "fn": "cluster",
+        "args": {
+            "items": [5],
+            "max_gap": 3
+        },
+        "expected": [[5]]
+    },
+    {
+        "fn": "cluster",
+        "args": {
+            "items": [],
+            "max_gap": 2
+        },
+        "expected": []
+    },
+    {
+        "fn": "cluster",
+        "args": {
+            "items": [0, 0, 0, 100],
+            "max_gap": 1
+        },
+        "expected": [[0, 0, 0], [100]]
+    },
+    {
+        "fn": "cluster",
+        "args": {
+            "items": [10, 12, 14, 16, 40, 42],
+            "max_gap": 3
+        },
+        "expected": [[10, 12, 14, 16], [40, 42]]
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [10]
+        },
+        "expected": 10
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [10, 12]
+        },
+        "expected": 11
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [10, 12, 14]
+        },
+        "expected": 12
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [10, 12, 14, 16]
+        },
+        "expected": 13
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [10, 10, 10, 12, 12, 40, 5, 10]
+        },
+        "expected": 10
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]
+        },
+        "expected": 5
+    },
+    {
+        "fn": "get_size",
+        "args": {
+            "items": [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 100]
+        },
+        "expected": 20
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Hello",
+                    "x": 10,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                },
+                {
+                    "text": "world",
+                    "x": 70,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 0
+        },
+        "expected": " Hello world"
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Hello",
+                    "x": 10,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                },
+                {
+                    "text": "world",
+                    "x": 70,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 5
+        },
+        "expected": " Hello world"
+    },
+    {
+        "fn": "get_character_width",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Hello",
+                    "x": 10,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                },
+                {
+                    "text": "world",
+                    "x": 70,
+                    "y": 10,
+                    "width": 50,
+                    "height": 12
+                }
+            ]
+        },
+        "expected": 10
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Name:",
+                    "x": 10,
+                    "y": 10,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "Raja",
+                    "x": 200,
+                    "y": 11,
+                    "width": 40,
+                    "height": 12
+                },
+                {
+                    "text": "Total",
+                    "x": 10,
+                    "y": 60,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "100",
+                    "x": 200,
+                    "y": 61,
+                    "width": 30,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 0
+        },
+        "expected": " Name:               Raja\n\n Total               100"
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Name:",
+                    "x": 10,
+                    "y": 10,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "Raja",
+                    "x": 200,
+                    "y": 11,
+                    "width": 40,
+                    "height": 12
+                },
+                {
+                    "text": "Total",
+                    "x": 10,
+                    "y": 60,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "100",
+                    "x": 200,
+                    "y": 61,
+                    "width": 30,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 5
+        },
+        "expected": " Name:               Raja\n\n Total               100"
+    },
+    {
+        "fn": "get_character_width",
+        "args": {
+            "boxes": [
+                {
+                    "text": "Name:",
+                    "x": 10,
+                    "y": 10,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "Raja",
+                    "x": 200,
+                    "y": 11,
+                    "width": 40,
+                    "height": 12
+                },
+                {
+                    "text": "Total",
+                    "x": 10,
+                    "y": 60,
+                    "width": 48,
+                    "height": 12
+                },
+                {
+                    "text": "100",
+                    "x": 200,
+                    "y": 61,
+                    "width": 30,
+                    "height": 12
+                }
+            ]
+        },
+        "expected": 9
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "A",
+                    "x": 10,
+                    "y": 10,
+                    "width": 10,
+                    "height": 12
+                },
+                {
+                    "text": "B",
+                    "x": 10,
+                    "y": 200,
+                    "width": 10,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 0
+        },
+        "expected": " A\n\n\n\n\n\n\n B"
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "A",
+                    "x": 10,
+                    "y": 10,
+                    "width": 10,
+                    "height": 12
+                },
+                {
+                    "text": "B",
+                    "x": 10,
+                    "y": 200,
+                    "width": 10,
+                    "height": 12
+                }
+            ],
+            "line_tolerance": 5
+        },
+        "expected": " A\n\n\n\n\n\n\n B"
+    },
+    {
+        "fn": "get_character_width",
+        "args": {
+            "boxes": [
+                {
+                    "text": "A",
+                    "x": 10,
+                    "y": 10,
+                    "width": 10,
+                    "height": 12
+                },
+                {
+                    "text": "B",
+                    "x": 10,
+                    "y": 200,
+                    "width": 10,
+                    "height": 12
+                }
+            ]
+        },
+        "expected": 10
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "one",
+                    "x": 0,
+                    "y": 0,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "two",
+                    "x": 35,
+                    "y": 1,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "three",
+                    "x": 200,
+                    "y": 0,
+                    "width": 50,
+                    "height": 10
+                }
+            ],
+            "line_tolerance": 0
+        },
+        "expected": " one two             three"
+    },
+    {
+        "fn": "box_to_formatted_text",
+        "args": {
+            "boxes": [
+                {
+                    "text": "one",
+                    "x": 0,
+                    "y": 0,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "two",
+                    "x": 35,
+                    "y": 1,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "three",
+                    "x": 200,
+                    "y": 0,
+                    "width": 50,
+                    "height": 10
+                }
+            ],
+            "line_tolerance": 5
+        },
+        "expected": " one two             three"
+    },
+    {
+        "fn": "get_character_width",
+        "args": {
+            "boxes": [
+                {
+                    "text": "one",
+                    "x": 0,
+                    "y": 0,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "two",
+                    "x": 35,
+                    "y": 1,
+                    "width": 30,
+                    "height": 10
+                },
+                {
+                    "text": "three",
+                    "x": 200,
+                    "y": 0,
+                    "width": 50,
+                    "height": 10
+                }
+            ]
+        },
+        "expected": 10
+    }
+]

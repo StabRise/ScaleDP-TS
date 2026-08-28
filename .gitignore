@@ -34,3 +34,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# build
+/dist
+/coverage
+*.tsbuildinfo
+
+# test artifacts
+/test-results
+/playwright-report
+
+# tooling artifacts
+/.claude/tdd-guard/data

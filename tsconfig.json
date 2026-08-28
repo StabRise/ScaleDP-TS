@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "moduleDetection": "force",
+        "verbatimModuleSyntax": true,
+        "resolveJsonModule": true,
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "noImplicitOverride": true,
+        "noFallthroughCasesInSwitch": true,
+        "exactOptionalPropertyTypes": false,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "declaration": true,
+        "noEmit": true,
+        "types": []
+    },
+    "include": ["src", "test"]
+}
