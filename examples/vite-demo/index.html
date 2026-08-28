@@ -49,6 +49,10 @@
           <span class="platen__hint" id="dropHint">PDF or image · click to browse</span>
         </button>
         <input type="file" id="file" accept="application/pdf,image/*" hidden />
+        <div class="rerun" id="rerunRow" hidden>
+          <button class="rerun__btn" id="rerun" type="button">Run again</button>
+          <span class="rerun__note" id="rerunNote"></span>
+        </div>
       </section>
 
       <section class="controls" aria-label="Models">
@@ -56,6 +60,12 @@
           <span class="ctrl__key">OCR</span>
           <select id="ocrModel" aria-label="OCR model"></select>
           <span class="ctrl__state" id="ocrCache"></span>
+        </div>
+
+        <div class="ctrl">
+          <span class="ctrl__key">Detect</span>
+          <select id="detModel" aria-label="Text detector"></select>
+          <span class="ctrl__state" id="detCache"></span>
         </div>
 
         <div class="ctrl">
@@ -95,6 +105,7 @@
             <button class="tab is-on" data-panel="text" role="tab">Text</button>
             <button class="tab" data-panel="entities" role="tab" id="tabEntities" hidden>Entities</button>
             <button class="tab" data-panel="boxes" role="tab">Boxes</button>
+            <button class="tab" data-panel="detect" role="tab" id="tabDetect" hidden>Detector</button>
           </div>
 
           <div class="panel is-on" data-panel="text">
@@ -115,6 +126,11 @@
 
           <div class="panel" data-panel="boxes">
             <div class="scroll" id="boxes"></div>
+          </div>
+
+          <div class="panel" data-panel="detect">
+            <p class="panel__note" id="detNote"></p>
+            <div class="scroll" id="detBoxes"></div>
           </div>
         </div>
       </section>

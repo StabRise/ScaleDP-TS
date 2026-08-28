@@ -189,6 +189,25 @@ the browser.
 
 Needs `configure({ tesseract: { workerUrl, dataUrl } })`.
 
+### Detector registry
+
+`DETECTOR_MODELS` lists the text detectors that can run in the browser, so a
+detector is addressable the same way OCR presets and NER models are.
+
+| id | Kind | Repo | Size |
+|---|---|---|---|
+| `paddle` *(default)* | Paddle DB | follows the OCR preset | included |
+| `dbnet-v0.2` | DBNet ONNX | `StabRise/text_detection_dbnet_ml_v0.2` | ~5 MB |
+| `dbnet-v0.1` | DBNet ONNX | `StabRise/text_detection_dbnet_ml_v0.1` | ~5 MB |
+
+```ts
+import { DETECTOR_MODELS, getDetectorModel } from '@stabrise/scaledp/ocr'
+```
+
+Note `PaddleTextRecognizer` detects internally as a single pass, so a standalone
+detector runs *alongside* it rather than feeding it. Running both is how you
+compare what a detector finds against what the recognizer acted on.
+
 ### Language presets
 
 `v6-small` (default, Latin/CJK), `v6-medium`, `v6-tiny`, `v5-latin-mobile`,

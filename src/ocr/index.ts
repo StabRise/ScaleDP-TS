@@ -27,6 +27,12 @@ export {
     DbnetOnnxDetector,
     DEFAULT_DBNET_MODEL,
 } from './dbnet-onnx.js'
+export type { DetectorKind, DetectorModel } from './detector-registry.js'
+export {
+    DEFAULT_DETECTOR_ID,
+    DETECTOR_MODELS,
+    getDetectorModel,
+} from './detector-registry.js'
 export type { LineOrientation } from './line-orientation.js'
 export {
     DEFAULT_ORIENTATION_MODEL,

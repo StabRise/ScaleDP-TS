@@ -254,6 +254,55 @@ main {
     color: var(--readout);
 }
 
+/* The rerun control only appears once a file has been read, and picks up an
+   accent when a model changes underneath it -- the settings and the result on
+   screen have diverged, and re-running is how you reconcile them. */
+.rerun {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin-top: 0.9rem;
+}
+
+.rerun__btn {
+    font: inherit;
+    font-size: 13px;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    padding: 0.4rem 0.9rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.rerun__btn:hover {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+.rerun.is-stale .rerun__btn {
+    border-color: var(--detect);
+    color: var(--housing);
+    background: var(--detect);
+    font-weight: 500;
+}
+
+.rerun__note {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+}
+
+.rerun.is-stale .rerun__note {
+    color: var(--detect);
+}
+
+.rerun__btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 /* ── Controls ────────────────────────────────────────────────────────── */
 
 .controls {
@@ -593,6 +642,13 @@ button:focus-visible {
 
 .spacer {
     flex: 1;
+}
+
+.panel__note {
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
 }
 
 .chk {

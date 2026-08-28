@@ -49,9 +49,20 @@ this is a real choice: `v6-small` handles Latin and CJK, `v5-eslav-mobile` adds
 Cyrillic, `v5-en-mobile` is English-only and the fastest. Each preset caches
 separately, so switching back to one you have used is instant.
 
+**Detect** picks the text detector. The default rides on the OCR preset, since
+`PaddleTextRecognizer` detects internally as one pass. Choosing a StabRise DBNet
+ONNX model instead runs it as a separate stage and draws its boxes in violet
+beside the recognizer's cyan, so the two can be compared directly on the page --
+which is the reason to pick a detector at all.
+
 **NER** lists the model registry with each entry's size, languages and
 architecture. Two of them live in private StabRise repos and are shown disabled:
 they need `configure({ auth })` to supply a token, which this demo does not.
+
+Changing any model marks the result on screen as out of date and highlights
+**Run again**, rather than re-running by itself: a re-read is seconds of work
+and, for a model not yet cached, hundreds of megabytes. The file stays in memory
+so you do not have to pick it again.
 
 Selections are remembered across reloads, and a remembered id that has since
 become private or been removed falls back to the default rather than failing

@@ -14,7 +14,12 @@ import {
     showText,
     visualizeNer,
 } from '@stabrise/scaledp/display'
-import type { Document, NerOutput, ScaleDpImage } from '@stabrise/scaledp/display'
+import type {
+    DetectorOutput,
+    Document,
+    NerOutput,
+    ScaleDpImage,
+} from '@stabrise/scaledp/display'
 import {
     DEFAULT_NER_MODEL_ID,
     GlinerNer,
@@ -23,11 +28,16 @@ import {
     modelSizeBytes,
 } from '@stabrise/scaledp/ner'
 import {
+    DEFAULT_DETECTOR_ID,
     DEFAULT_OCR_PRESET,
+    DETECTOR_MODELS,
+    DbnetOnnxDetector,
     PADDLE_OCR_PRESETS,
+    PaddleTextDetector,
     PaddleTextRecognizer,
     isCrossOriginIsolated,
     isKnownPreset,
+    getDetectorModel,
     isPresetCached,
     isWebGpuAvailable,
 } from '@stabrise/scaledp/ocr'
@@ -36,6 +46,8 @@ import { PdfToImage } from '@stabrise/scaledp/pdf'
 /** Kept in step with --detect and --entity in style.css. */
 const BOX_COLOR = '#3fc9f5'
 const ENTITY_COLOR = '#ff5c8a'
+/** A separate detector's boxes, so they can be told from the recognizer's. */
+const DETECT_COLOR = '#9d8cff'
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -48,6 +60,8 @@ const noteEl = el('note')
 
 const ocrModelEl = el<HTMLSelectElement>('ocrModel')
 const nerModelEl = el<HTMLSelectElement>('nerModel')
+const detModelEl = el<HTMLSelectElement>('detModel')
+const detCacheEl = el('detCache')
 const ocrCacheEl = el('ocrCache')
 const nerCacheEl = el('nerCache')
 const nerEl = el<HTMLInputElement>('ner')
@@ -63,6 +77,11 @@ const resultsEl = el('results')
 const pageMetaEl = el('pageMeta')
 const textMetaEl = el('textMeta')
 const tabEntities = el('tabEntities')
+const tabDetect = el('tabDetect')
+const detNoteEl = el('detNote')
+const rerunRow = el('rerunRow')
+const rerunEl = el<HTMLButtonElement>('rerun')
+const rerunNote = el('rerunNote')
 const copyEl = el<HTMLButtonElement>('copy')
 const wrapEl = el<HTMLInputElement>('wrap')
 
@@ -150,6 +169,14 @@ function populateModelPickers() {
         nerModelEl.add(option)
     }
 
+    for (const detector of DETECTOR_MODELS) {
+        const option = new Option(detector.name, detector.id)
+        option.title = detector.notes
+        detModelEl.add(option)
+    }
+    const rememberedDet = recall('detModel', DEFAULT_DETECTOR_ID)
+    detModelEl.value = getDetectorModel(rememberedDet) ? rememberedDet : DEFAULT_DETECTOR_ID
+
     // A remembered id can go stale -- removed from the registry, or private
     // since it was chosen. Fall back rather than failing mid-pipeline.
     const remembered = recall('nerModel', DEFAULT_NER_MODEL_ID)
@@ -187,6 +214,19 @@ async function refreshCacheStatus() {
     const cached = await isPresetCached(ocrModelEl.value).catch(() => false)
     setState(ocrCacheEl, cached ? 'cached' : 'downloads on first run', cached)
 
+    const detector = getDetectorModel(detModelEl.value)
+    if (detector?.repo) {
+        const detCached = await isCached({
+            repo: detector.repo,
+            files: [{ path: 'model.onnx', approxBytes: detector.approxBytes }],
+        }).catch(() => false)
+        const size = Math.round((detector.approxBytes ?? 0) / 1e6)
+        setState(detCacheEl, detCached ? 'cached' : `downloads ${size} MB on first run`, detCached)
+    } else {
+        // The Paddle detector is part of the preset already accounted for above.
+        setState(detCacheEl, 'included in the OCR preset', true)
+    }
+
     const model = getNerModel(nerModelEl.value)
     if (!model) return
     const size = Math.round(modelSizeBytes(model) / 1e6)
@@ -205,15 +245,26 @@ async function run(file: File) {
     traceList.replaceChildren()
     resultsEl.hidden = true
 
+    rerunEl.disabled = true
     platenEl.classList.add('is-reading')
     dropLabel.textContent = file.name
     dropHint.textContent = `${(file.size / 1024).toFixed(0)} KB · reading`
 
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-    const stages = [
-        isPdf ? new PdfToImage({ resolution: 200 }) : new DataToImage(),
-        new PaddleTextRecognizer({ preset: ocrModelEl.value, keepFormatting: true }),
-    ]
+    const detector = getDetectorModel(detModelEl.value)
+    const stages = [isPdf ? new PdfToImage({ resolution: 200 }) : new DataToImage()]
+
+    // A standalone detector runs alongside the recognizer rather than feeding it:
+    // PaddleTextRecognizer detects internally as one pass. Showing both lets you
+    // compare what a detector finds against what the recognizer acted on, which
+    // is the reason to pick one in the first place.
+    if (detector?.kind === 'dbnet-onnx' && detector.repo) {
+        stages.push(new DbnetOnnxDetector({ model: detector.repo, outputCol: 'detected' }))
+    } else if (detector?.kind === 'paddle' && detModelEl.value !== DEFAULT_DETECTOR_ID) {
+        stages.push(new PaddleTextDetector({ preset: ocrModelEl.value, outputCol: 'detected' }))
+    }
+
+    stages.push(new PaddleTextRecognizer({ preset: ocrModelEl.value, keepFormatting: true }))
     if (nerEl.checked) {
         const labels = currentLabels()
         if (labels.length === 0) throw new Error('Add at least one label before running NER.')
@@ -233,6 +284,17 @@ async function run(file: File) {
             lineWidth: 2,
         })
     )
+    if (detector?.kind === 'dbnet-onnx') {
+        stages.push(
+            new ImageDrawBoxes({
+                inputCols: ['annotated', 'detected'],
+                outputCol: 'annotated',
+                color: DETECT_COLOR,
+                lineWidth: 2,
+                padding: 3,
+            })
+        )
+    }
     if (nerEl.checked) {
         stages.push(
             new ImageDrawBoxes({
@@ -257,6 +319,9 @@ async function run(file: File) {
     } finally {
         platenEl.classList.remove('is-reading')
         dropHint.textContent = 'PDF or image · click to browse'
+        rerunEl.disabled = false
+        rerunRow.hidden = false
+        clearStale()
         await pipeline.dispose()
         await refreshCacheStatus()
     }
@@ -267,7 +332,17 @@ function renderTrace(timings: { name: string; ms: number }[], row: Row | undefin
     const total = timings.reduce((sum, t) => sum + t.ms, 0) || 1
     traceList.replaceChildren()
 
+    // A pipeline can run the same stage twice -- two ImageDrawBoxes passes, one
+    // per colour -- so number the repeats rather than showing two identical rows.
+    const seen = new Map<string, number>()
+    const occurrences = new Map<string, number>()
+    for (const { name } of timings) occurrences.set(name, (occurrences.get(name) ?? 0) + 1)
+
     for (const { name, ms } of timings) {
+        const nth = (seen.get(name) ?? 0) + 1
+        seen.set(name, nth)
+        const shown = (occurrences.get(name) ?? 1) > 1 ? `${name} (${nth})` : name
+
         const li = document.createElement('li')
         const label = document.createElement('span')
         label.className = 'trace__name'
@@ -276,7 +351,7 @@ function renderTrace(timings: { name: string; ms: number }[], row: Row | undefin
         bar.style.width = `${Math.max(2, (ms / total) * 100)}%`
         const text = document.createElement('span')
         text.className = 'trace__text'
-        text.textContent = name
+        text.textContent = shown
         label.append(bar, text)
 
         const value = document.createElement('span')
@@ -311,6 +386,21 @@ function render(row: Row | undefined) {
         pageMetaEl.textContent = `${annotated.width}×${annotated.height} · ${document_.bboxes.length} boxes`
     }
 
+    const detected = row.detected as DetectorOutput | undefined
+    tabDetect.hidden = !detected
+    if (detected) {
+        if (detected.exception) {
+            detNoteEl.textContent = detected.exception
+            renderInto('#detBoxes', document.createTextNode(''))
+        } else {
+            const name = getDetectorModel(detModelEl.value)?.name ?? detModelEl.value
+            detNoteEl.textContent =
+                `${name} — ${detected.bboxes.length} boxes, ` +
+                `against ${document_.bboxes.length} from the recognizer`
+            renderInto('#detBoxes', showBoxes(detected, 200))
+        }
+    }
+
     const ner = row.ner as NerOutput | undefined
     const hasEntities = Boolean(ner && ner.entities.length > 0)
     tabEntities.hidden = !hasEntities
@@ -332,10 +422,41 @@ function showPanel(name: string) {
 
 /* ── Wiring ──────────────────────────────────────────────────────────── */
 
+/**
+ * The file most recently read, kept so a model change can be applied to it
+ * without asking for the file again. Held in memory only -- it is never written
+ * anywhere, which is the whole point of the library.
+ */
+let lastFile: File | null = null
+
 const accept = (file: File | undefined) => {
     if (!file) return
+    lastFile = file
     void run(file).catch((error: Error) => note(error.message))
 }
+
+/**
+ * Mark the result on screen as out of date.
+ *
+ * Changing a model does not re-run on its own: re-reading is seconds of work
+ * and, for a model not yet cached, hundreds of megabytes. Surfacing the choice
+ * is better than making it silently.
+ */
+function markStale(what: string) {
+    if (!lastFile) return
+    rerunRow.classList.add('is-stale')
+    rerunNote.textContent = `${what} changed — run again to apply`
+}
+
+function clearStale() {
+    rerunRow.classList.remove('is-stale')
+    rerunNote.textContent = lastFile ? `last read ${lastFile.name}` : ''
+}
+
+rerunEl.addEventListener('click', () => {
+    if (!lastFile) return
+    void run(lastFile).catch((error: Error) => note(error.message))
+})
 
 platenEl.addEventListener('click', () => fileEl.click())
 fileEl.addEventListener('change', () => accept(fileEl.files?.[0]))
@@ -361,15 +482,29 @@ for (const tab of document.querySelectorAll<HTMLElement>('.tab')) {
 
 ocrModelEl.addEventListener('change', () => {
     remember('ocrModel', ocrModelEl.value)
+    markStale('OCR model')
+    void refreshCacheStatus()
+})
+detModelEl.addEventListener('change', () => {
+    remember('detModel', detModelEl.value)
+    markStale('Detector')
     void refreshCacheStatus()
 })
 nerModelEl.addEventListener('change', () => {
     remember('nerModel', nerModelEl.value)
     applyModelLabels()
+    markStale('NER model')
     void refreshCacheStatus()
 })
-nerEl.addEventListener('change', syncNerControls)
-resetLabelsEl.addEventListener('click', applyModelLabels)
+nerEl.addEventListener('change', () => {
+    syncNerControls()
+    markStale('NER')
+})
+labelsEl.addEventListener('input', () => markStale('Labels'))
+resetLabelsEl.addEventListener('click', () => {
+    applyModelLabels()
+    markStale('Labels')
+})
 
 copyEl.addEventListener('click', async () => {
     await navigator.clipboard.writeText(el('text').textContent ?? '')
