@@ -37,6 +37,35 @@ export function resetPdfjs(): void {
     modulePromise = null
 }
 
+/**
+ * Turn pdf.js's worker-setup failure into something actionable.
+ *
+ * When `workerSrc` is unset or 404s, pdf.js reports "Setting up fake worker
+ * failed" with a bare module URL, which says nothing about what to do. The
+ * worker is not bundled with this library on purpose -- it has to be served by
+ * the consuming application -- so the fix is always the same two steps.
+ */
+export function describePdfError(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/fake worker|worker/i.test(message)) {
+        return error instanceof Error ? error : new Error(message)
+    }
+
+    const { workerSrc } = getConfig().pdf
+    const cause = workerSrc
+        ? `pdf.js could not load its worker from "${workerSrc}".`
+        : 'pdf.js has no worker configured.'
+
+    return new Error(
+        `${cause}\n` +
+            'Copy it out of the package and point the config at it:\n' +
+            '  cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/\n' +
+            "  configure({ pdf: { workerSrc: '/pdf.worker.min.mjs' } })\n" +
+            `Original error: ${message}`,
+        { cause: error }
+    )
+}
+
 /** Document-level options assembled from the global config. */
 export function documentOptions(data: Uint8Array): Record<string, unknown> {
     const { cMapUrl, standardFontDataUrl, wasmUrl } = getConfig().pdf

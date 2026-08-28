@@ -30,9 +30,6 @@
     "engines": {
         "node": ">=20"
     },
-    "workspaces": [
-        "examples/*"
-    ],
     "publishConfig": {
         "access": "public"
     },

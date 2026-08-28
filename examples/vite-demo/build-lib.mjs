@@ -1,6 +1,6 @@
-// The demo imports @stabrise/scaledp through its `exports` map, which points at
-// dist/. Building the library first means a fresh clone runs with one command
-// instead of failing on an unresolved import.
+// vite.config.ts aliases @stabrise/scaledp at ../../dist, so that build output
+// has to exist before the demo can start. Building it here means a fresh clone
+// runs with one command instead of failing on an unresolved import.
 import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'

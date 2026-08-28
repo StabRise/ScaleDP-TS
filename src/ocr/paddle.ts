@@ -53,11 +53,14 @@ async function toCanvas(input: unknown): Promise<OffscreenCanvas> {
     }
 
     const image = input as ScaleDpImage | undefined
+    // Check `exception` first. A failed upstream stage returns a well-formed but
+    // empty Image, so testing the bytes first would report "no decoded bytes" and
+    // bury the real cause.
+    if (image?.exception) {
+        throw new OcrError(`Upstream stage failed: ${image.exception}`, 'toCanvas')
+    }
     if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
         throw new OcrError('Expected an Image with decoded bytes', 'toCanvas')
-    }
-    if (image.exception) {
-        throw new OcrError(`Upstream stage failed: ${image.exception}`, 'toCanvas')
     }
 
     const bitmap = await decodeImage(image.data)

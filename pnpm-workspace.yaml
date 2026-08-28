@@ -1,6 +1,0 @@
-# The demo is a workspace member so it resolves @stabrise/scaledp from this
-# repo rather than the registry. `link:` / `file:` protocols are not portable
-# across package managers -- bun in particular reads `link:` as a global link
-# name, producing a dangling symlink.
-packages:
-  - examples/*

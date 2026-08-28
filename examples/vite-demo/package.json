@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.7.3",
-    "@stabrise/scaledp": "workspace:*",
     "onnxruntime-web": "^1.29.0",
     "pdfjs-dist": "^6.2.108",
     "ppu-paddle-ocr": "^6.4.3"

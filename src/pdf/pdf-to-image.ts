@@ -11,7 +11,7 @@ import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../cor
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { createImage, type ImageFormat, type ScaleDpImage } from '../schemas/image.js'
 import { toBytes } from '../stages/data-to-image.js'
-import { documentOptions, loadPdfjs } from './pdfjs.js'
+import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
 
 /** PDF user space is defined in points; 72 of them make an inch. */
 export const POINTS_PER_INCH = 72
@@ -66,9 +66,12 @@ export class PdfToImage extends Stage<PdfToImageParams> {
 
         const pdfjs = await loadPdfjs()
         const task = pdfjs.getDocument(documentOptions(toBytes(input)))
-        const document = await task.promise
 
         try {
+            // pdf.js defers worker setup, so a missing worker surfaces on first
+            // page access rather than from task.promise. Wrap the whole
+            // operation so the failure is described wherever it lands.
+            const document = await task.promise
             const pageCount = pageLimit > 0 ? Math.min(pageLimit, document.numPages) : document.numPages
             const rows: Row[] = []
 
@@ -82,6 +85,8 @@ export class PdfToImage extends Stage<PdfToImageParams> {
                 rows.push({ ...row, [pageCol]: index, [outputCol]: image })
             }
             return rows
+        } catch (error) {
+            throw describePdfError(error)
         } finally {
             // destroy() lives on the loading task, not the document proxy, and
             // is what releases the pdf.js worker's copy of the file.

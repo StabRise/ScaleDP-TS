@@ -211,11 +211,14 @@ export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
 
     protected async apply(input: unknown, row: Row): Promise<DetectorOutput> {
         const image = input as ScaleDpImage | undefined
+        // Check `exception` first. A failed upstream stage returns a well-formed but
+        // empty Image, so testing the bytes first would report "no decoded bytes" and
+        // bury the real cause.
+        if (image?.exception) {
+            throw new DetectionError(`Upstream stage failed: ${image.exception}`, this.name)
+        }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new DetectionError('Expected an Image with decoded bytes', this.name)
-        }
-        if (image.exception) {
-            throw new DetectionError(`Upstream stage failed: ${image.exception}`, this.name)
         }
 
         const bitmap = await decodeImage(image.data)

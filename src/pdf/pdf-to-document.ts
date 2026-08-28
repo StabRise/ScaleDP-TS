@@ -18,7 +18,7 @@ import { createDocument, type Document } from '../schemas/document.js'
 import { toBytes } from '../stages/data-to-image.js'
 import { extractTextBoxes } from './extract-text.js'
 import { POINTS_PER_INCH } from './pdf-to-image.js'
-import { documentOptions, loadPdfjs } from './pdfjs.js'
+import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
 import { splitRunsIntoWords } from './split-words.js'
 
 export interface PdfToDocumentParams extends BaseStageParams {
@@ -52,9 +52,11 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
 
         const pdfjs = await loadPdfjs()
         const task = pdfjs.getDocument(documentOptions(toBytes(input)))
-        const pdf = await task.promise
 
         try {
+            // pdf.js defers worker setup, so a missing worker surfaces on first
+            // page access rather than from task.promise.
+            const pdf = await task.promise
             const pageCount = pageLimit > 0 ? Math.min(pageLimit, pdf.numPages) : pdf.numPages
             const rows: Row[] = []
 
@@ -81,6 +83,8 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
                 }
             }
             return rows
+        } catch (error) {
+            throw describePdfError(error)
         } finally {
             await task.destroy()
         }
