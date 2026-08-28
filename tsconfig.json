@@ -18,5 +18,6 @@
         "noEmit": true,
         "types": []
     },
-    "include": ["src", "test"]
+    "include": ["src", "test"],
+    "exclude": ["examples"]
 }

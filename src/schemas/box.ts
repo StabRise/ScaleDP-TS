@@ -63,9 +63,12 @@ export function shape(box: Box, padding = 0): BoxShape {
 }
 
 /**
- * Python's `Box.scale` is deliberately asymmetric: the origin is scaled then
- * padded inward, while the size is scaled then padded outward — so padding
- * grows the box on all four sides rather than translating it.
+ * Scale a box, then apply padding.
+ *
+ * Note the padding is asymmetric, and deliberately so: Python subtracts it from
+ * the origin and adds it to the size, so the box grows by `padding` on its left
+ * and top while its right and bottom edges stay put. Growing all four sides
+ * would need `padding * 2` on the size.
  */
 export function scaleBox(box: Box, factor: number, padding = 0): Box {
     return {

@@ -71,10 +71,11 @@
         "typecheck": "tsc --noEmit",
         "lint": "biome check .",
         "lint:fix": "biome check --write .",
-        "test": "vitest run",
+        "test": "vitest run --project unit",
         "test:watch": "vitest",
         "test:browser": "vitest run --project browser",
-        "check:pkg": "publint && attw --pack . --profile esm-only"
+        "check:pkg": "publint && attw --pack . --profile esm-only",
+        "test:all": "vitest run"
     },
     "peerDependencies": {
         "@huggingface/transformers": ">=3.7.0",
@@ -108,9 +109,12 @@
         "@arethetypeswrong/cli": "^0.18.5",
         "@biomejs/biome": "^2.5.11",
         "@huggingface/transformers": "^3.8.1",
+        "@vitest/browser": "^4.1.11",
+        "@vitest/browser-playwright": "^4.1.11",
         "@vitest/coverage-v8": "^4.1.11",
         "onnxruntime-web": "^1.29.0",
         "pdfjs-dist": "^6.2.108",
+        "playwright": "^1.62.1",
         "ppu-paddle-ocr": "^6.4.3",
         "publint": "^0.3.24",
         "tesseract-wasm": "^0.11.0",

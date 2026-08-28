@@ -1,0 +1,22 @@
+{
+  "name": "scaledp-vite-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node copy-assets.mjs",
+    "dev": "vite",
+    "prebuild": "node copy-assets.mjs",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.3",
+    "@stabrise/scaledp": "link:../..",
+    "onnxruntime-web": "^1.29.0",
+    "pdfjs-dist": "^6.2.108",
+    "ppu-paddle-ocr": "^6.4.3"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
