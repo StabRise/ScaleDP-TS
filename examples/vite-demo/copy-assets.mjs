@@ -1,5 +1,10 @@
-// pdf.js needs its worker and data files served from the app's own origin.
-// A library cannot know where they live, so copying them is the app's job.
+// pdf.js loads its worker and data files at runtime from URLs the app provides,
+// so they have to be served from this app's own origin.
+//
+// onnxruntime-web's WASM runtime is deliberately NOT copied here. It defaults to
+// a version-matched CDN and the browser caches it on disk after the first load,
+// and Vite refuses to `import` anything out of public/, which is how ORT loads
+// its .mjs glue -- pointing ortWasmPaths at public/ breaks it outright.
 import { cp, mkdir } from 'node:fs/promises'
 
 const from = 'node_modules/pdfjs-dist'

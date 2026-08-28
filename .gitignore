@@ -61,3 +61,4 @@ yarn.lock
 # Demo lockfiles: the demo is a scratch app, not a shipped artifact.
 /examples/*/pnpm-lock.yaml
 /examples/*/public/sample.pdf
+/examples/*/public/ort/

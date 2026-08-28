@@ -30,6 +30,13 @@ export default defineConfig({
         ],
     },
     server: {
+        // Pin the port. Vite otherwise moves to the next free one when 5173 is
+        // busy, and because IndexedDB is scoped per origin, every new port is a
+        // fresh empty cache -- so the models appear to re-download on every run.
+        // Failing loudly is better than silently losing several hundred MB of
+        // cached weights.
+        port: 5173,
+        strictPort: true,
         // Vite refuses to serve files outside the project root by default, and
         // the build output lives one level up.
         fs: { allow: [resolve(here, '../..')] },

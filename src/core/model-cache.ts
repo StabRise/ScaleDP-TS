@@ -201,10 +201,19 @@ export async function ensureModelFiles(spec: ModelSpec, signal?: AbortSignal): P
 
     // Size everything up front so progress is a real percentage rather than a
     // byte count climbing toward an unknown ceiling.
-    let total = 0
-    for (const file of missing) {
-        total += await contentLength(fileUrl(spec, file.path), headers, file.approxBytes ?? 0)
-    }
+    //
+    // A declared `approxBytes` is used as-is: a HEAD costs a full round-trip per
+    // file (and on Hugging Face it follows a redirect to the CDN), which doubles
+    // the request count for a download that is already the slow part. Only
+    // files with no estimate are probed, and those probes run together.
+    const sizes = await Promise.all(
+        missing.map((file) =>
+            file.approxBytes
+                ? Promise.resolve(file.approxBytes)
+                : contentLength(fileUrl(spec, file.path), headers, 0)
+        )
+    )
+    const total = sizes.reduce((sum, size) => sum + size, 0)
 
     let loaded = 0
     for (const file of missing) {

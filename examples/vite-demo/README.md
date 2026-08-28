@@ -42,3 +42,13 @@ WebGPU neither header is needed.
 
 The NER checkbox is off by default: the first run downloads about 333 MB, which
 is then cached in IndexedDB.
+
+The header line reports whether the OCR models are already cached, and at which
+origin. That matters because IndexedDB is scoped per origin -- **including the
+port** -- so a dev server that moved from 5173 to 5174 has an empty cache and
+looks exactly like caching being broken. This dev server pins 5173 and fails if
+it is taken, rather than moving and silently losing the cache.
+
+onnxruntime-web's WASM runtime (~5 MB) is separate from the models. It comes
+from a version-matched CDN and lives in the browser's HTTP cache, so it appears
+in the network panel on every load even when served from disk.

@@ -92,6 +92,45 @@ configure({ modelHost: '/models' })
 Absolute URLs bypass `modelHost` entirely, which is how ppu-paddle-ocr's own
 catalogue keeps working.
 
+## When it looks like the cache is not working
+
+Two things routinely read as "the models download every time" and are neither a
+bug nor a model download.
+
+**The cache is scoped per origin.** IndexedDB is partitioned by scheme, host and
+**port**, so `http://localhost:5173` and `http://localhost:5174` have entirely
+separate caches. Vite silently moves to the next free port when one is busy, so
+restarting a dev server while an old one is still running lands you on a new
+origin with an empty cache. Pin the port (`server: { port: 5173, strictPort:
+true }`) so this fails loudly instead. The same applies in production to a
+scheme or host change.
+
+**The onnxruntime-web runtime is not a model.** ORT fetches a multi-megabyte
+`.wasm` at load time -- around 5 MB over the wire for the default build. It is
+served from a version-matched CDN and cached by the *browser's* HTTP cache, not
+by IndexedDB, so it appears in the network panel on every load even when it is
+a cache hit. DevTools' "Disable cache" checkbox turns those hits back into real
+downloads, which is worth ruling out first.
+
+To check what is actually happening rather than inferring it from the network
+panel:
+
+```ts
+import { isCached } from '@stabrise/scaledp'
+import { getNerModel } from '@stabrise/scaledp/ner'
+import { isPresetCached } from '@stabrise/scaledp/ocr'
+
+console.log(location.origin, await isPresetCached('v6-small'))
+
+const model = getNerModel('gliner-multi-pii')
+if (model) console.log(await isCached({ repo: model.repo, files: model.files }))
+```
+
+Self-hosting ORT's runtime (`configure({ ortWasmPaths: '/ort/' })`) removes the
+CDN round-trip in production. It cannot be served out of a Vite `public/`
+directory in dev, though: Vite refuses to `import` files from there, and ORT
+loads its `.mjs` glue by dynamic import.
+
 ## Managing the cache
 
 ```ts

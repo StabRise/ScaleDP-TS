@@ -3,9 +3,12 @@ import { PdfToImage } from '@stabrise/scaledp/pdf'
 import {
     PaddleTextRecognizer,
     isCrossOriginIsolated,
+    isPresetCached,
     isWebGpuAvailable,
 } from '@stabrise/scaledp/ocr'
 import { GlinerNer } from '@stabrise/scaledp/ner'
+
+const OCR_PRESET = 'v6-small'
 
 const progressEl = document.getElementById('progress') as HTMLElement
 const statusEl = document.getElementById('status') as HTMLElement
@@ -47,7 +50,24 @@ async function setup() {
         },
     })
     log(`WebGPU: ${webgpu ? 'yes' : 'no'} | cross-origin isolated: ${isCrossOriginIsolated()}`)
+    await reportCache()
 }
+
+/**
+ * Report whether the OCR models are already cached.
+ *
+ * Worth surfacing: the cache lives in IndexedDB, which is scoped per *origin*.
+ * Serving the demo on a different port is a different origin and therefore an
+ * empty cache, which looks exactly like caching being broken.
+ */
+async function reportCache() {
+    const cached = await isPresetCached(OCR_PRESET).catch(() => false)
+    log(
+        `OCR models (${OCR_PRESET}) at ${location.origin}: ` +
+            (cached ? 'cached, no download needed' : 'not cached, first run will download')
+    )
+}
+
 
 async function run(file: File) {
     statusEl.textContent = ''
@@ -59,7 +79,7 @@ async function run(file: File) {
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
     const stages = [
         isPdf ? new PdfToImage({ resolution: 200 }) : new DataToImage(),
-        new PaddleTextRecognizer({ preset: 'v6-small', keepFormatting: true }),
+        new PaddleTextRecognizer({ preset: OCR_PRESET, keepFormatting: true }),
     ]
     if (nerEl.checked) {
         stages.push(
