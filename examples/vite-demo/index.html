@@ -2,90 +2,123 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>scaledp-ts demo</title>
-    <style>
-      body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 64rem; }
-      #drop { border: 2px dashed #999; border-radius: 8px; padding: 3rem; text-align: center; cursor: pointer; }
-      #drop.over { border-color: #06c; background: #f0f6ff; }
-      #status, #progress { white-space: pre-wrap; font-family: ui-monospace, monospace; }
-      #progress { color: #06c; }
-      details { margin-top: 1rem; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; }
-      summary { cursor: pointer; font-weight: 600; }
-      .panel { margin-top: 0.75rem; }
-      .row { display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0; }
-      button { font: inherit; padding: 2px 10px; }
-      table { border-collapse: collapse; font-size: 13px; }
-      img { border: 1px solid #ddd; border-radius: 4px; }
-      fieldset { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 1rem; }
-      legend { font-weight: 600; padding: 0 0.4rem; }
-      select, input[type="text"] { font: inherit; padding: 2px 4px; }
-      #labels { flex: 1; min-width: 20rem; font-family: ui-monospace, monospace; font-size: 12px; }
-      .hint { color: #666; font-size: 12px; }
-      .hint.warn { color: #b26a00; }
-      .hint.ok { color: #0a7a34; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>scaledp-ts — read documents in the browser</title>
+
+    <!-- crossorigin is required: the page sets COEP require-corp for threaded
+         WASM, which blocks cross-origin subresources unless they are CORS-fetched. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      crossorigin
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>scaledp-ts</h1>
-    <p>Everything runs in this tab. No document is uploaded anywhere.</p>
+    <div class="grain" aria-hidden="true"></div>
 
-    <fieldset id="settings">
-      <legend>Models</legend>
-
-      <div class="row">
-        <label for="ocrModel">OCR</label>
-        <select id="ocrModel"></select>
-        <span id="ocrCache" class="hint"></span>
+    <header class="rail">
+      <div class="mark">
+        <span class="mark__dot"></span>
+        <span class="mark__name">scaledp<span class="mark__ts">-ts</span></span>
       </div>
+      <div class="caps" id="caps" role="status"></div>
+    </header>
 
-      <div class="row">
-        <label><input type="checkbox" id="ner" /> Run NER</label>
-        <select id="nerModel" disabled></select>
-        <span id="nerCache" class="hint"></span>
-      </div>
+    <main>
+      <section class="stage">
+        <h1 class="lede">
+          Read a document <em>without sending it anywhere.</em>
+        </h1>
+        <p class="sub">
+          Rendering, text detection, OCR and entity recognition all run in this
+          tab, on WebAssembly or WebGPU. The file never leaves your machine.
+        </p>
 
-      <div class="row" id="labelsRow" hidden>
-        <label for="labels">Labels</label>
-        <input type="text" id="labels" />
-        <button id="resetLabels" type="button">Reset</button>
-      </div>
-      <p class="hint" id="labelsHint" hidden>
-        GLiNER is zero-shot: these labels are the prompt, so renaming one asks a
-        different question. They default to the set the selected model was tuned on.
-      </p>
-    </fieldset>
-    <div id="drop">Drop a PDF or image here, or click to choose.</div>
-    <input type="file" id="file" accept="application/pdf,image/*" hidden />
+        <!-- The platen: the page's one signature element. Registration marks at
+             the corners, and a scan line that sweeps while stages run. -->
+        <button class="platen" id="drop" type="button">
+          <span class="platen__reg platen__reg--tl" aria-hidden="true"></span>
+          <span class="platen__reg platen__reg--tr" aria-hidden="true"></span>
+          <span class="platen__reg platen__reg--bl" aria-hidden="true"></span>
+          <span class="platen__reg platen__reg--br" aria-hidden="true"></span>
+          <span class="platen__beam" aria-hidden="true"></span>
+          <span class="platen__label" id="dropLabel">Drop a page</span>
+          <span class="platen__hint" id="dropHint">PDF or image · click to browse</span>
+        </button>
+        <input type="file" id="file" accept="application/pdf,image/*" hidden />
+      </section>
 
-    <div id="progress"></div>
-    <div id="status"></div>
-    <div id="timings"></div>
+      <section class="controls" aria-label="Models">
+        <div class="ctrl">
+          <span class="ctrl__key">OCR</span>
+          <select id="ocrModel" aria-label="OCR model"></select>
+          <span class="ctrl__state" id="ocrCache"></span>
+        </div>
 
-    <details id="panel-text" hidden open>
-      <summary>Recognized text</summary>
-      <div class="row">
-        <button id="copy" type="button">Copy</button>
-        <label><input type="checkbox" id="wrap" /> wrap lines</label>
-        <span id="textMeta"></span>
-      </div>
-      <div id="text" class="panel"></div>
-    </details>
+        <div class="ctrl">
+          <label class="switch">
+            <input type="checkbox" id="ner" />
+            <span class="switch__track"><span class="switch__knob"></span></span>
+            <span class="ctrl__key">NER</span>
+          </label>
+          <select id="nerModel" aria-label="NER model" disabled></select>
+          <span class="ctrl__state" id="nerCache"></span>
+        </div>
 
-    <details id="panel-entities" hidden open>
-      <summary>Entities</summary>
-      <div id="entities" class="panel"></div>
-      <div id="nerText" class="panel"></div>
-    </details>
+        <div class="ctrl ctrl--wide" id="labelsRow" hidden>
+          <span class="ctrl__key">Labels</span>
+          <input type="text" id="labels" aria-label="Entity labels" />
+          <button class="ghost" id="resetLabels" type="button">Reset</button>
+        </div>
+      </section>
 
-    <details id="panel-boxes" hidden>
-      <summary>Detected boxes</summary>
-      <div id="boxes" class="panel"></div>
-    </details>
+      <!-- The pipeline is genuinely ordered, and each stage's cost is real
+           information, so the trace is bars of measured time rather than decor. -->
+      <section class="trace" id="trace" hidden aria-label="Pipeline">
+        <ol id="traceList"></ol>
+        <p class="trace__total" id="traceTotal"></p>
+      </section>
 
-    <details id="panel-image" hidden open>
-      <summary>Page</summary>
-      <div id="image" class="panel"></div>
-    </details>
+      <p class="note" id="note" role="status"></p>
+
+      <section class="results" id="results" hidden>
+        <div class="col col--page">
+          <h2 class="col__head">Page<span id="pageMeta"></span></h2>
+          <div class="framed" id="image"></div>
+        </div>
+
+        <div class="col col--read">
+          <div class="tabs" role="tablist">
+            <button class="tab is-on" data-panel="text" role="tab">Text</button>
+            <button class="tab" data-panel="entities" role="tab" id="tabEntities" hidden>Entities</button>
+            <button class="tab" data-panel="boxes" role="tab">Boxes</button>
+          </div>
+
+          <div class="panel is-on" data-panel="text">
+            <div class="panel__bar">
+              <span id="textMeta"></span>
+              <span class="spacer"></span>
+              <label class="chk"><input type="checkbox" id="wrap" /> Wrap</label>
+              <button class="ghost" id="copy" type="button">Copy text</button>
+            </div>
+            <div class="scroll" id="text"></div>
+          </div>
+
+          <div class="panel" data-panel="entities">
+            <div class="scroll" id="entities"></div>
+            <h3 class="sub-head">In context</h3>
+            <div class="scroll" id="nerText"></div>
+          </div>
+
+          <div class="panel" data-panel="boxes">
+            <div class="scroll" id="boxes"></div>
+          </div>
+        </div>
+      </section>
+    </main>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

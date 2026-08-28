@@ -1,0 +1,694 @@
+/*
+ * Lightbox.
+ *
+ * The subject is a document scanner, so the page is built like one: a dark
+ * instrument housing with the specimen -- the actual scanned page -- as the
+ * only bright thing on screen. Same reason photo and film tools are dark; a
+ * neutral dark surround raises the perceived contrast of the page you are
+ * inspecting.
+ *
+ * The two accents are the false-colour language OCR tools already use: cyan is
+ * what the machine found, magenta is what it understood. The chrome borrows
+ * them so the interface and the overlay agree.
+ */
+
+:root {
+    --housing: #0c0f14;
+    --panel: #141922;
+    --raised: #1b212c;
+    --rule: #262e3a;
+    --readout: #78849a;
+    --label: #ced7e4;
+    --bright: #f2f6fc;
+
+    --detect: #3fc9f5;
+    --entity: #ff5c8a;
+    --flag: #f0a94c;
+
+    --gap: clamp(1rem, 2.5vw, 2rem);
+    --radius: 10px;
+
+    --display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+/*
+ * The UA's [hidden] rule is display:none at the lowest specificity, so any
+ * class that sets display -- .results is a grid, .ctrl is a flex row -- beats
+ * it and the element stays visible. Restore the attribute's meaning once here
+ * rather than special-casing every component.
+ */
+[hidden] {
+    display: none !important;
+}
+
+html {
+    color-scheme: dark;
+}
+
+body {
+    margin: 0;
+    background: var(--housing);
+    color: var(--label);
+    font-family: var(--display);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* A faint machined texture, so the housing is not a flat fill. */
+.grain {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+        radial-gradient(1100px 600px at 50% -15%, rgba(63, 201, 245, 0.07), transparent 70%),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px);
+}
+
+main {
+    position: relative;
+    z-index: 1;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 var(--gap) 5rem;
+}
+
+/* ── Status rail ─────────────────────────────────────────────────────── */
+
+.rail {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 1.1rem var(--gap);
+    border-bottom: 1px solid var(--rule);
+}
+
+.mark {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.mark__dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--detect);
+    box-shadow: 0 0 0 3px rgba(63, 201, 245, 0.16);
+}
+
+.mark__ts {
+    color: var(--readout);
+    font-weight: 400;
+}
+
+.caps {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+}
+
+.cap {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    color: var(--readout);
+    white-space: nowrap;
+}
+
+.cap[data-on='true'] {
+    border-color: rgba(63, 201, 245, 0.45);
+    color: var(--detect);
+}
+
+/* ── Stage ───────────────────────────────────────────────────────────── */
+
+.stage {
+    padding: clamp(2rem, 5.5vw, 3.5rem) 0 1.75rem;
+}
+
+.lede {
+    margin: 0;
+    max-width: 20ch;
+    font-size: clamp(2.1rem, 6.2vw, 3.9rem);
+    font-weight: 700;
+    line-height: 1.03;
+    letter-spacing: -0.045em;
+    color: var(--bright);
+}
+
+.lede em {
+    display: block;
+    font-style: normal;
+    color: var(--detect);
+}
+
+.sub {
+    max-width: 52ch;
+    margin: 1.1rem 0 2.2rem;
+    color: var(--readout);
+}
+
+/* ── The platen: signature element ───────────────────────────────────── */
+
+.platen {
+    position: relative;
+    display: grid;
+    place-content: center;
+    gap: 0.35rem;
+    width: 100%;
+    min-height: 11rem;
+    padding: 2.25rem;
+    overflow: hidden;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-align: center;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 45%),
+        var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    transition: border-color 0.18s, background-color 0.18s, transform 0.18s;
+}
+
+.platen:hover,
+.platen:focus-visible {
+    border-color: rgba(63, 201, 245, 0.5);
+}
+
+.platen.is-over {
+    border-color: var(--detect);
+    background-color: var(--raised);
+    transform: scale(1.005);
+}
+
+/* Registration marks: the corner crops on a press sheet. They say "this is a
+   page being placed", which is exactly the gesture the control invites. */
+.platen__reg {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 1px solid #3a4453;
+    transition: border-color 0.18s;
+}
+
+.platen.is-over .platen__reg,
+.platen:hover .platen__reg {
+    border-color: var(--detect);
+}
+
+.platen__reg--tl { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
+.platen__reg--tr { top: 14px; right: 14px; border-left: 0; border-bottom: 0; }
+.platen__reg--bl { bottom: 14px; left: 14px; border-right: 0; border-top: 0; }
+.platen__reg--br { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
+
+/* The scan beam sweeps only while stages are running, so the motion reports
+   real work rather than decorating the wait. */
+.platen__beam {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 34%;
+    opacity: 0;
+    background: linear-gradient(180deg, transparent, rgba(63, 201, 245, 0.16), transparent);
+    border-bottom: 1px solid rgba(63, 201, 245, 0.5);
+}
+
+.platen.is-reading .platen__beam {
+    opacity: 1;
+    animation: sweep 1.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+@keyframes sweep {
+    0% { transform: translateY(-110%); }
+    100% { transform: translateY(320%); }
+}
+
+.platen__label {
+    font-size: 1.25rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--bright);
+}
+
+.platen__hint {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--readout);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+
+.controls {
+    display: grid;
+    /* An implicit grid column sizes to max-content, so without this the rows
+       stretch to the widest <option> and drag the page past the viewport. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.55rem;
+    margin-top: 1.4rem;
+}
+
+.ctrl {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    padding: 0.6rem 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+}
+
+.ctrl__key {
+    min-width: 3.4rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.ctrl__state {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+/* Below the control row's comfortable width the state note drops to its own
+   line rather than forcing the row wider than the screen. */
+@media (max-width: 620px) {
+    .ctrl__state {
+        margin-left: 0;
+        flex-basis: 100%;
+    }
+}
+
+.ctrl__state[data-state='ready'] { color: var(--detect); }
+.ctrl__state[data-state='pending'] { color: var(--flag); }
+
+select,
+input[type='text'] {
+    font: inherit;
+    font-size: 13px;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.32rem 0.55rem;
+    /* A select's intrinsic width is its longest option, and it will not shrink
+       past that without min-width: 0 -- which is what pushed the control rows
+       past the viewport on a phone. */
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 11rem;
+}
+
+input[type='text'] {
+    flex: 1 1 12rem;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+select:disabled {
+    opacity: 0.4;
+}
+
+select:focus-visible,
+input:focus-visible,
+button:focus-visible {
+    outline: 2px solid var(--detect);
+    outline-offset: 2px;
+}
+
+/* A switch rather than a checkbox: turning NER on commits to a large download,
+   which deserves to feel like throwing a switch. */
+.switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    cursor: pointer;
+}
+
+/* Visually hidden but still a real, hit-testable control. Collapsing it to
+   0x0 can drop it out of the accessibility tree in some assistive tech. */
+.switch input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.switch__track {
+    display: inline-block;
+    position: relative;
+    width: 34px;
+    height: 19px;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    transition: background-color 0.16s, border-color 0.16s;
+}
+
+.switch__knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--readout);
+    transition: transform 0.16s, background-color 0.16s;
+}
+
+.switch input:checked + .switch__track {
+    border-color: var(--detect);
+    background: rgba(63, 201, 245, 0.18);
+}
+
+.switch input:checked + .switch__track .switch__knob {
+    transform: translateX(15px);
+    background: var(--detect);
+}
+
+.switch input:focus-visible + .switch__track {
+    outline: 2px solid var(--detect);
+    outline-offset: 2px;
+}
+
+.ghost {
+    font: inherit;
+    font-size: 12px;
+    color: var(--label);
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.ghost:hover {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+/* ── Pipeline trace ──────────────────────────────────────────────────── */
+
+.trace {
+    margin-top: 1.6rem;
+    padding: 0.9rem 1rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+}
+
+.trace ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.35rem;
+}
+
+.trace li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 0.7rem;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.trace__name {
+    position: relative;
+    padding-left: 0.6rem;
+    color: var(--label);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* The bar is the stage's share of total time -- measured, not illustrative. */
+.trace__bar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-left: 2px solid var(--detect);
+    border-radius: 2px;
+    background: linear-gradient(90deg, rgba(63, 201, 245, 0.22), rgba(63, 201, 245, 0.03));
+}
+
+/* Sits above the bar. A negative z-index would push it behind the panel's own
+   background instead, which is where it disappeared. */
+.trace__text {
+    position: relative;
+}
+
+.trace__ms {
+    color: var(--readout);
+    font-variant-numeric: tabular-nums;
+}
+
+.trace__total {
+    margin: 0.7rem 0 0;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--readout);
+}
+
+.note {
+    margin: 1rem 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--flag);
+    white-space: pre-wrap;
+}
+
+.note:empty {
+    display: none;
+}
+
+/* ── Results ─────────────────────────────────────────────────────────── */
+
+.results {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: var(--gap);
+    margin-top: 2rem;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .results {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.col__head,
+.sub-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.sub-head {
+    margin-top: 1rem;
+}
+
+.col__head span {
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.framed {
+    padding: 0.5rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+}
+
+.framed img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.6rem;
+}
+
+.tab {
+    font: inherit;
+    font-size: 12px;
+    color: var(--readout);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+}
+
+.tab:hover {
+    color: var(--label);
+}
+
+.tab.is-on {
+    color: var(--bright);
+    background: var(--panel);
+    border-color: var(--rule);
+}
+
+.panel {
+    display: none;
+}
+
+.panel.is-on {
+    display: block;
+}
+
+.panel__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+}
+
+.spacer {
+    flex: 1;
+}
+
+.chk {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+}
+
+.scroll {
+    max-height: 30rem;
+    overflow: auto;
+    padding: 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+}
+
+/* The library's display helpers emit unstyled DOM; theme it from here so the
+   consuming app keeps full control of appearance. */
+.scroll pre {
+    margin: 0;
+    font-family: var(--mono) !important;
+    font-size: 12px !important;
+    color: var(--label);
+}
+
+.scroll table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 11.5px;
+}
+
+.scroll th,
+.scroll td {
+    border: 0 !important;
+    border-bottom: 1px solid var(--rule) !important;
+    padding: 0.35rem 0.5rem !important;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.scroll th {
+    position: sticky;
+    top: -0.85rem;
+    background: var(--panel);
+    color: var(--readout);
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 10px;
+}
+
+.scroll td {
+    color: var(--label);
+    font-variant-numeric: tabular-nums;
+}
+
+.scroll p {
+    margin: 0.6rem 0 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+}
+
+.scroll .scaledp-ner-text {
+    color: var(--label);
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+
+    /* The beam still marks "working", it just holds still. */
+    .platen.is-reading .platen__beam {
+        opacity: 1;
+        transform: translateY(120%);
+    }
+}

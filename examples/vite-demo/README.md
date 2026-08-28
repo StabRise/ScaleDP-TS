@@ -75,3 +75,30 @@ it is taken, rather than moving and silently losing the cache.
 onnxruntime-web's WASM runtime (~5 MB) is separate from the models. It comes
 from a version-matched CDN and lives in the browser's HTTP cache, so it appears
 in the network panel on every load even when served from disk.
+
+## Design notes
+
+The interface is built as a **lightbox**: a dark instrument housing with the
+scanned page as the only bright thing on screen, for the same reason photo and
+film tools are dark -- a neutral surround raises the perceived contrast of the
+thing you are inspecting.
+
+The two accents are the false-colour language OCR tools already use. Cyan is
+what the machine *found*, magenta is what it *understood*, and the page uses
+the same two colours as the chrome, so the overlay and the interface agree.
+Boxes are drawn by two chained `ImageDrawBoxes` stages -- one per colour --
+rather than one, because a single stage takes one colour for all its sources.
+
+The drop target carries registration marks at its corners, the crop marks on a
+press sheet, and a scan beam sweeps it while stages run. The beam is tied to
+real work: it starts when the pipeline starts and stops when it finishes, so it
+reports rather than decorates. It holds still under `prefers-reduced-motion`.
+
+The pipeline trace is bars of measured time, not illustration -- each bar is
+that stage's share of the total, which is usually a lesson in itself (OCR is
+~99% of the run; drawing the boxes is 20 ms).
+
+Type is Space Grotesk for the interface and JetBrains Mono for anything the
+machine produced: recognized text, timings, box tables, capability chips. That
+split is load-bearing rather than stylistic -- the recognized text needs a
+monospace face for its preserved layout to line up at all.
