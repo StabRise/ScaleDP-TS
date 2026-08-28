@@ -40,8 +40,31 @@ onnxruntime-web can use multi-threaded WASM. Watch the header line: it reports
 whether WebGPU is available and whether the page is cross-origin isolated. On
 WebGPU neither header is needed.
 
-The NER checkbox is off by default: the first run downloads about 333 MB, which
-is then cached in IndexedDB.
+## Choosing models
+
+Both engines have a picker.
+
+**OCR** offers all 14 PaddleOCR presets. No single model covers every script, so
+this is a real choice: `v6-small` handles Latin and CJK, `v5-eslav-mobile` adds
+Cyrillic, `v5-en-mobile` is English-only and the fastest. Each preset caches
+separately, so switching back to one you have used is instant.
+
+**NER** lists the model registry with each entry's size, languages and
+architecture. Two of them live in private StabRise repos and are shown disabled:
+they need `configure({ auth })` to supply a token, which this demo does not.
+
+Selections are remembered across reloads, and a remembered id that has since
+become private or been removed falls back to the default rather than failing
+mid-pipeline.
+
+The label field defaults to the set the selected model was tuned on. GLiNER is
+zero-shot -- the labels *are* the prompt -- so renaming one asks a different
+question, and the GLiNER2 model in particular scores lower against any other
+wording.
+
+The NER checkbox is off by default: the first run downloads 183-349 MB depending
+on the model, which is then cached in IndexedDB. The indicator beside each
+picker says whether that download is still needed.
 
 The header line reports whether the OCR models are already cached, and at which
 origin. That matters because IndexedDB is scoped per origin -- **including the

@@ -1,4 +1,4 @@
-import { DataToImage, ImageDrawBoxes, Pipeline, configure, type Row } from '@stabrise/scaledp'
+import { DataToImage, ImageDrawBoxes, Pipeline, configure, isCached, type Row } from '@stabrise/scaledp'
 import {
     renderInto,
     showBoxes,
@@ -7,9 +7,18 @@ import {
     showText,
     visualizeNer,
 } from '@stabrise/scaledp/display'
-import { GlinerNer } from '@stabrise/scaledp/ner'
 import {
+    DEFAULT_NER_MODEL_ID,
+    GlinerNer,
+    NER_MODELS,
+    getNerModel,
+    modelSizeBytes,
+} from '@stabrise/scaledp/ner'
+import {
+    DEFAULT_OCR_PRESET,
+    PADDLE_OCR_PRESETS,
     PaddleTextRecognizer,
+    isKnownPreset,
     isCrossOriginIsolated,
     isPresetCached,
     isWebGpuAvailable,
@@ -18,8 +27,6 @@ import { PdfToImage } from '@stabrise/scaledp/pdf'
 
 import type { Document, NerOutput, ScaleDpImage } from '@stabrise/scaledp/display'
 
-const OCR_PRESET = 'v6-small'
-const NER_LABELS = ['person', 'organization', 'email', 'phone', 'address', 'date']
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -29,6 +36,14 @@ const timingsEl = el('timings')
 const dropEl = el('drop')
 const fileEl = el<HTMLInputElement>('file')
 const nerEl = el<HTMLInputElement>('ner')
+const ocrModelEl = el<HTMLSelectElement>('ocrModel')
+const nerModelEl = el<HTMLSelectElement>('nerModel')
+const ocrCacheEl = el('ocrCache')
+const nerCacheEl = el('nerCache')
+const labelsEl = el<HTMLInputElement>('labels')
+const labelsRow = el('labelsRow')
+const labelsHint = el('labelsHint')
+const resetLabelsEl = el<HTMLButtonElement>('resetLabels')
 const copyEl = el<HTMLButtonElement>('copy')
 const wrapEl = el<HTMLInputElement>('wrap')
 const textMetaEl = el('textMeta')
@@ -72,15 +87,112 @@ async function setup() {
     })
 
     log(`WebGPU: ${webgpu ? 'yes' : 'no'} | cross-origin isolated: ${isCrossOriginIsolated()}`)
-
-    // The cache is scoped per origin, port included, so a dev server that moved
-    // to a different port has an empty cache and looks like caching is broken.
-    const cached = await isPresetCached(OCR_PRESET).catch(() => false)
-    log(
-        `OCR models (${OCR_PRESET}) at ${location.origin}: ` +
-            (cached ? 'cached, no download needed' : 'not cached, first run will download')
-    )
+    populateModelPickers()
+    await refreshCacheStatus()
 }
+
+/** Remember the chosen models across reloads. */
+const remember = (key: string, value: string) => {
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Private windows can refuse storage; the picker still works.
+    }
+}
+const recall = (key: string, fallback: string): string => {
+    try {
+        return localStorage.getItem(key) ?? fallback
+    } catch {
+        return fallback
+    }
+}
+
+function populateModelPickers() {
+    for (const preset of PADDLE_OCR_PRESETS) {
+        const option = new Option(preset.label, preset.value)
+        option.title = preset.scripts.join(', ')
+        ocrModelEl.add(option)
+    }
+    const rememberedPreset = recall('ocrModel', DEFAULT_OCR_PRESET)
+    ocrModelEl.value = isKnownPreset(rememberedPreset) ? rememberedPreset : DEFAULT_OCR_PRESET
+
+    for (const model of NER_MODELS) {
+        const size = Math.round(modelSizeBytes(model) / 1e6)
+        const option = new Option(
+            `${model.name} - ${model.languages.join('/')}${model.private ? ' [private]' : ''}`,
+            model.id
+        )
+        // Private repos need configure({ auth }); this demo supplies none, so
+        // offering them would only produce a confusing 401 mid-pipeline.
+        option.disabled = model.private === true
+        option.title = `${model.arch}, ${size} MB, ${model.repo}`
+        nerModelEl.add(option)
+    }
+    // A remembered id can go stale -- the model may have been removed from the
+    // registry, or become private since it was chosen. Fall back rather than
+    // failing mid-pipeline.
+    const remembered = recall('nerModel', DEFAULT_NER_MODEL_ID)
+    const usable = getNerModel(remembered)
+    nerModelEl.value = usable && !usable.private ? remembered : DEFAULT_NER_MODEL_ID
+    applyModelLabels()
+}
+
+/**
+ * Default the labels to the set the selected model was tuned on. GLiNER scores
+ * a label by its prompt text, so the GLiNER2 model in particular drops accuracy
+ * against any other wording.
+ */
+function applyModelLabels() {
+    const model = getNerModel(nerModelEl.value)
+    labelsEl.value = (model?.labels ?? []).join(', ')
+}
+
+const currentLabels = (): string[] =>
+    labelsEl.value
+        .split(',')
+        .map((label) => label.trim())
+        .filter(Boolean)
+
+/**
+ * Report whether each selected model is already cached.
+ *
+ * The cache is scoped per origin, port included, so a dev server that moved to
+ * a different port has an empty cache and looks like caching is broken.
+ */
+async function refreshCacheStatus() {
+    const preset = ocrModelEl.value
+    const ocrCached = await isPresetCached(preset).catch(() => false)
+    ocrCacheEl.textContent = ocrCached ? 'cached' : 'will download on first run'
+    ocrCacheEl.className = `hint ${ocrCached ? 'ok' : 'warn'}`
+
+    const model = getNerModel(nerModelEl.value)
+    if (!model) {
+        nerCacheEl.textContent = ''
+        return
+    }
+    const size = Math.round(modelSizeBytes(model) / 1e6)
+    const nerCached = await isCached({ repo: model.repo, files: model.files }).catch(() => false)
+    nerCacheEl.textContent = nerCached ? 'cached' : `will download ~${size} MB on first run`
+    nerCacheEl.className = `hint ${nerCached ? 'ok' : 'warn'}`
+}
+
+function syncNerControls() {
+    nerModelEl.disabled = !nerEl.checked
+    labelsRow.hidden = !nerEl.checked
+    labelsHint.hidden = !nerEl.checked
+}
+
+ocrModelEl.addEventListener('change', () => {
+    remember('ocrModel', ocrModelEl.value)
+    void refreshCacheStatus()
+})
+nerModelEl.addEventListener('change', () => {
+    remember('nerModel', nerModelEl.value)
+    applyModelLabels()
+    void refreshCacheStatus()
+})
+nerEl.addEventListener('change', syncNerControls)
+resetLabelsEl.addEventListener('click', applyModelLabels)
 
 async function run(file: File) {
     statusEl.textContent = ''
@@ -92,10 +204,12 @@ async function run(file: File) {
 
     const stages = [
         isPdf ? new PdfToImage({ resolution: 200 }) : new DataToImage(),
-        new PaddleTextRecognizer({ preset: OCR_PRESET, keepFormatting: true }),
+        new PaddleTextRecognizer({ preset: ocrModelEl.value, keepFormatting: true }),
     ]
     if (nerEl.checked) {
-        stages.push(new GlinerNer({ labels: NER_LABELS }))
+        const labels = currentLabels()
+        if (labels.length === 0) throw new Error('NER needs at least one label')
+        stages.push(new GlinerNer({ model: nerModelEl.value, labels }))
     }
     // Draw the boxes as a pipeline stage rather than by hand, which is how
     // ScaleDP does it -- the annotated page is just another Image column.
@@ -116,6 +230,7 @@ async function run(file: File) {
     progressEl.textContent = ''
     render(rows[0])
     await pipeline.dispose()
+    await refreshCacheStatus()
 }
 
 function render(row: Row | undefined) {
@@ -180,4 +295,5 @@ dropEl.addEventListener('drop', (event) => {
     if (file) void run(file).catch((error) => log(`error: ${error.message}`))
 })
 
+syncNerControls()
 void setup()

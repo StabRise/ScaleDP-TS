@@ -16,15 +16,44 @@
       button { font: inherit; padding: 2px 10px; }
       table { border-collapse: collapse; font-size: 13px; }
       img { border: 1px solid #ddd; border-radius: 4px; }
+      fieldset { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 1rem; }
+      legend { font-weight: 600; padding: 0 0.4rem; }
+      select, input[type="text"] { font: inherit; padding: 2px 4px; }
+      #labels { flex: 1; min-width: 20rem; font-family: ui-monospace, monospace; font-size: 12px; }
+      .hint { color: #666; font-size: 12px; }
+      .hint.warn { color: #b26a00; }
+      .hint.ok { color: #0a7a34; }
     </style>
   </head>
   <body>
     <h1>scaledp-ts</h1>
     <p>Everything runs in this tab. No document is uploaded anywhere.</p>
 
-    <div class="row">
-      <label><input type="checkbox" id="ner" /> Run NER (downloads ~333&nbsp;MB the first time)</label>
-    </div>
+    <fieldset id="settings">
+      <legend>Models</legend>
+
+      <div class="row">
+        <label for="ocrModel">OCR</label>
+        <select id="ocrModel"></select>
+        <span id="ocrCache" class="hint"></span>
+      </div>
+
+      <div class="row">
+        <label><input type="checkbox" id="ner" /> Run NER</label>
+        <select id="nerModel" disabled></select>
+        <span id="nerCache" class="hint"></span>
+      </div>
+
+      <div class="row" id="labelsRow" hidden>
+        <label for="labels">Labels</label>
+        <input type="text" id="labels" />
+        <button id="resetLabels" type="button">Reset</button>
+      </div>
+      <p class="hint" id="labelsHint" hidden>
+        GLiNER is zero-shot: these labels are the prompt, so renaming one asks a
+        different question. They default to the set the selected model was tuned on.
+      </p>
+    </fieldset>
     <div id="drop">Drop a PDF or image here, or click to choose.</div>
     <input type="file" id="file" accept="application/pdf,image/*" hidden />
 
