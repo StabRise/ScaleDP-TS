@@ -179,6 +179,54 @@ the browser.
 | `unclipRatio` | `2.5` | How far to grow each box; DB shrinks regions in training |
 | `mergeBoxes` | `true` | Merge overlapping boxes on the same line |
 
+### `LineOrientationDetector`
+
+Classifies each detected region 0 or 180 degrees and turns the inverted ones, so
+an upside-down line reads as text instead of noise. Port of ScaleDP's
+`HasDetectLineOrientation`, which `TesseractRecognizer` mixes in.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `inputCols` | `['image', 'boxes']` | `[imageColumn, boxColumn]` |
+| `outputCol` | `'oriented'` | The corrected image |
+| `orientationCol` | `'orientations'` | One label per box |
+| `model` | `'StabRise/line_orientation_detection_v0.1'` | ~9 MB |
+| `correct` | `true` | Turn the inverted regions; off classifies only |
+| `onlyRotated` | `true` | Classify only boxes that are already rotated |
+| `padding` | `2` | Grow each box before cropping |
+
+It needs boxes, so it goes between a detector and a recognizer:
+
+```ts
+new Pipeline([
+  new PdfToImage(),
+  new DbnetOnnxDetector({ outputCol: 'boxes' }),
+  new LineOrientationDetector({ inputCols: ['image', 'boxes'] }),
+  new PaddleTextRecognizer({ inputCol: 'oriented' }),
+])
+```
+
+Python corrects each crop inside the recognizer. Here it is a separate stage,
+because `PaddleTextRecognizer` detects and recognises in one pass and offers no
+seam to hook into. Turning each inverted region in place on a copy of the page
+reaches the same result with one recognition pass rather than one per box, and
+because a rectangle maps onto itself under a 180-degree rotation about its own
+centre, every box's coordinates stay valid. The turn is clipped to the box's own
+rotated outline; without that a skewed box drags its neighbours through the
+rotation with it.
+
+**On `onlyRotated`, measured rather than assumed.** The classifier has a real
+false-positive rate. On an upright invoice with the gate off it called 1 of 81
+upright regions inverted, and turning that region cost about 40 characters of
+recognition. Defaulting to rotated boxes only -- as ScaleDP does -- is where the
+signal actually is.
+
+The cost of that default is the case it misses: an upside-down *horizontal*
+line. Verified on a page with one such line, `onlyRotated: false` recovers it
+(`Th sd s ie own` becomes `This line is upside down`), while the default skips
+it. Turn the gate off when a document may contain inverted horizontal text, and
+leave it on otherwise.
+
 ### `TesseractOcr`
 
 | Parameter | Default |

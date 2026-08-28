@@ -12,6 +12,7 @@ schemas. What differs is the runtime.
 | `PdfDataToText` | `PdfToDocument` (`/pdf`) | Boxes in pixels, not points |
 | `PdfDataToDocument` | `PdfToDocument` (`/pdf`) | One stage covers both |
 | `TesseractOcr` | `TesseractOcr` (`/ocr`) | tesseract-wasm; no PSM/OEM |
+| `HasDetectLineOrientation` | `LineOrientationDetector` (`/ocr`) | A stage, not a recognizer mixin |
 | `EasyOcr`, `SuryaOcr`, `DocTROcr` | `PaddleTextRecognizer` (`/ocr`) | No browser builds of those engines |
 | `DBNetOnnxDetector` | `DbnetOnnxDetector` (`/ocr`) | Same model, same thresholds |
 | `CraftTextDetector` | — | PyTorch only |

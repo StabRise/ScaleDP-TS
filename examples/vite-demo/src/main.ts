@@ -31,7 +31,9 @@ import {
     DEFAULT_DETECTOR_ID,
     DEFAULT_OCR_PRESET,
     DETECTOR_MODELS,
+    DEFAULT_ORIENTATION_MODEL,
     DbnetOnnxDetector,
+    LineOrientationDetector,
     PADDLE_OCR_PRESETS,
     PaddleTextDetector,
     PaddleTextRecognizer,
@@ -62,6 +64,8 @@ const ocrModelEl = el<HTMLSelectElement>('ocrModel')
 const nerModelEl = el<HTMLSelectElement>('nerModel')
 const detModelEl = el<HTMLSelectElement>('detModel')
 const detCacheEl = el('detCache')
+const orientEl = el<HTMLInputElement>('orient')
+const orientCacheEl = el('orientCache')
 const ocrCacheEl = el('ocrCache')
 const nerCacheEl = el('nerCache')
 const nerEl = el<HTMLInputElement>('ner')
@@ -227,11 +231,28 @@ async function refreshCacheStatus() {
         setState(detCacheEl, 'included in the OCR preset', true)
     }
 
+    const orientCached = await isCached({
+        repo: DEFAULT_ORIENTATION_MODEL,
+        files: [{ path: 'model.onnx', approxBytes: 9_000_000 }],
+    }).catch(() => false)
+    setState(orientCacheEl, orientCached ? 'cached' : 'downloads ~9 MB on first run', orientCached)
+
     const model = getNerModel(nerModelEl.value)
     if (!model) return
     const size = Math.round(modelSizeBytes(model) / 1e6)
     const nerCached = await isCached({ repo: model.repo, files: model.files }).catch(() => false)
     setState(nerCacheEl, nerCached ? 'cached' : `downloads ${size} MB on first run`, nerCached)
+}
+
+/**
+ * Orientation correction consumes boxes, so it needs a standalone detector.
+ * Say so rather than silently doing nothing.
+ */
+function syncOrientHint() {
+    const needsDetector = orientEl.checked && detModelEl.value === DEFAULT_DETECTOR_ID
+    orientCacheEl.dataset.state = needsDetector ? 'pending' : orientCacheEl.dataset.state ?? 'ready'
+    if (needsDetector) orientCacheEl.textContent = 'pick a detector above to enable'
+    else void refreshCacheStatus()
 }
 
 function syncNerControls() {
@@ -264,7 +285,29 @@ async function run(file: File) {
         stages.push(new PaddleTextDetector({ preset: ocrModelEl.value, outputCol: 'detected' }))
     }
 
-    stages.push(new PaddleTextRecognizer({ preset: ocrModelEl.value, keepFormatting: true }))
+    // Correcting orientation needs boxes, so it sits between a detector and the
+    // recognizer -- and therefore needs a standalone detector to have run.
+    const canOrient = orientEl.checked && stages.some((s) => s.name.includes('Detector'))
+    if (canOrient) {
+        stages.push(
+            new LineOrientationDetector({
+                inputCols: ['image', 'detected'],
+                // The library defaults to rotated boxes only, as ScaleDP does.
+                // Here the point is to exercise the check, and the note below
+                // reports how many regions were turned so its accuracy is
+                // visible rather than assumed.
+                onlyRotated: false,
+            })
+        )
+    }
+
+    stages.push(
+        new PaddleTextRecognizer({
+            inputCol: canOrient ? 'oriented' : 'image',
+            preset: ocrModelEl.value,
+            keepFormatting: true,
+        })
+    )
     if (nerEl.checked) {
         const labels = currentLabels()
         if (labels.length === 0) throw new Error('Add at least one label before running NER.')
@@ -386,6 +429,16 @@ function render(row: Row | undefined) {
         pageMetaEl.textContent = `${annotated.width}×${annotated.height} · ${document_.bboxes.length} boxes`
     }
 
+    const orientations = row.orientations as string[] | undefined
+    if (orientations) {
+        const flipped = orientations.filter((o) => o === '180_degree').length
+        note(
+            flipped > 0
+                ? `Line orientation: ${flipped} of ${orientations.length} regions turned 180°.`
+                : `Line orientation: all ${orientations.length} regions upright.`
+        )
+    }
+
     const detected = row.detected as DetectorOutput | undefined
     tabDetect.hidden = !detected
     if (detected) {
@@ -459,7 +512,13 @@ rerunEl.addEventListener('click', () => {
 })
 
 platenEl.addEventListener('click', () => fileEl.click())
-fileEl.addEventListener('change', () => accept(fileEl.files?.[0]))
+fileEl.addEventListener('change', () => {
+    const file = fileEl.files?.[0]
+    // Clear the input, or picking the same file again fires no change event and
+    // nothing happens -- which reads as the app ignoring the click.
+    fileEl.value = ''
+    accept(file)
+})
 
 for (const event of ['dragenter', 'dragover'] as const) {
     platenEl.addEventListener(event, (e) => {
@@ -488,6 +547,7 @@ ocrModelEl.addEventListener('change', () => {
 detModelEl.addEventListener('change', () => {
     remember('detModel', detModelEl.value)
     markStale('Detector')
+    syncOrientHint()
     void refreshCacheStatus()
 })
 nerModelEl.addEventListener('change', () => {
@@ -499,6 +559,10 @@ nerModelEl.addEventListener('change', () => {
 nerEl.addEventListener('change', () => {
     syncNerControls()
     markStale('NER')
+})
+orientEl.addEventListener('change', () => {
+    syncOrientHint()
+    markStale('Orientation')
 })
 labelsEl.addEventListener('input', () => markStale('Labels'))
 resetLabelsEl.addEventListener('click', () => {
@@ -520,4 +584,4 @@ wrapEl.addEventListener('change', () => {
 })
 
 syncNerControls()
-void setup()
+void setup().then(syncOrientHint)

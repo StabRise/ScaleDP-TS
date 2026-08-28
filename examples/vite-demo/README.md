@@ -55,6 +55,12 @@ ONNX model instead runs it as a separate stage and draws its boxes in violet
 beside the recognizer's cyan, so the two can be compared directly on the page --
 which is the reason to pick a detector at all.
 
+**Orient** turns upside-down lines before reading them. It needs boxes, so it
+only applies when a standalone detector is selected. The demo checks every
+region rather than only the rotated ones, which is the library's default, and
+reports how many were turned -- the classifier has a real false-positive rate
+and it is better seen than assumed.
+
 **NER** lists the model registry with each entry's size, languages and
 architecture. Two of them live in private StabRise repos and are shown disabled:
 they need `configure({ auth })` to supply a token, which this demo does not.

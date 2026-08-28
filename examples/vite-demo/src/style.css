@@ -334,6 +334,11 @@ main {
     color: var(--readout);
 }
 
+.ctrl__hint {
+    font-size: 12px;
+    color: var(--readout);
+}
+
 .ctrl__state {
     font-family: var(--mono);
     font-size: 11px;
@@ -345,7 +350,12 @@ main {
 /* Below the control row's comfortable width the state note drops to its own
    line rather than forcing the row wider than the screen. */
 @media (max-width: 620px) {
-    .ctrl__state {
+    .ctrl__hint {
+    font-size: 12px;
+    color: var(--readout);
+}
+
+.ctrl__state {
         margin-left: 0;
         flex-basis: 100%;
     }

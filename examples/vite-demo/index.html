@@ -70,6 +70,16 @@
 
         <div class="ctrl">
           <label class="switch">
+            <input type="checkbox" id="orient" />
+            <span class="switch__track"><span class="switch__knob"></span></span>
+            <span class="ctrl__key">Orient</span>
+          </label>
+          <span class="ctrl__hint">Turn upside-down lines before reading them</span>
+          <span class="ctrl__state" id="orientCache"></span>
+        </div>
+
+        <div class="ctrl">
+          <label class="switch">
             <input type="checkbox" id="ner" />
             <span class="switch__track"><span class="switch__knob"></span></span>
             <span class="ctrl__key">NER</span>

@@ -39,6 +39,11 @@ export {
     LineOrientationClassifier,
     ORIENTATION_INPUT,
 } from './line-orientation.js'
+export type { LineOrientationDetectorParams } from './line-orientation-stage.js'
+export {
+    LINE_ORIENTATION_DEFAULTS,
+    LineOrientationDetector,
+} from './line-orientation-stage.js'
 export type { SessionOptions } from './ort.js'
 export { createSession, isCrossOriginIsolated, isWebGpuAvailable, loadOrt, resetOrt } from './ort.js'
 export type {
