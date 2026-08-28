@@ -43,6 +43,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./pdf": {
+      "types": "./dist/pdf/index.d.ts",
+      "import": "./dist/pdf/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -54,7 +58,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "vitest run --project browser",
-    "check:pkg": "publint && attw --pack"
+    "check:pkg": "publint && attw --pack . --profile esm-only"
   },
   "peerDependencies": {
     "@huggingface/transformers": ">=3.7.0",
@@ -88,6 +92,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.11",
     "@vitest/coverage-v8": "^4.1.11",
+    "pdfjs-dist": "^6.2.108",
     "publint": "^0.3.24",
     "tsdown": "^0.22.14",
     "typescript": "^5.9.3",
