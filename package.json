@@ -51,6 +51,10 @@
             "types": "./dist/ocr/index.d.ts",
             "import": "./dist/ocr/index.js"
         },
+        "./ner": {
+            "types": "./dist/ner/index.d.ts",
+            "import": "./dist/ner/index.js"
+        },
         "./package.json": "./package.json"
     },
     "scripts": {
@@ -95,6 +99,7 @@
     "devDependencies": {
         "@arethetypeswrong/cli": "^0.18.5",
         "@biomejs/biome": "^2.5.11",
+        "@huggingface/transformers": "^3.8.1",
         "@vitest/coverage-v8": "^4.1.11",
         "onnxruntime-web": "^1.29.0",
         "pdfjs-dist": "^6.2.108",
