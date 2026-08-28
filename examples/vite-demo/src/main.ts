@@ -36,6 +36,7 @@ import {
     LineOrientationDetector,
     PADDLE_OCR_PRESETS,
     PaddleTextDetector,
+    TesseractRecognizer,
     PaddleTextRecognizer,
     isCrossOriginIsolated,
     isKnownPreset,
@@ -64,6 +65,8 @@ const ocrModelEl = el<HTMLSelectElement>('ocrModel')
 const nerModelEl = el<HTMLSelectElement>('nerModel')
 const detModelEl = el<HTMLSelectElement>('detModel')
 const detCacheEl = el('detCache')
+const recModelEl = el<HTMLSelectElement>('recModel')
+const recStateEl = el('recState')
 const orientEl = el<HTMLInputElement>('orient')
 const orientCacheEl = el('orientCache')
 const ocrCacheEl = el('ocrCache')
@@ -108,6 +111,10 @@ async function setup() {
         cache: 'indexeddb',
         // WebGPU is typically 2-5x faster and needs no cross-origin isolation.
         executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
+        tesseract: {
+            workerUrl: '/tesseract/tesseract-worker.js',
+            dataUrl: '/tesseract/',
+        },
         pdf: {
             workerSrc: '/pdf.worker.min.mjs',
             cMapUrl: '/cmaps/',
@@ -178,6 +185,17 @@ function populateModelPickers() {
         option.title = detector.notes
         detModelEl.add(option)
     }
+    // Paddle detects and recognises in one pass, so it ignores a separate
+    // detector's boxes. Tesseract reads exactly the boxes it is given, which is
+    // what makes rotated regions reachable at all.
+    for (const [value, label] of [
+        ['paddle', 'PaddleOCR — detects and reads in one pass'],
+        ['tesseract', "Tesseract — reads the detector's boxes"],
+    ] as const) {
+        recModelEl.add(new Option(label, value))
+    }
+    recModelEl.value = recall('recModel', 'paddle') === 'tesseract' ? 'tesseract' : 'paddle'
+
     const rememberedDet = recall('detModel', DEFAULT_DETECTOR_ID)
     detModelEl.value = getDetectorModel(rememberedDet) ? rememberedDet : DEFAULT_DETECTOR_ID
 
@@ -255,6 +273,18 @@ function syncOrientHint() {
     else void refreshCacheStatus()
 }
 
+/** Tesseract reads a detector's boxes, so it needs one selected. */
+function syncRecHint() {
+    const needsDetector =
+        recModelEl.value === 'tesseract' && detModelEl.value === DEFAULT_DETECTOR_ID
+    recStateEl.dataset.state = needsDetector ? 'pending' : 'ready'
+    recStateEl.textContent = needsDetector
+        ? 'pick a detector above to enable'
+        : recModelEl.value === 'tesseract'
+          ? "reads the detector's boxes"
+          : 'ignores the detector'
+}
+
 function syncNerControls() {
     nerModelEl.disabled = !nerEl.checked
     labelsRow.hidden = !nerEl.checked
@@ -285,29 +315,42 @@ async function run(file: File) {
         stages.push(new PaddleTextDetector({ preset: ocrModelEl.value, outputCol: 'detected' }))
     }
 
-    // Correcting orientation needs boxes, so it sits between a detector and the
-    // recognizer -- and therefore needs a standalone detector to have run.
-    const canOrient = orientEl.checked && stages.some((s) => s.name.includes('Detector'))
+    const hasDetector = stages.some((stage) => stage.name.includes('Detector'))
+    const useTesseract = recModelEl.value === 'tesseract' && hasDetector
+
+    // Tesseract crops and turns each box itself, so a separate orientation pass
+    // would do the work twice. Paddle re-detects internally and never sees the
+    // detector's boxes, so there the page has to be corrected before it runs.
+    const canOrient = orientEl.checked && hasDetector && !useTesseract
     if (canOrient) {
         stages.push(
             new LineOrientationDetector({
                 inputCols: ['image', 'detected'],
                 // The library defaults to rotated boxes only, as ScaleDP does.
-                // Here the point is to exercise the check, and the note below
-                // reports how many regions were turned so its accuracy is
-                // visible rather than assumed.
+                // Here the point is to exercise the check, and the note reports
+                // how many were turned so its accuracy is visible.
                 onlyRotated: false,
             })
         )
     }
 
-    stages.push(
-        new PaddleTextRecognizer({
-            inputCol: canOrient ? 'oriented' : 'image',
-            preset: ocrModelEl.value,
-            keepFormatting: true,
-        })
-    )
+    if (useTesseract) {
+        stages.push(
+            new TesseractRecognizer({
+                inputCols: ['image', 'detected'],
+                keepFormatting: true,
+                detectLineOrientation: orientEl.checked,
+            })
+        )
+    } else {
+        stages.push(
+            new PaddleTextRecognizer({
+                inputCol: canOrient ? 'oriented' : 'image',
+                preset: ocrModelEl.value,
+                keepFormatting: true,
+            })
+        )
+    }
     if (nerEl.checked) {
         const labels = currentLabels()
         if (labels.length === 0) throw new Error('Add at least one label before running NER.')
@@ -548,6 +591,7 @@ detModelEl.addEventListener('change', () => {
     remember('detModel', detModelEl.value)
     markStale('Detector')
     syncOrientHint()
+    syncRecHint()
     void refreshCacheStatus()
 })
 nerModelEl.addEventListener('change', () => {
@@ -555,6 +599,11 @@ nerModelEl.addEventListener('change', () => {
     applyModelLabels()
     markStale('NER model')
     void refreshCacheStatus()
+})
+recModelEl.addEventListener('change', () => {
+    remember('recModel', recModelEl.value)
+    markStale('Recognizer')
+    syncRecHint()
 })
 nerEl.addEventListener('change', () => {
     syncNerControls()
@@ -584,4 +633,7 @@ wrapEl.addEventListener('change', () => {
 })
 
 syncNerControls()
-void setup().then(syncOrientHint)
+void setup().then(() => {
+    syncOrientHint()
+    syncRecHint()
+})

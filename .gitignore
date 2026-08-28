@@ -66,3 +66,4 @@ yarn.lock
 # Vitest browser-mode failure artifacts.
 /.vitest-attachments/
 **/__screenshots__/
+/examples/*/public/tesseract/

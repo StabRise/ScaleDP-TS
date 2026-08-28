@@ -179,6 +179,48 @@ the browser.
 | `unclipRatio` | `2.5` | How far to grow each box; DB shrinks regions in training |
 | `mergeBoxes` | `true` | Merge overlapping boxes on the same line |
 
+### `TesseractRecognizer`
+
+Recognizes text inside boxes a detector already found. Port of ScaleDP's
+`TesseractRecognizer` (a `BaseRecognizer`).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `inputCols` | `['image', 'boxes']` | `[imageColumn, boxColumn]` |
+| `outputCol` | `'text'` | |
+| `lang` | `['eng']` | |
+| `scaleFactor` | `1` | Resize the page before cropping |
+| `padding` | `5` | Grow each box before cropping, as ScaleDP does |
+| `scoreThreshold` | `0.5` | |
+| `keepFormatting` | `false` | |
+| `detectLineOrientation` | `true` | Turn inverted crops before reading |
+| `onlyRotated` | `false` | Recognize only rotated or inverted boxes |
+
+**This is the stage that connects a detector to recognition.**
+`PaddleTextRecognizer` detects *and* recognises in a single pass over the page,
+so boxes produced by a separate detector never reach it -- rotated boxes in
+particular. `TesseractRecognizer` reads exactly the boxes it is given,
+straightening each one first:
+
+```ts
+new Pipeline([
+  new PdfToImage(),
+  new DbnetOnnxDetector({ outputCol: 'boxes' }),
+  new TesseractRecognizer({ inputCols: ['image', 'boxes'] }),
+])
+```
+
+`onlyRotated` defaults to `false` here where ScaleDP defaults it to `true`. In
+ScaleDP the stage refines an OCR pass that already ran, so skipping upright
+boxes is the point; standalone it is the primary recognizer, and that default
+would return an empty document for the ordinary case. Set it to `true` to use
+the stage as a fix-up pass over boxes that already carry text.
+
+The straightening is a perspective warp onto the box's own axes, verified
+readable end to end at 0, +25 and -18 degrees. Recognition quality on skewed
+text is then bounded by the detector: a box whose reported angle does not match
+the text's produces a crop that is still skewed.
+
 ### `LineOrientationDetector`
 
 Classifies each detected region 0 or 180 degrees and turns the inverted ones, so

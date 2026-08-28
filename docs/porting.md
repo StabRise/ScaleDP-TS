@@ -13,6 +13,7 @@ schemas. What differs is the runtime.
 | `PdfDataToDocument` | `PdfToDocument` (`/pdf`) | One stage covers both |
 | `TesseractOcr` | `TesseractOcr` (`/ocr`) | tesseract-wasm; no PSM/OEM |
 | `HasDetectLineOrientation` | `LineOrientationDetector` (`/ocr`) | A stage, not a recognizer mixin |
+| `TesseractRecognizer` | `TesseractRecognizer` (`/ocr`) | `onlyRotated` defaults to false |
 | `EasyOcr`, `SuryaOcr`, `DocTROcr` | `PaddleTextRecognizer` (`/ocr`) | No browser builds of those engines |
 | `DBNetOnnxDetector` | `DbnetOnnxDetector` (`/ocr`) | Same model, same thresholds |
 | `CraftTextDetector` | — | PyTorch only |
@@ -73,6 +74,12 @@ Each is a fix, and each is commented at its site.
 
 **`PdfToDocument` emits pixels, not points.** Text-layer and OCR boxes then
 share one coordinate space and can be compared directly.
+
+**`TesseractRecognizer.onlyRotated` defaults to `false`.** In ScaleDP it is
+`true`, because there the stage refines an OCR pass that already ran and
+skipping upright boxes is the whole point. Standalone it is the primary
+recognizer, and that default would return an empty document for the ordinary
+detector-then-recognize pipeline.
 
 **NER de-duplicates across chunks.** Python's 500/480 sliding window has no
 cross-chunk dedup, so an entity in the 20-character overlap is reported twice.

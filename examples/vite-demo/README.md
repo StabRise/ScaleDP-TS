@@ -55,6 +55,12 @@ ONNX model instead runs it as a separate stage and draws its boxes in violet
 beside the recognizer's cyan, so the two can be compared directly on the page --
 which is the reason to pick a detector at all.
 
+**Read** picks the recognizer. PaddleOCR detects and reads in one pass, so it
+ignores the detector entirely -- its boxes come from its own internal detection.
+Tesseract reads exactly the boxes the detector produced, straightening each one,
+which is the only path by which a rotated box reaches recognition. It needs a
+detector selected.
+
 **Orient** turns upside-down lines before reading them. It needs boxes, so it
 only applies when a standalone detector is selected. The demo checks every
 region rather than only the rotated ones, which is the library's default, and

@@ -76,3 +76,9 @@ export type { DetectedScript } from './script-detect.js'
 export { detectScript, disposeScriptDetection, suggestPresets } from './script-detect.js'
 export type { TesseractOcrParams } from './tesseract.js'
 export { DEFAULT_TESSDATA_URL, disposeTesseract, TESSERACT_OCR_DEFAULTS, TesseractOcr } from './tesseract.js'
+
+export type { TesseractRecognizerParams } from './tesseract-recognizer.js'
+export {
+    TESSERACT_RECOGNIZER_DEFAULTS,
+    TesseractRecognizer,
+} from './tesseract-recognizer.js'

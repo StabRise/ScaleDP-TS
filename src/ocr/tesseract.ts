@@ -55,7 +55,13 @@ function trainedDataUrl(lang: string): string {
     return `${base}${lang}.traineddata`
 }
 
-async function getClient(lang: string): Promise<OcrClient> {
+/**
+ * The shared Tesseract client, loading the model for `lang` if needed.
+ *
+ * Exported so the crop-based recognizer reuses this one client rather than
+ * standing up a second worker and loading the same traineddata twice.
+ */
+export async function getTesseractClient(lang: string): Promise<OcrClient> {
     if (clientPromise && loadedLanguage === lang) return clientPromise
 
     // A client holds one model; switching language means a fresh one.
@@ -124,7 +130,7 @@ export class TesseractOcr extends Stage<TesseractOcrParams> {
     }
 
     override async init(): Promise<void> {
-        await getClient(this.language)
+        await getTesseractClient(this.language)
     }
 
     protected async apply(input: unknown, row: Row): Promise<Document> {
@@ -139,29 +145,26 @@ export class TesseractOcr extends Stage<TesseractOcrParams> {
             throw new OcrError('Expected an Image with decoded bytes', this.name)
         }
 
-        const client = await getClient(this.language)
+        const client = await getTesseractClient(this.language)
         const bitmap = await decodeImage(image.data)
-        let words: {
-            text: string
-            confidence: number
-            rect: { left: number; top: number; right: number; bottom: number }
-        }[]
+        let words: import('tesseract-wasm').TextItem[]
         try {
             await client.loadImage(toImageData(bitmap))
-            words = (await client.getBoundingBoxes('word')) as typeof words
+            // getTextBoxes, not getBoundingBoxes: the latter is layout analysis
+            // only and returns geometry with no text and no confidence.
+            words = await client.getTextBoxes('word')
         } finally {
             bitmap.close()
         }
 
         const { scoreThreshold, keepFormatting, lineTolerance } = this.params
         const bboxes: Box[] = words
-            // tesseract-wasm reports confidence on a 0-100 scale.
-            .map((word) => ({ ...word, score: word.confidence / 100 }))
-            .filter((word) => word.score >= scoreThreshold && word.text.trim().length > 0)
+            // tesseract-wasm reports confidence on a 0-1 scale, not 0-100.
+            .filter((word) => word.confidence >= scoreThreshold && word.text.trim().length > 0)
             .map((word) =>
                 boxFromBBox([word.rect.left, word.rect.top, word.rect.right, word.rect.bottom], {
-                    text: word.text,
-                    score: word.score,
+                    text: word.text.trim(),
+                    score: word.confidence,
                 })
             )
 
