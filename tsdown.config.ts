@@ -3,7 +3,14 @@ import { defineConfig } from 'tsdown'
 export default defineConfig({
     // Subpath entries are added here as each engine lands, so a green build
     // always means every declared export actually resolves.
-    entry: ['src/index.ts', 'src/pdf/index.ts', 'src/ocr/index.ts', 'src/ner/index.ts'],
+    entry: [
+        'src/index.ts',
+        'src/pdf/index.ts',
+        'src/ocr/index.ts',
+        'src/ner/index.ts',
+        'src/detect/index.ts',
+        'src/worker/index.ts',
+    ],
     format: ['esm'],
     dts: true,
     clean: true,

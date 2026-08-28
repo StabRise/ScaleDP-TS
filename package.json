@@ -55,6 +55,14 @@
             "types": "./dist/ner/index.d.ts",
             "import": "./dist/ner/index.js"
         },
+        "./detect": {
+            "types": "./dist/detect/index.d.ts",
+            "import": "./dist/detect/index.js"
+        },
+        "./worker": {
+            "types": "./dist/worker/index.d.ts",
+            "import": "./dist/worker/index.js"
+        },
         "./package.json": "./package.json"
     },
     "scripts": {
