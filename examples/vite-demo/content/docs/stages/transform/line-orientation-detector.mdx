@@ -1,0 +1,100 @@
+---
+title: LineOrientationDetector
+description: Classifies each detected region 0° or 180° and turns the inverted ones, so an upside-down line reads as text instead of noise.
+---
+
+<StageMeta type="LineOrientationDetector" />
+
+A port of ScaleDP's `HasDetectLineOrientation`, which there is a mixin on
+`TesseractRecognizer`. Here it is a stage, so it can sit in front of *any*
+recognizer.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, LineOrientationDetector, PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new DbnetOnnxDetector({ outputCol: 'boxes' }),
+    new LineOrientationDetector({ inputCols: ['image', 'boxes'] }),
+    new PaddleTextRecognizer({ inputCol: 'oriented' }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'boxes' } },
+    { type: 'LineOrientationDetector', options: { inputCols: ['image', 'boxes'] } },
+    { type: 'PaddleTextRecognizer', options: { inputCol: 'oriented', keepFormatting: true } },
+]} />
+
+It needs boxes, so it goes between a detector and a recognizer. It writes two
+columns: the corrected image to `outputCol`, and one `'0_degree'` /
+`'180_degree'` label per box to `orientationCol`.
+
+If nothing was flipped, the original image object is passed through without
+being re-encoded.
+
+## Why a stage rather than a mixin
+
+Python corrects each crop inside the recognizer. `PaddleTextRecognizer` detects
+and recognises in one pass and offers no seam to hook into, so correction has to
+happen before it.
+
+Turning each inverted region **in place on a copy of the page** reaches the same
+result with one recognition pass rather than one per box. It works because a
+rectangle maps onto itself under a 180° rotation about its own centre, so every
+box's coordinates stay valid afterwards. The turn is clipped to the box's own
+rotated outline; without that, a skewed box drags its neighbours through the
+rotation with it.
+
+## `onlyRotated`, measured rather than assumed
+
+<Callout type="warn">
+The classifier has a real false-positive rate. On an upright invoice with the
+gate off it called 1 of 81 upright regions inverted, and turning that region cost
+about 40 characters of recognition. Defaulting to rotated boxes only — as ScaleDP
+does — is where the signal actually is.
+</Callout>
+
+The cost of that default is the case it misses: an upside-down *horizontal* line.
+Verified on a page with one, `onlyRotated: false` recovers it — `Th sd s ie own`
+becomes `This line is upside down` — while the default skips it.
+
+Turn the gate off when a document may contain inverted horizontal text, and leave
+it on otherwise.
+
+`correct: false` classifies without touching the image, which is the cheap way to
+find out whether a corpus needs correcting at all.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the detector output whose regions to classify. |
+| `orientationCol` | `string` | `'orientations'` | Per-region 0_degree / 180_degree labels. |
+| `model` | `string` | `'StabRise/line_orientation_detection_v0.1'` | Hugging Face repo id. Defaults to StabRise/line_orientation_detection_v0.1. |
+| `correct` | `boolean` | `true` | Turn the inverted regions. Off classifies only, leaving the page as-is. |
+| `onlyRotated` | `boolean` | `true` | Classify only already-rotated boxes, where the signal is. Off also catches upside-down horizontal text, at a false-positive cost. |
+| `padding` | `number` | `2` | Grow each box before cropping, so glyph edges are not clipped. |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Image format |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'oriented'` | The corrected page image. |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

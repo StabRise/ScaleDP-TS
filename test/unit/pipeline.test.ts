@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../../src/core/params.js'
-import { EXECUTION_TIME_COL, Pipeline, type Row, Stage, toRows } from '../../src/core/pipeline.js'
+import {
+    EXECUTION_TIME_COL,
+    type ExecutionTime,
+    Pipeline,
+    ROW_TIME_COL,
+    type Row,
+    type RowTime,
+    Stage,
+    toRows,
+} from '../../src/core/pipeline.js'
 
 interface EchoParams extends BaseStageParams {
     suffix: string
@@ -159,5 +168,115 @@ describe('resolveParams', () => {
                 }
             )
         ).toThrow('n must be positive')
+    })
+})
+
+/**
+ * Per-row timings, which `execution_time` cannot give: its numbers are per
+ * stage across the whole run, identical on every row.
+ */
+describe('row_time', () => {
+    class Slow extends Stage {
+        readonly name: string
+        constructor(
+            name: string,
+            private readonly ms: number,
+            options: Partial<BaseStageParams> = {}
+        ) {
+            super(resolveParams(BASE_STAGE_DEFAULTS, options))
+            this.name = name
+        }
+        protected async apply(): Promise<string> {
+            const until = performance.now() + this.ms
+            while (performance.now() < until) {
+                /* burn, so the measurement is of real elapsed time */
+            }
+            return 'done'
+        }
+        protected onError(message: string): string {
+            return message
+        }
+    }
+
+    class Explode extends Stage {
+        readonly name = 'Explode'
+        constructor(private readonly parts: number) {
+            super(resolveParams<BaseStageParams>(BASE_STAGE_DEFAULTS, { outputCol: 'part' }))
+        }
+        protected override async expand(_input: unknown, row: Row): Promise<Row[]> {
+            const until = performance.now() + 12
+            while (performance.now() < until) {
+                /* burn */
+            }
+            return Array.from({ length: this.parts }, (_, index) => ({ ...row, part: index }))
+        }
+        protected async apply(): Promise<never> {
+            throw new Error('unreachable')
+        }
+        protected onError(message: string): string {
+            return message
+        }
+    }
+
+    it('records what each stage cost this row, and their sum', async () => {
+        const rows = await new Pipeline([new Slow('First', 8), new Slow('Second', 16)]).transform([{}])
+        const time = rows[0]?.[ROW_TIME_COL] as RowTime
+
+        expect(Object.keys(time.stages)).toEqual(['First', 'Second'])
+        expect(time.stages.Second).toBeGreaterThan(time.stages.First as number)
+        expect(time.total).toBeCloseTo((time.stages.First as number) + (time.stages.Second as number), 5)
+    })
+
+    it('splits an expanding stage evenly across the rows it made', async () => {
+        const rows = await new Pipeline([new Explode(4)]).transform([{}])
+        expect(rows).toHaveLength(4)
+
+        const shares = rows.map((row) => (row[ROW_TIME_COL] as RowTime).total)
+        // Every row gets the same share, and the shares add back up to the call.
+        expect(new Set(shares.map((ms) => ms.toFixed(6))).size).toBe(1)
+        expect(shares.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(12)
+    })
+
+    it('gives sibling rows their own record rather than one they share', async () => {
+        const rows = await new Pipeline([new Explode(3), new Slow('After', 4)]).transform([{}])
+        const times = rows.map((row) => row[ROW_TIME_COL] as RowTime)
+
+        // Each row was charged for `After` once, not three times.
+        expect(times.every((time) => Object.keys(time.stages).length === 2)).toBe(true)
+        expect(times[0]?.stages).not.toBe(times[1]?.stages)
+    })
+
+    it('charges a stage that failed, and keeps the pipeline going', async () => {
+        class Boom extends Stage {
+            readonly name = 'Boom'
+            constructor() {
+                super(resolveParams(BASE_STAGE_DEFAULTS, {}))
+            }
+            protected async apply(): Promise<never> {
+                const until = performance.now() + 6
+                while (performance.now() < until) {
+                    /* burn */
+                }
+                throw new Error('nope')
+            }
+            protected onError(message: string): string {
+                return message
+            }
+        }
+        const rows = await new Pipeline([new Boom()]).transform([{}])
+        const time = rows[0]?.[ROW_TIME_COL] as RowTime
+
+        expect(String(rows[0]?.output)).toContain('nope')
+        expect(time.stages.Boom).toBeGreaterThan(0)
+    })
+
+    it('leaves execution_time alone, so the Python-shaped column is unchanged', async () => {
+        const rows = await new Pipeline([new Slow('Only', 4)]).transform([{}, {}])
+        const first = rows[0]?.[EXECUTION_TIME_COL] as ExecutionTime
+
+        // One number per stage for the whole run, and the same object on
+        // every row -- which is exactly why row_time had to be separate.
+        expect(Object.keys(first.stages)).toEqual(['Only'])
+        expect(rows[0]?.[EXECUTION_TIME_COL]).toBe(rows[1]?.[EXECUTION_TIME_COL])
     })
 })

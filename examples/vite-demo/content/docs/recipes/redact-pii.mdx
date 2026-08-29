@@ -1,0 +1,99 @@
+---
+title: Redact PII from a document
+description: OCR the page, find the entities, and paint over exactly the boxes they came from.
+---
+
+Every entity GLiNER returns carries the page boxes its characters fall in, which
+is what makes redaction a drawing operation rather than a search-and-replace.
+
+```ts
+import { Pipeline, ImageDrawBoxes, configure } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new GlinerNer({
+        inputCol: 'text',
+        labels: ['person', 'email', 'phone', 'address', 'credit_card_number'],
+        threshold: 0.5,
+    }),
+    new ImageDrawBoxes({
+        inputCols: ['image', 'ner'],
+        outputCol: 'redacted',
+        filled: true,
+        color: '#000000',
+        padding: 2,
+    }),
+])
+
+const rows = await pipeline.transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'GlinerNer', options: { inputCol: 'text', labels: ['person', 'email', 'phone', 'address'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'redacted', filled: true, color: '#000000', padding: 2 } },
+]} />
+
+`filled: true` paints the box rather than outlining it. `padding: 2` covers
+antialiased edges that a tight box leaves visible.
+
+## Reviewing before redacting
+
+Redaction is not something to do on trust. Draw the entities in a visible colour
+first, with their labels, and let a human confirm:
+
+```ts
+new ImageDrawBoxes({
+    inputCols: ['image', 'ner'],
+    outputCol: 'review',
+    color: '#ff5c8a',
+    lineWidth: 2,
+    displayDataList: ['entity_group', 'score'],
+})
+```
+
+```ts
+import { renderInto, showNer, visualizeNer } from '@stabrise/scaledp/display'
+
+renderInto('#entities', showNer(row.ner, { limit: 0 }))
+renderInto('#inline', visualizeNer(row.text, row.ner))
+```
+
+## Narrowing what is redacted
+
+Two different knobs:
+
+- **`labels`** changes the inference. Removing `'address'` means the model is not
+  asked about addresses at all.
+- **`whiteList` on `GlinerNer`**, or `whiteList` / `blackList` on
+  `ImageDrawBoxes`, filters afterwards. Use these to run one inference and paint
+  several different redaction sets from it.
+
+Raising `threshold` trades recall for precision. For redaction, recall is usually
+what matters — a missed phone number is worse than a redacted false positive — so
+a *lower* threshold plus human review is often the right shape.
+
+## Precision of the boxes
+
+The redaction is only as tight as the boxes underneath it. Line-level detectors
+give line-level redaction, which over-covers. For word-level boxes:
+
+- `TesseractOcr` returns word boxes directly, or
+- `TesseractRecognizer` with `boxLevel: 'word'` after a detector — see
+  [Detect, then recognise](/docs/recipes/detect-then-recognise).
+
+## The redacted page
+
+`row.redacted` is a `ScaleDpImage` — encoded bytes plus dimensions. Write it out,
+or hand it to `showImage`. Nothing left the browser at any point.
+
+<Callout type="warn">
+This redacts the *rendered image*. It does not strip text from the original PDF's
+content stream — the annotated page is a new image, not an edited PDF. Ship the
+image, not the source file.
+</Callout>

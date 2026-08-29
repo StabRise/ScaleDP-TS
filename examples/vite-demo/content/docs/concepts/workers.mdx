@@ -1,0 +1,102 @@
+---
+title: Workers
+description: Moving the pipeline off the main thread, and the protocol that makes it look the same from the outside.
+---
+
+## Why
+
+OCR and NER are multi-second CPU-bound operations. On the main thread they
+freeze the tab. Everything in this library is `OffscreenCanvas`-based and
+DOM-free precisely so the whole pipeline can move into a worker.
+
+## The worker entry
+
+It lives in your app, because only your bundler can resolve a worker URL.
+
+```ts
+// src/scaledp.worker.ts
+import { registerStages, startScaleDpWorker } from '@stabrise/scaledp/worker'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+registerStages({ PdfToImage, PaddleTextRecognizer, GlinerNer })
+startScaleDpWorker()
+```
+
+Registration is explicit, and register only what you use: importing all fifteen
+stages would pull pdf.js, ORT, PaddleOCR and Tesseract into every worker bundle.
+An unregistered type produces a message that names the fix —
+`Call registerStages({ X }) in the worker entry.`
+
+## The main thread
+
+```ts
+import { createScaleDpWorker } from '@stabrise/scaledp/worker'
+
+const client = createScaleDpWorker({
+    worker: new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    onProgress: (progress) => setDownloadProgress(progress),
+    onStage: (name, ms) => console.log(`${name}: ${ms}ms`),
+})
+
+await client.configure({ cache: 'indexeddb', pdf: { workerSrc: '/pdf.worker.min.mjs' } })
+
+const rows = await client.transform(
+    [{ type: 'PdfToImage', options: { resolution: 300 } }, { type: 'PaddleTextRecognizer' }],
+    [{ content: bytes, path: 'invoice.pdf' }]
+)
+
+await client.dispose()
+```
+
+The stages are `StageDescriptor[]` — the same `{ type, options }` shape the
+[registry](/docs/api/registry) builds from and an exported pipeline is written
+in. A pipeline is the same data whether it runs here or on the main thread.
+
+## Two things do not cross `postMessage`
+
+`configure()` on the client cannot carry `auth` or `onProgress`: they are
+functions. The client's type says so — `TransferableConfig` is
+`Omit<Partial<ScaleDpConfig>, 'auth' | 'onProgress'>`.
+
+- **Progress** comes back through the client's own `onProgress` option. The host
+  reinstalls a forwarding callback inside the worker.
+- **Auth** has to be set in the worker entry: `configure({ auth })` there,
+  before `startScaleDpWorker()`.
+
+## Requests are serialised
+
+An onnxruntime-web session runs one inference at a time; a concurrent call fails
+with `Session already started`. Both the client and the host queue requests, so
+several `transform` calls are safe — they simply run in order rather than
+overlapping.
+
+## Isolation still applies
+
+Threaded WASM needs the *page* cross-origin isolated. Moving work into a worker
+does not escape that requirement — see
+[Execution providers](/docs/concepts/execution-providers#threads-need-cross-origin-isolation).
+
+## The message protocol
+
+Correlated by a numeric `requestId`; useful if you are wrapping the client or
+debugging in the console.
+
+```ts
+type WorkerRequest =
+    | { type: 'configure'; requestId; config: Partial<ScaleDpConfig> }
+    | { type: 'transform'; requestId; stages: StageDescriptor[]; rows: Row[] }
+    | { type: 'dispose';   requestId }
+
+type WorkerResponse =
+    | { type: 'progress';   requestId; progress: ModelProgress }
+    | { type: 'stage';      requestId; name; ms; rows }
+    | { type: 'result';     requestId; rows: Row[] }
+    | { type: 'configured'; requestId }
+    | { type: 'disposed';   requestId }
+    | { type: 'error';      requestId; message }
+```
+
+`client.dispose()` sends `dispose`, waits for `disposed`, then terminates the
+worker — so sessions are released rather than abandoned.

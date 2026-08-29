@@ -62,8 +62,15 @@ for (factor, pad) in [(1.0, 0), (2.0, 5), (0.5, 3)]:
                   "expected": as_dict(b.scale(factor, padding=pad))})
 
 # is_on_same_line
+# The last two pairs are the discriminating ones: a box a few degrees off is
+# still "horizontal" to Python (it branches on angle_thresh, not on a rotation
+# epsilon), so it is compared by raw vertical distance. Branch on a smaller
+# epsilon instead and the projection path cancels the vertical gap against the
+# horizontal one, and separate lines start reading as the same line.
 for (a, b) in [(mk(0,0,20,10), mk(25,2,20,10)), (mk(0,0,20,10), mk(25,40,20,10)),
-               (mk(0,0,20,10,0), mk(0,0,20,10,45)), (mk(0,0,20,10,30), mk(30,17,20,10,30))]:
+               (mk(0,0,20,10,0), mk(0,0,20,10,45)), (mk(0,0,20,10,30), mk(30,17,20,10,30)),
+               (mk(0,0,20,10,5), mk(100,10,20,10,5)), (mk(0,0,20,10,8), mk(60,9,20,10,8)),
+               (mk(0,0,20,10,5), mk(25,2,20,10,5))]:
     cases.append({"fn": "is_on_same_line", "args": {"a": box_args(a), "b": box_args(b)},
                   "expected": Box.is_on_same_line(a, b)})
 
@@ -72,6 +79,16 @@ groups = [
     [mk(0,0,20,10,text="a"), mk(10,0,20,10,text="b"), mk(20,0,20,10,text="c")],
     [mk(0,0,10,10), mk(100,0,10,10)],
     [mk(0,0,30,12,text="x"), mk(5,1,30,12,text="y"), mk(200,80,25,12,text="z")],
+    # The discriminating group. Box "b" does not overlap "a", so Python emits it
+    # untouched; "c" overlaps both, but by the time it merges into "a" the pass
+    # is already past "b" and never goes back. A fixed-point loop keeps going
+    # and collapses all three into one.
+    [mk(0,0,10,10,text="a"), mk(100,0,10,10,text="b"), mk(5,0,100,10,text="c")],
+    # A row of adjacent words, each overlapping only its neighbour: the shape a
+    # detector actually produces, and where transitive merging turns words into
+    # a line.
+    [mk(0,0,30,12,text="one"), mk(28,0,30,12,text="two"), mk(56,0,30,12,text="three"),
+     mk(84,0,30,12,text="four")],
 ]
 for g in groups:
     for thr in [0.02, 0.3]:

@@ -1,0 +1,76 @@
+---
+title: '@stabrise/scaledp/worker'
+description: The worker host, the main-thread client, and the message protocol between them.
+---
+
+For the narrative version, see
+[Run off the main thread](/docs/recipes/run-off-the-main-thread).
+
+## Host — inside the worker
+
+```ts
+import { registerStages, startScaleDpWorker } from '@stabrise/scaledp/worker'
+
+registerStages(stages: Record<string, new (options?: never) => Stage>): void
+startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as never): void
+
+type StageFactory = (descriptor: StageDescriptor) => Stage | undefined
+```
+
+Registration is explicit so the worker bundle carries only the engines it uses.
+An unregistered type produces a message naming the fix:
+`Call registerStages({ X }) in the worker entry.`
+
+Requests are serialised through a promise queue, because an onnxruntime-web
+session runs one inference at a time.
+
+## Client — on the main thread
+
+```ts
+import { createScaleDpWorker, ScaleDpWorkerClient } from '@stabrise/scaledp/worker'
+
+interface ScaleDpWorkerOptions {
+    worker: Worker                       // you construct it; only your bundler can resolve the URL
+    onProgress?: (progress: ModelProgress) => void
+    onStage?: (name: string, ms: number, rows: number) => void
+}
+
+class ScaleDpWorkerClient {
+    constructor(options: ScaleDpWorkerOptions)
+    configure(config: TransferableConfig): Promise<void>
+    transform(stages: StageDescriptor[], rows: Row[]): Promise<Row[]>
+    dispose(): Promise<void>              // sends dispose, then terminates
+}
+```
+
+```ts
+type TransferableConfig = Omit<Partial<ScaleDpConfig>, 'auth' | 'onProgress'>
+```
+
+Those two are excluded by type because functions do not survive `postMessage`.
+The host reinstalls `onProgress` to forward progress messages, and the client
+surfaces them through `options.onProgress`. Set `auth` with `configure({ auth })`
+inside the worker entry.
+
+## Protocol
+
+Correlated by a numeric `requestId`.
+
+```ts
+type WorkerRequest =
+    | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }
+    | { type: 'transform'; requestId: number; stages: StageDescriptor[]; rows: Row[] }
+    | { type: 'dispose';   requestId: number }
+
+type WorkerResponse =
+    | { type: 'progress';   requestId: number; progress: ModelProgress }
+    | { type: 'stage';      requestId: number; name: string; ms: number; rows: number }
+    | { type: 'result';     requestId: number; rows: Row[] }
+    | { type: 'configured'; requestId: number }
+    | { type: 'disposed';   requestId: number }
+    | { type: 'error';      requestId: number; message: string }
+```
+
+`StageDescriptor` is re-exported here, since it is the payload the whole protocol
+is built around — and the same shape the
+[registry](/docs/api/registry) builds pipelines from.

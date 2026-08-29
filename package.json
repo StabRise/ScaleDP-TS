@@ -59,6 +59,10 @@
             "types": "./dist/detect/index.d.ts",
             "import": "./dist/detect/index.js"
         },
+        "./registry": {
+            "types": "./dist/registry/index.d.ts",
+            "import": "./dist/registry/index.js"
+        },
         "./worker": {
             "types": "./dist/worker/index.d.ts",
             "import": "./dist/worker/index.js"

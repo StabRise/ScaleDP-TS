@@ -219,19 +219,45 @@ export class ImageDrawBoxes extends Stage<ImageDrawBoxesParams> {
         ctx.stroke()
     }
 
+    /**
+     * The label chip, anchored to the box's own top edge.
+     *
+     * Python places it at `box.x, box.y`, which is the corner of the *axis-
+     * aligned envelope*. For an upright box that is the top-left corner and the
+     * label sits where you expect; for a rotated one the envelope corner can be
+     * a long way off the box -- a vertical line's label lands beside its middle,
+     * detached from the box it names. Here the chip is drawn in the box's own
+     * frame instead, so it rides the top edge at the box's angle whatever that
+     * angle is. Upright boxes come out exactly where Python puts them.
+     */
     private drawLabel(ctx: OffscreenCanvasRenderingContext2D, box: Box, label: string, color: string): void {
         const { textSize, padding } = this.params
         ctx.font = `${textSize}px sans-serif`
         const width = ctx.measureText(label).width
-        const y = box.y - textSize * 1.2 - padding
+        const height = textSize * 1.2
 
-        // A filled chip behind the label: white-on-page text is unreadable over
-        // a light scan.
-        ctx.fillStyle = color
-        ctx.fillRect(box.x - padding, y, width + 6, textSize * 1.2)
-        ctx.fillStyle = '#ffffff'
-        ctx.textBaseline = 'top'
-        ctx.fillText(label, box.x - padding + 3, y + 1)
+        const chip = (x: number, y: number) => {
+            ctx.fillStyle = color
+            ctx.fillRect(x, y, width + 6, height)
+            ctx.fillStyle = '#ffffff'
+            ctx.textBaseline = 'top'
+            ctx.fillText(label, x + 3, y + 1)
+        }
+
+        if (!isRotated(box)) {
+            chip(box.x - padding, box.y - height - padding)
+            return
+        }
+
+        // Top-left corner of the padded box, in the box's own frame.
+        const left = -box.width / 2 - padding
+        const top = -box.height / 2 - padding
+
+        ctx.save()
+        ctx.translate(box.x + box.width / 2, box.y + box.height / 2)
+        ctx.rotate((box.angle * Math.PI) / 180)
+        chip(left, top - height)
+        ctx.restore()
     }
 
     protected onError(message: string, row: Row): ScaleDpImage {

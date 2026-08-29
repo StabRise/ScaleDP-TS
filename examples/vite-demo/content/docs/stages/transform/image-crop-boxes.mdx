@@ -1,0 +1,90 @@
+---
+title: ImageCropBoxes
+description: Crop each detected box out of the page, one row per crop, straightening rotated ones.
+---
+
+<StageMeta type="ImageCropBoxes" />
+
+Expands one page row into one row per crop. Each crop lands in `outputCol` and
+its source box in `boxCol`, so a crop always knows where it came from.
+
+```ts
+import { Pipeline, ImageCropBoxes } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { SignatureDetector } from '@stabrise/scaledp/detect'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new SignatureDetector(),
+    new ImageCropBoxes({ inputCols: ['image', 'signatures'], padding: 8 }),
+]).transform(file)
+
+rows[0].cropped_image   // ScaleDpImage
+rows[0].box             // the Box it came from
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'SignatureDetector', options: {} },
+    { type: 'ImageCropBoxes', options: { inputCols: ['image', 'signatures'], padding: 8 } },
+]} />
+
+It reads `bboxes` off either a `DetectorOutput` or a `Document`, so it crops what
+a detector found or what a recognizer read.
+
+## Rotated boxes are straightened
+
+Cropped to the box's own axes rather than to its envelope, which is what makes
+the crops usable as recognizer input — an envelope crop of a 25° line is mostly
+neighbouring text.
+
+`autoRotate` (on by default) then turns portrait crops a quarter turn
+counter-clockwise so text reads horizontally.
+
+## Two guards worth setting
+
+- `limit` caps crops per page; `0` means all. A detector having a bad day on a
+  noisy scan can produce hundreds of boxes, and each crop is an encode.
+- `returnEmpty: true` emits the whole page when nothing was detected, instead of
+  throwing `ImageError('No boxes to crop')` into the row's `exception`. Which you
+  want depends on whether "no signatures on this page" is a result or a failure.
+
+## It multiplies rows
+
+Two expanding stages reading the same pre-existing column multiply rather than
+subdivide. Cropping boxes found on a page that `PdfToImage` rendered is a
+subdivision — fine. See [Columns are the wiring](/docs/concepts/columns#expanding-stages-multiply).
+
+Crops have no page number of their own, so an interface paging through results
+numbers them by position.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the box column to cut from it. |
+| `boxCol` | `string` | `'box'` | Where each crop’s source box is written. |
+| `padding` | `number` | `0` | Grow each box by this many pixels before cropping. |
+| `limit` | `number` | `0` | Maximum crops per page; 0 means all of them. |
+| `autoRotate` | `boolean` | `true` | Turn portrait crops a quarter turn, so text reads horizontally. |
+| `returnEmpty` | `boolean` | `false` | Emit the whole page when nothing was detected, instead of failing. |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Image format |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'cropped_image'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

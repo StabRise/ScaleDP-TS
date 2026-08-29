@@ -1,0 +1,96 @@
+---
+title: Execution providers
+description: WebGPU or WebAssembly, how many threads, and why cross-origin isolation decides the answer.
+---
+
+```ts
+configure({ executionProviders: ['webgpu', 'wasm'] })
+```
+
+Order is priority: WebGPU where available, WASM otherwise. This is passed
+straight to onnxruntime-web when a session is created.
+
+## Prefer WebGPU
+
+It is typically 2–5× faster and needs **no cross-origin isolation**, which makes
+it the simpler answer wherever it exists:
+
+```ts
+import { isWebGpuAvailable } from '@stabrise/scaledp/ocr'
+
+configure({
+    executionProviders: (await isWebGpuAvailable()) ? ['webgpu', 'wasm'] : ['wasm'],
+})
+```
+
+`isWebGpuAvailable()` requests an adapter rather than checking for
+`navigator.gpu`, because the object exists in browsers where no adapter can
+actually be acquired.
+
+Two caveats. `GlinerNer` with the GLiNER2 model overrides this and always uses
+WASM — see [the warning](/docs/concepts/models-and-cache#ner). And
+onnxruntime-web deprecated the WebGL and JSEP providers in 1.29; the native
+WebGPU provider is the supported path.
+
+## Threads
+
+```ts
+configure({ numThreads: 4 })   // 0 (default) derives from hardwareConcurrency
+```
+
+The default is `max(1, min(4, hardwareConcurrency - 1))` — one core left for the
+UI, capped at four, because past that ORT's own synchronisation overhead
+outweighs the gain at these model sizes. Four cores are assumed when the browser
+will not say.
+
+```ts
+import { defaultNumThreads, resolveNumThreads } from '@stabrise/scaledp'
+```
+
+The value is baked into a session when it is created, so changing it later
+requires a fresh stage.
+
+## Threads need cross-origin isolation
+
+Multi-threaded WebAssembly needs `SharedArrayBuffer`, which needs the **page** to
+be cross-origin isolated:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without them, `crossOriginIsolated` is false, ORT falls back to its
+single-threaded build, and `numThreads` has no effect at all.
+
+```ts
+import { isCrossOriginIsolated } from '@stabrise/scaledp/ocr'
+
+if (!isCrossOriginIsolated()) {
+    console.info('Single-threaded WASM: set COOP/COEP headers, or prefer WebGPU.')
+}
+```
+
+This is a property of the page, not the worker — moving work into a worker does
+not escape it. A library cannot set headers for its consumer, so the situation is
+reported rather than enforced.
+
+`require-corp` also blocks every cross-origin subresource that is not
+CORS-fetched: fonts, images, embeds, analytics. Turning it on is a decision about
+the whole page, which is the other reason WebGPU is usually the easier path.
+
+## Deciding
+
+| | WebGPU | WASM, threaded | WASM, single |
+| --- | --- | --- | --- |
+| Speed | fastest | middle | slowest |
+| Needs COOP/COEP | no | **yes** | no |
+| Availability | recent browsers, real GPU | any, with headers | everywhere |
+| GLiNER2 | unusable — drops entities | fine | fine |
+
+The demo's own configuration is the general-purpose answer:
+
+```ts
+const webgpu = await isWebGpuAvailable()
+configure({ executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'] })
+```

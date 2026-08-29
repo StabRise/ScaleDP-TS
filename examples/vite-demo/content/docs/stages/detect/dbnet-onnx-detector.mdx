@@ -1,0 +1,94 @@
+---
+title: DbnetOnnxDetector
+description: The same DBNet ONNX text detector ScaleDP runs server-side, in the browser. Rotated, line-level boxes.
+---
+
+<StageMeta type="DbnetOnnxDetector" />
+
+A direct mirror of ScaleDP's `DBNetOnnxDetector` — same model, same thresholds —
+so a detection result can be compared across the two runtimes. About 4.8 MB.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, TesseractRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new DbnetOnnxDetector({ outputCol: 'boxes' }),
+    new TesseractRecognizer({ inputCols: ['image', 'boxes'] }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'boxes' } },
+    { type: 'TesseractRecognizer', options: { inputCols: ['image', 'boxes'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+Unlike Paddle's, these boxes carry a real rotation, which is what makes the
+detector worth its download on skewed scans.
+
+## The three thresholds
+
+They are easy to confuse, and they act at different points:
+
+- **`binaryThreshold`** (0.5) is per *pixel*: above this, a pixel counts as text
+  in the probability map. Raise it to break apart touching lines; lower it to
+  stop thin strokes from being lost.
+- **`scoreThreshold`** (0.3) is per *candidate*: the mean in-box probability a
+  region must reach to be kept at all.
+- **`unclipRatio`** (2.5) is a *size*: DB shrinks regions during training, so
+  every candidate is grown back by this ratio. Too low clips descenders; too
+  high merges neighbours.
+
+`mergeBoxes` then merges overlapping boxes that share a line; ScaleDP uses an
+IoU of 0.02 for this.
+
+<Callout title="A Python bug not reproduced">
+In ScaleDP, `scoreThreshold` never reaches `DBPostProcess` — the effective
+threshold is the hardcoded 0.3. Here the parameter is wired through, so setting
+it does something.
+</Callout>
+
+## Self-hosting
+
+`model` accepts a Hugging Face repo id or a URL. A URL is treated as a
+single-file model spec and bypasses `modelHost` entirely.
+
+## Preprocessing, for the record
+
+Letterboxed to 1280×1280 padding at the end, white fill, then normalised with
+ImageNet mean and standard deviation **in BGR channel order**. That last part
+reproduces a quirk of the Python implementation — BGR pixels with RGB statistics
+— and is required for parity. It is not a bug on this side.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `'StabRise/text_detection_dbnet_ml_v0.2'` \| `'StabRise/text_detection_dbnet_ml_v0.1'` | `'StabRise/text_detection_dbnet_ml_v0.2'` | Hugging Face repo id, or a URL when self-hosting. |
+| `scoreThreshold` | `number` 0–1 | `0.3` | Mean in-box probability a candidate must reach. |
+| `binaryThreshold` | `number` 0–1 | `0.5` | Probability above which a pixel counts as text. |
+| `unclipRatio` | `number` 0.5–5 | `2.5` | How far to grow each box; DB shrinks text regions during training. |
+| `mergeBoxes` | `boolean` | `true` | Merge overlapping boxes that share a line. Usually changes nothing here — this model already returns one region per line, so no two boxes overlap. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'boxes'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

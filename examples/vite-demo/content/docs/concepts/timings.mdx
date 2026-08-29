@@ -1,0 +1,72 @@
+---
+title: Timings
+description: execution_time is per run, row_time is per row, and the two deliberately do not add up.
+---
+
+Every row carries both.
+
+## `execution_time` — per run
+
+```ts
+rows[0].execution_time
+// { stages: { PdfToImage: 412, PaddleTextRecognizer: 1830 }, total: 2244 }
+```
+
+One number per stage, covering every row that stage processed, and **the same
+object on every row**. This is what Python's ScaleDP records, and it keeps that
+meaning exactly. It cannot say how long page 7 took, because each stage's number
+covers every page at once.
+
+Two stages of the same class disambiguate by position:
+
+```ts
+// { PdfToImage: 412, ImageDrawBoxes: 22, 'ImageDrawBoxes#3': 19 }
+```
+
+## `row_time` — per row
+
+```ts
+for (const row of rows) console.log(row.page, row.row_time.total)
+// 0 259
+// 1 190
+// 2 192
+```
+
+Time spent on that row alone. This is an addition to the Python model, not a
+change to it — the question "which page was slow" has no answer in
+`execution_time`, so the answer lives beside it.
+
+## Why the row totals do not sum to `execution_time.total`
+
+The difference is `stage.init()`: downloading models and creating sessions, once
+for the whole run rather than per page. A pipeline whose first run downloads
+333 MB of GLiNER weights will show a `total` far larger than the sum of its
+rows, and every subsequent run on a warm cache will show them close.
+
+That is the number to watch when deciding whether to pre-warm a model.
+
+## Expanding stages split evenly
+
+`PdfToImage` renders five pages in one call and returns five rows. Its elapsed
+time is divided by five and charged to each. No finer attribution exists from
+outside the stage, so a slow page 3 in a five-page render is invisible in
+`row_time` — it shows up in `execution_time` as a large `PdfToImage`.
+
+Stages that do not expand attribute exactly.
+
+## Live progress
+
+`transform` also takes an `onStage` callback, which fires as each stage
+completes rather than at the end:
+
+```ts
+await pipeline.transform(file, {
+    onStage: (name, ms, rows) => console.log(`${name}: ${ms}ms over ${rows} rows`),
+})
+```
+
+The worker client exposes the same callback, so a pipeline running off the main
+thread reports the same shape. See [Workers](/docs/concepts/workers).
+
+Model downloads are a separate channel — `configure({ onProgress })` — because
+they happen inside `init()` and are measured in bytes rather than stages.

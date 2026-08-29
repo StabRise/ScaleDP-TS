@@ -1,0 +1,126 @@
+---
+title: Porting from Python ScaleDP
+description: The stage map, what carries over unchanged, the deliberate divergences, and the Python bugs not reproduced.
+---
+
+The two libraries share a pipeline model, stage names, parameter names and
+schemas. What differs is the runtime.
+
+## Stage map
+
+| Python ScaleDP | scaledp-ts | Notes |
+| --- | --- | --- |
+| `DataToImage` | [`DataToImage`](/docs/stages/read/data-to-image) | |
+| `PdfDataToImage` | [`PdfToImage`](/docs/stages/read/pdf-to-image) | |
+| `PdfDataToText` | [`PdfToDocument`](/docs/stages/read/pdf-to-document) | Boxes in pixels, not points |
+| `PdfDataToDocument` | [`PdfToDocument`](/docs/stages/read/pdf-to-document) | One stage covers both |
+| `TesseractOcr` | [`TesseractOcr`](/docs/stages/recognise/tesseract-ocr) | tesseract-wasm; no PSM/OEM |
+| `HasDetectLineOrientation` | [`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector) | A stage, not a recognizer mixin |
+| `TesseractRecognizer` | [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer) | `onlyRotated` defaults to false; adds `boxLevel` |
+| `EasyOcr`, `SuryaOcr`, `DocTROcr` | [`PaddleTextRecognizer`](/docs/stages/recognise/paddle-text-recognizer) | No browser builds of those engines |
+| `DBNetOnnxDetector` | [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector) | Same model, same thresholds |
+| `CraftTextDetector` | — | PyTorch only |
+| `LayoutDetector` | — | Needs the PaddleOCR Python runtime |
+| `YoloOnnxDetector` | [`YoloOnnxDetector`](/docs/stages/detect/yolo-onnx-detector) | |
+| `SignatureDetector` | [`SignatureDetector`](/docs/stages/detect/signature-detector) | |
+| `FaceDetector` | [`FaceDetector`](/docs/stages/detect/face-detector) | |
+| `Ner` | [`GlinerNer`](/docs/stages/understand/gliner-ner) | GLiNER, not BERT token classification |
+| `LLMOcr`, `LLMNer`, `LLMExtractor` | — | Any fetch-based OpenAI client works |
+| `TextSplitter`, `TextEmbeddings` | — | Not yet ported |
+| `df.show_image` | `showImage` | Returns an element, not IPython HTML |
+| `df.show_text` | `showText` | |
+| `df.show_json` | `showJson` | |
+| `df.show_ner` | `showNer` | |
+| `df.visualize_ner` | `visualizeNer` | |
+| `ImageDrawBoxes` | [`ImageDrawBoxes`](/docs/stages/transform/image-draw-boxes) | |
+| `ImageCropBoxes` | [`ImageCropBoxes`](/docs/stages/transform/image-crop-boxes) | |
+
+## API differences
+
+**Options objects, not positional `inputCol`/`outputCol`.** The column names
+remain valid options with the same defaults, so a stage can still be wired
+explicitly.
+
+```python
+TesseractOcr(inputCol="image", outputCol="text", keepFormatting=True)
+```
+
+```ts
+new PaddleTextRecognizer({ inputCol: 'image', outputCol: 'text', keepFormatting: true })
+```
+
+**Rows, not a DataFrame.** `transform` returns `Row[]` — plain objects. Page
+explosion produces several rows per input, exactly as `posexplode` does.
+
+**Everything is async.** Model loading, decoding and inference are all promises.
+
+**No Estimators.** There are none in Python ScaleDP either; every stage is a pure
+transform. There is no `fit()`.
+
+## What carries over unchanged
+
+- The **non-throwing error contract**: failures land in `exception` and the
+  pipeline completes. `propagateError` opts into throwing.
+- The **`Box` convention**: `x`/`y` is the top-left of the axis-aligned box of the
+  same size centred on the rotated rect's centre; `angle` is degrees about that
+  centre; `width` is the longer side.
+- **Parameter names and defaults**, wherever a Python equivalent exists.
+- **Layout-preserving text reconstruction** under `keepFormatting`, including the
+  per-line indent and blank-line rules.
+
+Both the `Box` geometry and the text reconstruction are verified against the real
+Python implementation: `test/fixtures/*.py` generate goldens by running ScaleDP
+itself, and the parity suites diff against those.
+
+## Deliberate divergences
+
+Each is a fix, and each is commented at its site.
+
+**`PdfToDocument` emits pixels, not points.** Text-layer and OCR boxes then share
+one coordinate space and can be compared directly.
+
+**`TesseractRecognizer.onlyRotated` defaults to `false`.** In ScaleDP it is
+`true`, because there the stage refines an OCR pass that already ran and skipping
+upright boxes is the whole point. Standalone it is the primary recognizer, and
+that default would return an empty document for the ordinary
+detector-then-recognize pipeline.
+
+**`TesseractRecognizer` can return word boxes.** `boxLevel: 'word'` is an
+addition, not a fix: Python always appends the region box it was handed, so its
+boxes are as coarse as the detector's — line-level, for every detector here. The
+words were always in the response (`getTextBoxes('word')`); only their geometry
+was being discarded. The default stays `'region'`, so nothing changes unless
+asked.
+
+**Rows carry their own timings.** `row_time` is an addition: Python's
+`execution_time` is per stage across the whole run, identical on every row, and
+this library keeps that column with exactly that meaning. Per-row numbers are what
+answer "which page was slow", so they live beside it rather than changing it.
+
+**NER de-duplicates across chunks.** Python's 500/480 sliding window has no
+cross-chunk dedup, so an entity in the 20-character overlap is reported twice.
+
+**The character-to-box map is built from the real text.** Python derives it from
+`len(box.text) + 1`, assuming exactly one separator per box. That drifts as soon
+as `keepFormatting` inserts several spaces or a newline, shifting every entity's
+boxes after the first wide gap. Here each box's text is located in the document
+text instead.
+
+**Box colours are a stable hash.** `colorForGroup` hashes the group name, so a
+label is the same colour on every render. Python picks a random colour per run,
+which makes two renders of the same document impossible to compare.
+
+## Python bugs not reproduced
+
+Found while porting; listed so nobody "fixes" the TypeScript side back toward
+them.
+
+- `DBNetOnnxDetector.scoreThreshold` never reaches `DBPostProcess`; the effective
+  threshold is the hardcoded 0.3. Here the parameter is wired through.
+- `use_gpu = params["model"] == Device.CUDA` compares a model-name string to an
+  enum and is always false.
+- `YoloOnnxTextDetector` multiplies by the letterbox scale where DBNet divides.
+- `Ner.aggregate_ner_results` builds `new_ner_results` and then discards it.
+- `TesseractRecognizer` sets `b.conf` but filters on `b.score`, so
+  `scoreThreshold` is applied to the detector's score rather than the
+  recognizer's.

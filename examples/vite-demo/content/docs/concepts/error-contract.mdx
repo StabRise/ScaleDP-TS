@@ -1,0 +1,90 @@
+---
+title: The error contract
+description: Stages never throw by default. A failure is recorded in the output schema's exception field and the pipeline completes.
+---
+
+**One bad page must not lose the other forty.** That single requirement produces
+the whole contract.
+
+Every output schema — `ScaleDpImage`, `Document`, `DetectorOutput`, `NerOutput`
+— carries an `exception: string`. A stage that fails writes a well-formed empty
+instance of its schema with the message in that field, and the pipeline carries
+on to the next row and the next stage.
+
+```ts
+const rows = await pipeline.transform(file)
+
+for (const row of rows) {
+    if (row.text.exception) {
+        console.warn(`page ${row.page}:`, row.text.exception)
+        continue
+    }
+    use(row.text.text)
+}
+```
+
+## What a message looks like
+
+```
+PaddleTextRecognizer: OcrError: failed to decode image data
+    at PaddleTextRecognizer.apply (…)
+```
+
+`formatException(stage, error)` prepends the stage name, then the error's own
+`name: message`, then the stack. The stage name matters: with two recognizers in
+a pipeline the column tells you which column failed, and the message tells you
+which stage wrote it.
+
+## The error types
+
+All extend `ScaleDpError`, which carries the `stage` it came from.
+
+| Error | Raised by |
+| --- | --- |
+| `ImageError` | decoding, encoding, cropping, empty data |
+| `OcrError` | recognition, and missing input columns on OCR stages |
+| `DetectionError` | detectors |
+| `NerError` | GLiNER |
+| `ConfigError` | a missing peer dependency, a bad `configure()` value |
+
+They are exported from the root, so `instanceof` works in a `catch` when you
+have opted into throwing.
+
+## Opting into throwing
+
+```ts
+new PaddleTextRecognizer({ propagateError: true })
+```
+
+Per stage, not global. Useful while developing a pipeline — a mis-wired column
+becomes a stack trace instead of an empty tab — and useful in a batch job where
+a silent empty result is worse than a crash.
+
+## What is *not* covered
+
+Two failures happen before or outside the contract:
+
+- **Input normalisation.** `transform('https://…')` fetches, and a non-ok
+  response throws from `toRows` before any stage runs.
+- **Constructor validation.** An unknown OCR preset or an out-of-range threshold
+  throws `RangeError` when the stage is constructed. That is deliberate: a
+  parameter mistake is a programming error, and reporting it at construction
+  names the field, where reporting it at row three would not.
+
+## Why `onError` must return the right shape
+
+```ts
+protected onError(message: string): DetectorOutput {
+    return createDetectorOutput({ exception: message })
+}
+```
+
+Downstream stages read `.bboxes` and display helpers read `.entities` without
+guarding. Returning `null` from a failed detector would turn one failed column
+into a crash three stages later — which is the outcome the contract exists to
+prevent. Every `create*` helper produces exactly this: correct fields, empty
+values.
+
+The display helpers cooperate: anything with a non-empty `exception` renders as
+a red error block rather than an empty panel, so a failure is visible rather
+than merely absent.

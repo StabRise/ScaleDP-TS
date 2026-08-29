@@ -1,0 +1,163 @@
+---
+title: Quickstart
+description: Install the library, point it at your assets, and read a page.
+---
+
+## Install
+
+```bash
+npm install @stabrise/scaledp
+```
+
+Only `@stabrise/scaledp` is a hard dependency. Every engine is an optional peer,
+so a project that only reads PDFs never pulls in an ML runtime. For the pipeline
+on this page:
+
+```bash
+npm install pdfjs-dist onnxruntime-web ppu-paddle-ocr @huggingface/transformers
+```
+
+[Installation](/docs/installation) covers which peer each stage needs, and the
+assets you have to serve from your own origin.
+
+## Configure
+
+```ts
+import { configure } from '@stabrise/scaledp'
+
+configure({
+    cache: 'indexeddb',
+    pdf: {
+        workerSrc: '/pdf.worker.min.mjs',
+        cMapUrl: '/cmaps/',
+        standardFontDataUrl: '/standard_fonts/',
+    },
+    onProgress: ({ file, loaded, total }) => {
+        console.log(`${file}: ${Math.round((loaded / total) * 100)}%`)
+    },
+})
+```
+
+Call it once, before any stage runs. Models download once and live in IndexedDB,
+so a repeat visit starts instantly and works offline.
+
+<Callout title="No app-owned paths">
+The library never guesses where your app puts things. Asset URLs, model hosts
+and auth all come from `configure()` — there is no default `/pdf.worker.min.mjs`
+to fall back on.
+</Callout>
+
+## First pipeline
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer(),
+])
+
+const rows = await pipeline.transform(file)
+console.log(rows[0].text.text)
+```
+
+Each row is one page. `PdfToImage` writes an `image` field; `PaddleTextRecognizer`
+reads it and writes `text`. Stages do not connect to each other — they read and
+write named fields on the row, and the order of the array is the order they run.
+See [Columns are the wiring](/docs/concepts/columns).
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: {} },
+]} label="Open this pipeline in the builder" />
+
+## Add NER
+
+```ts
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer(),
+    new GlinerNer({
+        labels: ['person', 'organization', 'email', 'phone', 'address'],
+        threshold: 0.5,
+    }),
+])
+```
+
+GLiNER is zero-shot: the labels are the prompt. Ask for `'medical_condition'`
+and it looks for one, with no retraining. Because the label text *is* the
+prompt, renaming a label changes the results — `'phone'` and `'phone_number'`
+are different queries.
+
+<Callout type="warn" title="333 MB on first run">
+That is the default model's download. Show `onProgress`, and consider
+[`isCached()`](/docs/api/model-cache) to decide whether to warn the user first.
+</Callout>
+
+## Read the results
+
+```ts
+for (const row of rows) {
+    if (row.text.exception) {
+        console.warn(`page ${row.page} failed:`, row.text.exception)
+        continue
+    }
+
+    for (const entity of row.ner.entities) {
+        console.log(entity.entity_group, entity.word, entity.score)
+        for (const box of entity.boxes) {
+            // box.x, box.y, box.width, box.height are in the rendered page's
+            // pixel space -- the same space PdfToImage produced.
+            ctx.strokeRect(box.x, box.y, box.width, box.height)
+        }
+    }
+}
+```
+
+Checking `exception` is not defensive habit: it is the contract. A stage that
+fails records the message there and the pipeline completes, so one bad page does
+not lose the other forty. See [The error contract](/docs/concepts/error-contract).
+
+## Show them
+
+Drawing boxes is a pipeline stage, as in ScaleDP — the annotated page is just
+another image column.
+
+```ts
+import { ImageDrawBoxes } from '@stabrise/scaledp'
+import { renderInto, showText, showNer, visualizeNer } from '@stabrise/scaledp/display'
+
+pipeline.stages.push(
+    new ImageDrawBoxes({ inputCols: ['image', 'text', 'ner'], outputCol: 'annotated' })
+)
+
+renderInto('#text', showText(row.text))                 // layout-preserving text
+renderInto('#entities', showNer(row.ner))               // table of entities
+renderInto('#inline', visualizeNer(row.text, row.ner))  // highlighted inline
+```
+
+## Timings
+
+Every row carries an `execution_time` field with per-stage milliseconds:
+
+```ts
+console.log(rows[0].execution_time)
+// { stages: { PdfToImage: 412, PaddleTextRecognizer: 1830 }, total: 2244 }
+```
+
+Those numbers are per *run* — one per stage, the same object on every row, which
+is what Python records. `row_time` answers "which page was slow" instead. Both,
+and why the two do not add up, are in [Timings](/docs/concepts/timings).
+
+## Next
+
+<Cards>
+  <Card title="Stage reference" href="/docs/stages" description="Every stage and its parameters." />
+  <Card title="Models and caching" href="/docs/concepts/models-and-cache" description="Sizes, self-hosting, private repos." />
+  <Card title="Workers" href="/docs/concepts/workers" description="Keeping the UI responsive." />
+  <Card title="Porting from Python" href="/docs/porting-from-python" description="The stage map and the deliberate divergences." />
+</Cards>

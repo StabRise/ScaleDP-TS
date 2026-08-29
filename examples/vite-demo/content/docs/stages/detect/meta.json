@@ -1,0 +1,10 @@
+{
+    "title": "Detect",
+    "pages": [
+        "paddle-text-detector",
+        "dbnet-onnx-detector",
+        "yolo-onnx-detector",
+        "signature-detector",
+        "face-detector"
+    ]
+}

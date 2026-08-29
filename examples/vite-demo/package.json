@@ -1,23 +1,46 @@
 {
-  "name": "scaledp-vite-demo",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "predev": "npm run prepare:assets",
-    "dev": "vite",
-    "prebuild": "npm run prepare:assets",
-    "build": "vite build",
-    "preview": "vite preview",
-    "prepare:assets": "node build-lib.mjs && node copy-assets.mjs"
-  },
-  "dependencies": {
-    "@huggingface/transformers": "^3.7.3",
-    "onnxruntime-web": "^1.29.0",
-    "pdfjs-dist": "^6.2.108",
-    "ppu-paddle-ocr": "^6.4.3",
-    "tesseract-wasm": "^0.11.0"
-  },
-  "devDependencies": {
-    "vite": "^7.0.0"
-  }
+    "name": "scaledp-vite-demo",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "predev": "npm run prepare:assets",
+        "dev": "react-router dev",
+        "prebuild": "npm run prepare:assets",
+        "build": "react-router build",
+        "postbuild": "node scripts/pages-404.mjs",
+        "preview": "serve ./build/client",
+        "typecheck": "npm run docs:check && react-router typegen && tsc --noEmit",
+        "docs:generate": "node scripts/generate-stage-docs.mjs",
+        "docs:check": "node scripts/generate-stage-docs.mjs --check",
+        "prepare:assets": "node build-lib.mjs && node copy-assets.mjs && npm run docs:generate"
+    },
+    "dependencies": {
+        "@huggingface/transformers": "^3.7.3",
+        "@react-router/node": "^8.3.1",
+        "fumadocs-core": "^16.15.4",
+        "fumadocs-mdx": "^15.4.0",
+        "fumadocs-ui": "^16.15.4",
+        "lucide-react": "^1.35.0",
+        "onnxruntime-web": "^1.29.0",
+        "pdfjs-dist": "^6.2.108",
+        "ppu-paddle-ocr": "^6.4.3",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+        "react-router": "^8.3.1",
+        "tesseract-wasm": "^0.11.0",
+        "zustand": "^5.0.15",
+        "isbot": "^5"
+    },
+    "devDependencies": {
+        "@react-router/dev": "^8.3.1",
+        "@tailwindcss/vite": "^4.3.3",
+        "@types/mdx": "^2.0.14",
+        "@types/node": "^26.4.0",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.5",
+        "serve": "^14.2.6",
+        "tailwindcss": "^4.3.3",
+        "typescript": "^7.0.2",
+        "vite": "^7.0.0"
+    }
 }

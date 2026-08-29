@@ -9,6 +9,7 @@ export default defineConfig({
         'src/ocr/index.ts',
         'src/ner/index.ts',
         'src/detect/index.ts',
+        'src/registry/index.ts',
         'src/worker/index.ts',
         'src/display/index.ts',
     ],

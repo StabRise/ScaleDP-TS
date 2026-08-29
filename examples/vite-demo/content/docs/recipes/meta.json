@@ -1,0 +1,12 @@
+{
+    "title": "Recipes",
+    "pages": [
+        "ocr-a-scanned-pdf",
+        "skip-ocr-when-there-is-a-text-layer",
+        "detect-then-recognise",
+        "redact-pii",
+        "signatures-and-faces",
+        "run-off-the-main-thread",
+        "build-a-pipeline-from-data"
+    ]
+}

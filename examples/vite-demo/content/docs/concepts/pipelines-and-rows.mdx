@@ -1,0 +1,101 @@
+---
+title: Pipelines and rows
+description: A pipeline is an array of stages; a row is a plain object. Everything else follows from that.
+---
+
+The model is ScaleDP's `PandasPipeline`, not its Spark one: rows are plain
+objects, every stage is a pure transformer, and the pipeline is the array.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+
+const pipeline = new Pipeline([stageA, stageB, stageC])
+const rows = await pipeline.transform(input)
+```
+
+## What `transform` accepts
+
+```ts
+type Row = Record<string, unknown>
+
+type PipelineInput =
+    | Uint8Array | ArrayBuffer   // bytes            -> { content, path: 'memory' }
+    | Blob | File                // a picked file    -> { content, path: file.name }
+    | string                     // a URL, fetched   -> { content, path: url }
+    | Row | Row[]                // rows you built yourself
+```
+
+`toRows` normalises all of these before the first stage sees anything, so a
+`File` from an `<input>`, a URL and a hand-built row are the same thing by the
+time a stage runs. A `string` is fetched and throws on a non-ok response — that
+is the one input that can fail before the pipeline's own error handling starts.
+
+## What comes back
+
+`Row[]`. One row per page for a PDF, one per crop after `ImageCropBoxes`, one
+per input otherwise. Every row carries whatever the stages wrote plus two
+timing columns:
+
+```ts
+const rows = await pipeline.transform(file)
+
+rows[0].page            // 0
+rows[0].image           // ScaleDpImage, written by PdfToImage
+rows[0].text            // Document, written by PaddleTextRecognizer
+rows[0].execution_time  // { stages: { … }, total } -- per run
+rows[0].row_time        // { stages: { … }, total } -- this row alone
+```
+
+## Options
+
+```ts
+const controller = new AbortController()
+
+const rows = await pipeline.transform(file, {
+    signal: controller.signal,
+    onStage: (name, ms, rows) => console.log(`${name}: ${ms}ms over ${rows} rows`),
+})
+```
+
+`signal` is checked between stages and between rows, so cancelling a run that is
+mid-OCR takes effect at the next row boundary rather than at the end. `onStage`
+fires as each stage completes — useful for a progress bar that is about work
+done rather than bytes downloaded.
+
+## Two stages of the same class
+
+Timings are keyed by stage name, and a pipeline may well draw boxes twice. The
+second and later occurrences disambiguate as `Name#index`:
+
+```ts
+rows[0].execution_time.stages
+// { PdfToImage: 412, ImageDrawBoxes: 22, 'ImageDrawBoxes#3': 19 }
+```
+
+## Cleaning up
+
+```ts
+await pipeline.dispose()
+```
+
+Tears down every stage: ORT sessions, the Tesseract worker, the Paddle service.
+Sessions hold real memory — a GLiNER graph is hundreds of megabytes resident —
+so a long-lived app that builds pipelines per document should dispose them.
+
+## Building one from data
+
+A pipeline can also be described as JSON and reconstructed, which is what an
+interface that *assembles* pipelines needs:
+
+```ts
+import { pipelineFromDescriptors } from '@stabrise/scaledp/registry'
+
+const rows = await pipelineFromDescriptors([
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+]).transform(file)
+```
+
+That shape — `{ type, options }` — is a `StageDescriptor`, the same data the
+worker protocol sends across the boundary. See
+[Building a pipeline from data](/docs/recipes/build-a-pipeline-from-data).

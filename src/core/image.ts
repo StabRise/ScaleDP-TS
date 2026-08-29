@@ -136,22 +136,35 @@ export function resize(source: ImageBitmap | OffscreenCanvas, factor: number): O
  * box's own corners onto the destination rectangle, which is what makes a
  * recognizer see level text.
  */
-export function cropBox(
-    source: ImageBitmap | OffscreenCanvas,
-    box: Box,
-    opts: { scaleFactor?: number; padding?: number } = {}
-): OffscreenCanvas {
+/**
+ * The transform `cropBox` applies, as a function from crop pixel to source
+ * pixel.
+ *
+ * Kept separate so anything that needs to map *back* -- word boxes recognised
+ * inside a crop, say -- uses the same geometry the crop was made with, rather
+ * than a second copy of it that can drift.
+ */
+export interface CropGeometry {
+    /** The box after scaling and padding, in source coordinates. */
+    scaled: Box
+    width: number
+    height: number
+    /** Crop pixel -> source pixel. */
+    map: (x: number, y: number) => Point
+}
+
+export function cropGeometry(box: Box, opts: { scaleFactor?: number; padding?: number } = {}): CropGeometry {
     const scaled = scaleBox(box, opts.scaleFactor ?? 1, opts.padding ?? 0)
     const width = Math.max(1, scaled.width)
     const height = Math.max(1, scaled.height)
 
-    const canvas = createCanvas(width, height)
-    const ctx = context2d(canvas)
-
-    if (Math.abs(scaled.angle) < 3) {
-        ctx.drawImage(source, scaled.x, scaled.y, width, height, 0, 0, width, height)
-        return canvas
+    const axisAligned: CropGeometry = {
+        scaled,
+        width,
+        height,
+        map: (x, y) => [scaled.x + x, scaled.y + y],
     }
+    if (Math.abs(scaled.angle) < 3) return axisAligned
 
     // cv2.boxPoints order is BL, TL, TR, BR. Mapping TL/TR/BL onto the
     // destination corners fixes the affine transform; the fourth corner
@@ -164,20 +177,48 @@ export function cropBox(
     })
     const bl: Point = [tl[0] + (br[0] - tr[0]), tl[1] + (br[1] - tr[1])]
 
-    // Solve for the affine matrix taking (tl, tr, bl) -> ((0,0), (w,0), (0,h)).
-    const ex = [(tr[0] - tl[0]) / width, (tr[1] - tl[1]) / width]
-    const ey = [(bl[0] - tl[0]) / height, (bl[1] - tl[1]) / height]
-    const det = (ex[0] as number) * (ey[1] as number) - (ey[0] as number) * (ex[1] as number)
-    if (Math.abs(det) < 1e-9) {
+    const ex: Point = [(tr[0] - tl[0]) / width, (tr[1] - tl[1]) / width]
+    const ey: Point = [(bl[0] - tl[0]) / height, (bl[1] - tl[1]) / height]
+    const det = ex[0] * ey[1] - ey[0] * ex[1]
+    if (Math.abs(det) < 1e-9) return axisAligned
+
+    return {
+        scaled,
+        width,
+        height,
+        map: (x, y) => [tl[0] + x * ex[0] + y * ey[0], tl[1] + x * ex[1] + y * ey[1]],
+    }
+}
+
+export function cropBox(
+    source: ImageBitmap | OffscreenCanvas,
+    box: Box,
+    opts: { scaleFactor?: number; padding?: number } = {}
+): OffscreenCanvas {
+    const { scaled, width, height, map } = cropGeometry(box, opts)
+    const canvas = createCanvas(width, height)
+    const ctx = context2d(canvas)
+
+    // The origin and the two edge vectors are exactly the affine matrix, read
+    // back off the mapping so the crop and the inverse cannot disagree.
+    const [ox, oy] = map(0, 0)
+    const [x1, y1] = map(1, 0)
+    const [x2, y2] = map(0, 1)
+    const ex: Point = [x1 - ox, y1 - oy]
+    const ey: Point = [x2 - ox, y2 - oy]
+
+    if (ex[1] === 0 && ey[0] === 0 && ex[0] === 1 && ey[1] === 1) {
         ctx.drawImage(source, scaled.x, scaled.y, width, height, 0, 0, width, height)
         return canvas
     }
 
-    const a = (ey[1] as number) / det
-    const b = -(ex[1] as number) / det
-    const c = -(ey[0] as number) / det
-    const d = (ex[0] as number) / det
-    ctx.setTransform(a, b, c, d, -(a * tl[0] + c * tl[1]), -(b * tl[0] + d * tl[1]))
+    // Invert the source -> crop affine so the draw samples the right pixels.
+    const det = ex[0] * ey[1] - ey[0] * ex[1]
+    const a = ey[1] / det
+    const b = -ex[1] / det
+    const c = -ey[0] / det
+    const d = ex[0] / det
+    ctx.setTransform(a, b, c, d, -(a * ox + c * oy), -(b * ox + d * oy))
     ctx.drawImage(source, 0, 0)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     return canvas

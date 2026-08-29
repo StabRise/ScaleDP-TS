@@ -25,11 +25,54 @@
     --entity: #ff5c8a;
     --flag: #f0a94c;
 
+    /* The same two accents as channel triplets, because the overlays and the
+       sheen need them at an alpha and `rgba()` cannot take a hex variable. */
+    --accent-rgb: 63, 201, 245;
+    --flag-rgb: 240, 169, 76;
+    /* The direction "lighter than the surface" points in. */
+    --sheen-rgb: 255, 255, 255;
+    --rule-strong: #3a4453;
+    --rule-soft: #303a48;
+
     --gap: clamp(1rem, 2.5vw, 2rem);
     --radius: 10px;
 
     --display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/*
+ * Light.
+ *
+ * The dark set above is the design -- a dark housing raises the perceived
+ * contrast of the page being read, which is why photo and film tools look this
+ * way. Light is the same instrument on a bench: the specimen is still the
+ * brightest thing, so the surround moves *down* in contrast rather than simply
+ * inverting, and the accents darken to stay legible on it.
+ *
+ * `--housing` is Fumadocs' own light background, so the site header does not
+ * end in a seam. Keyed on `.dark` because that is the class its theme provider
+ * toggles.
+ */
+html:not(.dark) {
+    --housing: hsl(0, 0%, 96%);
+    --panel: #ffffff;
+    --raised: #eceff4;
+    --rule: #d8dde5;
+    --readout: #5b6675;
+    --label: #2b323d;
+    --bright: #10151c;
+
+    --detect: #0a86b4;
+    --entity: #c9235a;
+    --flag: #9a6410;
+
+    --accent-rgb: 10, 134, 180;
+    --flag-rgb: 154, 100, 16;
+    /* On a light surface the sheen is a shadow, not a highlight. */
+    --sheen-rgb: 0, 0, 0;
+    --rule-strong: #c2c9d4;
+    --rule-soft: #ced5df;
 }
 
 * {
@@ -46,11 +89,26 @@
     display: none !important;
 }
 
-html {
+/*
+ * From here down, the bare element selectors are scoped to `html[data-demo]`.
+ *
+ * The builder shares an origin -- and therefore a stylesheet cache -- with the
+ * documentation, and this file is not layered, so an unscoped `body` or
+ * `input` rule would outrank everything Tailwind and Fumadocs put in
+ * `@layer base` on every docs page too. The demo route sets the attribute
+ * while it is mounted; nothing else on the site carries it.
+ *
+ * Class selectors need no scoping: they only match markup this app renders.
+ */
+html[data-demo] {
     color-scheme: dark;
 }
 
-body {
+html[data-demo]:not(.dark) {
+    color-scheme: light;
+}
+
+html[data-demo] body {
     margin: 0;
     background: var(--housing);
     color: var(--label);
@@ -67,13 +125,17 @@ body {
     pointer-events: none;
     z-index: 0;
     background:
-        radial-gradient(1100px 600px at 50% -15%, rgba(63, 201, 245, 0.07), transparent 70%),
-        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px);
+        radial-gradient(1100px 600px at 50% -15%, rgba(var(--accent-rgb), 0.07), transparent 70%),
+        repeating-linear-gradient(0deg, rgba(var(--sheen-rgb), 0.014) 0 1px, transparent 1px 3px);
 }
 
-main {
+/* The builder's own column. A class, not `main`: the site header wraps every
+   route in a `<main>`, and a second one nested inside it would be invalid. */
+.sheet {
     position: relative;
     z-index: 1;
+    /* See `.rail`: a flex item with `margin: 0 auto` does not stretch. */
+    width: 100%;
     max-width: 1180px;
     margin: 0 auto;
     padding: 0 var(--gap) 5rem;
@@ -89,31 +151,25 @@ main {
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
+    /* `width: 100%` is load-bearing. The site header lays the page out as a
+       flex column, and `margin: 0 auto` on a flex item cancels the default
+       stretch -- so without this the column collapses to the width of its
+       widest line instead of holding 1180px. */
+    width: 100%;
     max-width: 1180px;
     margin: 0 auto;
-    padding: 1.1rem var(--gap);
+    /* Slimmer than it was: this is a strip under the site header now, not the
+       page's own header. */
+    padding: 0.7rem var(--gap);
     border-bottom: 1px solid var(--rule);
 }
 
-.mark {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-}
-
-.mark__dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 2px;
-    background: var(--detect);
-    box-shadow: 0 0 0 3px rgba(63, 201, 245, 0.16);
-}
-
-.mark__ts {
+.rail__label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--readout);
-    font-weight: 400;
 }
 
 .caps {
@@ -133,7 +189,7 @@ main {
 }
 
 .cap[data-on='true'] {
-    border-color: rgba(63, 201, 245, 0.45);
+    border-color: rgba(var(--accent-rgb), 0.45);
     color: var(--detect);
 }
 
@@ -181,7 +237,7 @@ main {
     color: inherit;
     text-align: center;
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 45%),
+        linear-gradient(180deg, rgba(var(--sheen-rgb), 0.022), transparent 45%),
         var(--panel);
     border: 1px solid var(--rule);
     border-radius: var(--radius);
@@ -190,7 +246,7 @@ main {
 
 .platen:hover,
 .platen:focus-visible {
-    border-color: rgba(63, 201, 245, 0.5);
+    border-color: rgba(var(--accent-rgb), 0.5);
 }
 
 .platen.is-over {
@@ -205,7 +261,7 @@ main {
     position: absolute;
     width: 16px;
     height: 16px;
-    border: 1px solid #3a4453;
+    border: 1px solid var(--rule-strong);
     transition: border-color 0.18s;
 }
 
@@ -227,8 +283,8 @@ main {
     top: 0;
     height: 34%;
     opacity: 0;
-    background: linear-gradient(180deg, transparent, rgba(63, 201, 245, 0.16), transparent);
-    border-bottom: 1px solid rgba(63, 201, 245, 0.5);
+    background: linear-gradient(180deg, transparent, rgba(var(--accent-rgb), 0.16), transparent);
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.5);
 }
 
 .platen.is-reading .platen__beam {
@@ -303,30 +359,42 @@ main {
     cursor: default;
 }
 
-/* ── Controls ────────────────────────────────────────────────────────── */
+/* ── Readouts kept from the old control row ──────────────────────────── */
 
-.controls {
-    display: grid;
-    /* An implicit grid column sizes to max-content, so without this the rows
-       stretch to the widest <option> and drag the page past the viewport. */
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.55rem;
-    margin-top: 1.4rem;
+/*
+ * The cache badge. It is the one thing that has to be legible before anyone
+ * commits to a run: "downloads 349 MB on first run" is a different decision
+ * from "cached".
+ */
+.ctrl__state {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+    white-space: nowrap;
 }
 
-.ctrl {
+.ctrl__state[data-state='ready'] { color: var(--detect); }
+.ctrl__state[data-state='pending'] { color: var(--flag); }
+
+/* ── Builder ─────────────────────────────────────────────────────────── */
+
+/*
+ * The pipeline is the interface now. It is a numbered list because the order is
+ * real -- a stage reads what the ones above it wrote -- so the cards are stacked
+ * rather than tiled, and each says which columns it writes.
+ */
+.builder {
+    margin-top: 1.6rem;
+}
+
+.builder__bar {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-    padding: 0.6rem 0.85rem;
-    background: var(--panel);
-    border: 1px solid var(--rule);
-    border-radius: 8px;
+    gap: 0.5rem;
+    margin-top: 0.8rem;
 }
 
-.ctrl__key {
-    min-width: 3.4rem;
+.builder__count {
     font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.14em;
@@ -334,38 +402,540 @@ main {
     color: var(--readout);
 }
 
-.ctrl__hint {
-    font-size: 12px;
-    color: var(--readout);
+.builder__list {
+    margin: 0.6rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.4rem;
 }
 
-.ctrl__state {
+.builder__empty {
+    padding: 1.4rem;
+    text-align: center;
+    color: var(--readout);
+    border: 1px dashed var(--rule);
+    border-radius: 8px;
+}
+
+.card {
+    padding: 0.75rem 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+}
+
+.card--failed {
+    border-color: var(--entity);
+}
+
+/* Closed, a card is one line; open, the head is the lid of a form. */
+.card {
+    transition: border-color 0.15s;
+}
+
+.card[data-open] {
+    border-color: var(--rule-soft);
+}
+
+.card__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* The stage's position in the run, which is also what the trace numbers. */
+.card__n {
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
     font-family: var(--mono);
     font-size: 11px;
     color: var(--readout);
-    margin-left: auto;
-    white-space: nowrap;
 }
 
-/* Below the control row's comfortable width the state note drops to its own
-   line rather than forcing the row wider than the screen. */
-@media (max-width: 620px) {
-    .ctrl__hint {
-    font-size: 12px;
+/* The disclosure. A chevron alone is a few pixels of target, so the name is
+   the button and the chevron only reports which way it is pointing. */
+.card__title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+}
+
+.card__title:hover strong { color: var(--detect); }
+
+.card__chevron {
+    align-self: center;
+    width: 0;
+    height: 0;
+    border-left: 5px solid var(--readout);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.15s;
+}
+
+.card[data-open] .card__chevron {
+    transform: rotate(90deg) translateX(1px);
+}
+
+.card__title strong { color: var(--bright); }
+
+.card__title code,
+.card__path {
+    font-family: var(--mono);
+    font-size: 11px;
     color: var(--readout);
 }
 
-.ctrl__state {
-        margin-left: 0;
-        flex-basis: 100%;
-    }
+.card__group {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--readout);
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
 }
 
-.ctrl__state[data-state='ready'] { color: var(--detect); }
-.ctrl__state[data-state='pending'] { color: var(--flag); }
+.card__summary {
+    margin: 0.5rem 0 0;
+    font-size: 13px;
+    color: var(--readout);
+}
 
-select,
-input[type='text'] {
+.card__flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0.5rem 0 0;
+}
+
+.card__flow:empty { display: none; }
+
+.chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+}
+
+.chip code { color: var(--detect); }
+
+/* Closed, this is the only sign a stage is not at its defaults. */
+.chip--changed {
+    color: var(--detect);
+    border-color: color-mix(in srgb, var(--detect) 35%, var(--rule));
+}
+
+/*
+ * A wiring problem is reported, never blocking. Stages record failures in their
+ * output rather than throwing, so one bad column must not cost the other forty
+ * pages -- and the interface should not be stricter than the library.
+ */
+.warn {
+    margin: 0.6rem 0 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--flag);
+}
+
+.warn code { color: var(--bright); }
+
+.warn--error {
+    color: var(--entity);
+    white-space: pre-wrap;
+}
+
+.card__params {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.5rem 0.9rem;
+    margin-top: 0.7rem;
+}
+
+.card__advanced {
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--rule);
+    padding-top: 0.5rem;
+}
+
+.card__advanced summary {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--readout);
+    cursor: pointer;
+}
+
+/* ── Parameter fields ────────────────────────────────────────────────── */
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.field__key {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+/* A parameter left at its default is not a decision; one that was changed is.
+   Marking only the difference keeps a card of fifteen fields readable. */
+.field--changed .field__key {
+    color: var(--detect);
+}
+
+.field--changed .field__key::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--detect);
+}
+
+.field__revert {
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--readout);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.field__revert:hover { color: var(--detect); }
+
+.field__help {
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--readout);
+}
+
+.field__warn {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--flag);
+}
+
+.field__enum,
+.field__columns,
+.field__color {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.field__columns input[type='text'] { flex: 1 1 7rem; }
+
+/* Each entry carries its own remove, so a column in the middle of the list can
+   go without rebuilding the whole list around it. */
+.slot {
+    position: relative;
+    display: flex;
+    flex: 1 1 7rem;
+    align-items: center;
+}
+
+.slot__drop {
+    position: absolute;
+    right: 0.3rem;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--readout);
+    background: none;
+    border: 0;
+    padding: 0 0.1rem;
+    cursor: pointer;
+}
+
+.slot__drop:hover { color: var(--entity); }
+
+.slot:has(.slot__drop) input[type='text'] { padding-right: 1.3rem; }
+
+/* Known values for an open-ended list. Offered, not enforced -- the field above
+   still accepts anything. */
+.field__picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.pick {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--readout);
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    cursor: pointer;
+}
+
+.pick:hover {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+.pick[aria-pressed='true'] {
+    color: var(--detect);
+    border-color: var(--detect);
+    background: color-mix(in srgb, var(--detect) 12%, transparent);
+}
+
+/*
+ * The shared select/input rule carries `flex: 1 1 12rem` for the old control
+ * *row*, where the basis is a width. A `.field` stacks its label, control and
+ * help text, so in a column the same basis is a 12rem *height* -- which is how
+ * a one-line column name ended up in a box a third of the card tall. Only the
+ * controls that are direct children of the field are affected; the ones inside
+ * `.field__enum` and `.field__columns` sit in flex rows and want the basis.
+ */
+.field > select,
+.field > input[type='text'] {
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+/* An empty value the stage will reject. Said here rather than at run time. */
+.field input[data-empty] { border-color: var(--flag); }
+
+.field input[type='number'] {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.32rem 0.55rem;
+    min-width: 0;
+}
+
+.field input[type='color'] {
+    width: 2.2rem;
+    height: 1.9rem;
+    padding: 0;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+}
+
+/* ── Add a stage ─────────────────────────────────────────────────────── */
+
+.builder__add {
+    margin-top: 0.8rem;
+}
+
+.add {
+    font: inherit;
+    font-size: 13px;
+    color: var(--label);
+    background: var(--panel);
+    border: 1px dashed var(--rule);
+    border-radius: 8px;
+    padding: 0.55rem 1rem;
+    width: 100%;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.add:hover {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+.menu {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+    margin-top: 0.7rem;
+    padding: 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+}
+
+.menu__group h3 {
+    margin: 0 0 0.4rem;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.menu__item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: var(--label);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    cursor: pointer;
+}
+
+.menu__item:hover {
+    border-color: var(--rule);
+    background: var(--raised);
+}
+
+.menu__item strong {
+    display: block;
+    font-size: 13px;
+}
+
+.menu__item span {
+    display: block;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--readout);
+}
+
+.menu__item em {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-style: normal;
+    color: var(--flag);
+}
+
+/* ── Saved pipelines ─────────────────────────────────────────────────── */
+
+.presets {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+}
+
+.presets__row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.presets__key {
+    min-width: 4.5rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.pill,
+.pill button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 0.22rem 0.7rem;
+    cursor: pointer;
+}
+
+.pill:hover,
+.pill button:hover,
+.pill[aria-pressed='true'],
+.pill button[aria-pressed='true'] {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+.pill--saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0 0 0 0.15rem;
+}
+
+.pill--saved button {
+    border: 0;
+    background: none;
+    padding: 0.22rem 0.4rem;
+}
+
+.presets__name { flex: 0 1 14rem; }
+
+.presets__transfer .tabs {
+    margin-bottom: 0.5rem;
+}
+
+/* Read-only, so it is a <pre> rather than a textarea -- the pipeline is edited
+   in the cards above, not here. */
+.code {
+    margin: 0;
+    max-height: 11rem;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.6rem 0.7rem;
+    white-space: pre;
+}
+
+.presets__note {
+    font-size: 11.5px;
+    color: var(--readout);
+}
+
+.presets__transfer textarea {
+    width: 100%;
+    height: 11rem;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--label);
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.6rem;
+    resize: vertical;
+}
+
+
+html[data-demo] select,
+html[data-demo] input[type='text'] {
     font: inherit;
     font-size: 13px;
     color: var(--label);
@@ -381,19 +951,19 @@ input[type='text'] {
     flex: 1 1 11rem;
 }
 
-input[type='text'] {
+html[data-demo] input[type='text'] {
     flex: 1 1 12rem;
     font-family: var(--mono);
     font-size: 12px;
 }
 
-select:disabled {
+html[data-demo] select:disabled {
     opacity: 0.4;
 }
 
-select:focus-visible,
-input:focus-visible,
-button:focus-visible {
+html[data-demo] select:focus-visible,
+html[data-demo] input:focus-visible,
+html[data-demo] button:focus-visible {
     outline: 2px solid var(--detect);
     outline-offset: 2px;
 }
@@ -444,7 +1014,7 @@ button:focus-visible {
 
 .switch input:checked + .switch__track {
     border-color: var(--detect);
-    background: rgba(63, 201, 245, 0.18);
+    background: rgba(var(--accent-rgb), 0.18);
 }
 
 .switch input:checked + .switch__track .switch__knob {
@@ -484,6 +1054,14 @@ button:focus-visible {
     border-radius: 8px;
 }
 
+/* Per-page or whole-run. With one page there is only one answer, so the switch
+   is not drawn at all. */
+.trace__modes {
+    display: flex;
+    gap: 0.35rem;
+    margin-bottom: 0.7rem;
+}
+
 .trace ol {
     margin: 0;
     padding: 0;
@@ -517,7 +1095,7 @@ button:focus-visible {
     inset: 0 auto 0 0;
     border-left: 2px solid var(--detect);
     border-radius: 2px;
-    background: linear-gradient(90deg, rgba(63, 201, 245, 0.22), rgba(63, 201, 245, 0.03));
+    background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.22), rgba(var(--accent-rgb), 0.03));
 }
 
 /* Sits above the bar. A negative z-index would push it behind the panel's own
@@ -531,7 +1109,106 @@ button:focus-visible {
     font-variant-numeric: tabular-nums;
 }
 
+/* ── Time per page ───────────────────────────────────────────────────── */
+
+/*
+ * One series, so no legend: the heading names it. Bars are scaled against the
+ * slowest page rather than the run total, because the question they answer is
+ * "which page cost the most", and scaling to the total would collapse ten pages
+ * into ten slivers.
+ *
+ * Each row is a button -- the chart is the page selector, not a picture beside
+ * it. Selection is marked by the bright rail and the brightened figures, never
+ * by colour alone.
+ */
+.pages {
+    margin-top: 1rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--rule);
+}
+
+.pages__head {
+    margin: 0 0 0.5rem;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.pages__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    /* 2px of surface between adjacent bars, so they read as separate marks. */
+    gap: 2px;
+}
+
+.pages__row {
+    display: grid;
+    grid-template-columns: 1.6rem minmax(0, 1fr) 4.5rem;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
+    background: none;
+    /* A transparent rail, so selecting a row shifts nothing sideways. */
+    border: 0;
+    border-left: 2px solid transparent;
+    padding: 0.12rem 0 0.12rem 0.4rem;
+    cursor: pointer;
+    text-align: left;
+}
+
+.pages__row:hover .pages__bar {
+    filter: brightness(1.25);
+}
+
+.pages__row[aria-pressed='true'] {
+    border-left-color: var(--detect);
+    color: var(--bright);
+}
+
+.pages__track {
+    display: block;
+    min-width: 0;
+    height: 11px;
+}
+
+/* Anchored at the baseline, rounded only at the data end, as a bar should be. */
+.pages__bar {
+    display: block;
+    height: 100%;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.5), rgba(var(--accent-rgb), 0.16));
+    border-right: 2px solid var(--detect);
+}
+
+/* The slowest page is the one worth finding, so it is stated rather than left
+   to be inferred from bar length. */
+.pages__bar[data-slowest] {
+    background: linear-gradient(90deg, rgba(var(--flag-rgb), 0.5), rgba(var(--flag-rgb), 0.16));
+    border-right-color: var(--flag);
+}
+
+.pages__ms {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.trace__sep {
+    margin: 0 0.5rem;
+    color: var(--rule);
+}
+
 .trace__total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
     margin: 0.7rem 0 0;
     padding-top: 0.6rem;
     border-top: 1px solid var(--rule);
@@ -566,6 +1243,30 @@ button:focus-visible {
     .results {
         grid-template-columns: minmax(0, 1fr);
     }
+}
+
+/* Pages of a PDF, or crops -- whatever the run produced more than one of. */
+.pager {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.6rem;
+}
+
+.pager select {
+    flex: 0 1 10rem;
+}
+
+.pager .ghost {
+    font-size: 14px;
+    line-height: 1;
+    padding: 0.2rem 0.55rem;
+}
+
+.pager__count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--readout);
 }
 
 .col__head,
@@ -632,14 +1333,6 @@ button:focus-visible {
     border-color: var(--rule);
 }
 
-.panel {
-    display: none;
-}
-
-.panel.is-on {
-    display: block;
-}
-
 .panel__bar {
     display: flex;
     align-items: center;
@@ -675,6 +1368,10 @@ button:focus-visible {
     background: var(--panel);
     border: 1px solid var(--rule);
     border-radius: var(--radius);
+}
+
+.scroll[data-wrap] pre {
+    white-space: pre-wrap;
 }
 
 /* The library's display helpers emit unstyled DOM; theme it from here so the
@@ -758,3 +1455,31 @@ button:focus-visible {
         transform: translateY(120%);
     }
 }
+
+/* ── Derived result panels ───────────────────────────────────────────── */
+
+/*
+ * A run keeps going after a stage fails, so several columns can carry an
+ * exception at once. Mark the tab rather than replacing the whole result with
+ * the first error, which is what the fixed-pipeline version did.
+ */
+.tab {
+    position: relative;
+}
+
+.tab__bad {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-left: 0.35rem;
+    border-radius: 50%;
+    background: var(--entity);
+    vertical-align: middle;
+}
+
+.ghost.is-on {
+    border-color: var(--detect);
+    color: var(--detect);
+}
+
+.note[data-error] { color: var(--entity); }

@@ -1,0 +1,75 @@
+/*
+ * The site's own stylesheet: Tailwind, the Fumadocs theme, and the bridge
+ * between that theme and the demo's palette.
+ *
+ * `src/style.css` -- the builder's 1400 hand-written lines -- is imported by
+ * the demo route instead, and stays out of every `@layer`. Unlayered CSS wins
+ * over layered CSS regardless of specificity, so nothing here can override a
+ * property the builder sets, which is the point.
+ */
+
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@theme {
+    --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    /* The false-colour language the overlays use: cyan is what the machine
+       found, magenta is what it understood. Documented once in style.css.
+       These are the light-mode values -- the builder's own #3fc9f5 and #ff5c8a
+       are made for a #0c0f14 housing and fall below 3:1 on white. `.dark`
+       restores them. */
+    --color-detect: #0a86b4;
+    --color-entity: #c9235a;
+    --color-housing: #0c0f14;
+}
+
+:root {
+    --color-fd-primary: #0aa5d6;
+    --color-fd-ring: #0aa5d6;
+}
+
+.dark {
+    --color-detect: #3fc9f5;
+    --color-entity: #ff5c8a;
+
+    /* Match the builder's housing so crossing from /docs to /demo is not a
+       change of room. */
+    --color-fd-background: #0c0f14;
+    --color-fd-card: #141922;
+    --color-fd-popover: #141922;
+    --color-fd-muted: #141922;
+    --color-fd-secondary: #1b212c;
+    --color-fd-accent: #1b212c;
+    --color-fd-border: #262e3a;
+    --color-fd-muted-foreground: #78849a;
+    --color-fd-foreground: #ced7e4;
+    --color-fd-primary: #3fc9f5;
+    --color-fd-ring: #3fc9f5;
+}
+
+html {
+    scrollbar-gutter: stable;
+}
+
+/*
+ * The site header, on every route, solid.
+ *
+ * Fumadocs frosts the docs header (`bg-fd-background/80` plus a backdrop
+ * blur), which turns a dense parameter table into a smear as it scrolls
+ * underneath. A bar that is always on screen should read as chrome rather than
+ * as a lens. Unlayered, so it outranks the utility classes without !important.
+ */
+#nd-subnav {
+    background-color: var(--color-fd-background);
+    backdrop-filter: none;
+}
+
+/* react-remove-scroll compensates for a scrollbar that scrollbar-gutter has
+   already reserved, which shifts the whole page when a dialog opens. */
+html > body[data-scroll-locked] {
+    margin-right: 0 !important;
+    --removed-body-scroll-bar-size: 0 !important;
+}

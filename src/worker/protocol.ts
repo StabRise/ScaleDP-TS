@@ -7,15 +7,12 @@
  */
 
 import type { ModelProgress, ScaleDpConfig } from '../core/config.js'
-import type { Row } from '../core/pipeline.js'
+import type { Row, StageDescriptor } from '../core/pipeline.js'
 
-/** A stage described well enough for the worker to reconstruct it. */
-export interface StageDescriptor {
-    /** Exported class name, e.g. 'PdfToImage'. */
-    type: string
-    /** Constructor options. Must be structured-cloneable. */
-    options?: Record<string, unknown>
-}
+// The descriptor lives in the core so `/registry` and `/worker` share one
+// definition of the serialised pipeline shape. Re-exported here because the
+// worker protocol is where callers expect to find it.
+export type { StageDescriptor }
 
 export type WorkerRequest =
     | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }

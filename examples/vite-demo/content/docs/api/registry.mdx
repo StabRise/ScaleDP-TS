@@ -1,0 +1,128 @@
+---
+title: '@stabrise/scaledp/registry'
+description: Stage metadata at run time, JSON in and out, and a code generator.
+---
+
+```ts
+import {
+    STAGE_SPECS,
+    STAGE_CLASSES,
+    getStageSpec,
+    createStage,
+    pipelineFromDescriptors,
+    describeStage,
+    describePipeline,
+    pipelineCode,
+} from '@stabrise/scaledp/registry'
+```
+
+Importing this module pulls in all fifteen stage classes and **no ML runtime** —
+every engine is behind a dynamic `import()`. That is why it is a separate subpath
+rather than part of the root barrel.
+
+For the narrative version, see
+[Build a pipeline from data](/docs/recipes/build-a-pipeline-from-data).
+
+## Functions
+
+| | |
+| --- | --- |
+| `getStageSpec(type)` | `StageSpec \| undefined` |
+| `createStage(descriptor)` | A live `Stage`. Throws on an unknown type; the stage's own validators still run. |
+| `pipelineFromDescriptors(descriptors)` | A `Pipeline` |
+| `describeStage(stage)` | `StageDescriptor` with **fully resolved** options |
+| `describePipeline(pipeline)` | `StageDescriptor[]` |
+| `pipelineCode(descriptors, options?)` | TypeScript source that builds the pipeline |
+
+`STAGE_CLASSES` maps type name to constructor — useful for `registerStages` in a
+worker entry when you genuinely want all of them.
+
+## `StageSpec`
+
+```ts
+interface StageSpec {
+    type: string
+    label: string
+    group: 'Read' | 'Detect' | 'Recognise' | 'Understand' | 'Transform'
+    subpath: string
+    summary: string
+    consumes: readonly ColumnKind[]
+    produces: ColumnKind
+    alsoProduces?: readonly { param: string; kind: ColumnKind }[]
+    peer?: string
+    cache?: StageCacheSpec
+    expands?: boolean
+    terminal?: boolean
+    defaults: Readonly<Record<string, unknown>>
+    params: readonly StageParamSpec[]
+}
+
+type ColumnKind = 'bytes' | 'image' | 'boxes' | 'document' | 'ner' | 'orientations' | 'box'
+```
+
+`defaults` **points at the stage's own frozen constant**, not a copy. A spec
+cannot describe a default the stage does not have.
+
+## `StageParamSpec`
+
+```ts
+interface StageParamSpec {
+    key: string
+    kind: 'string' | 'number' | 'boolean' | 'enum' | 'stringList' | 'column' | 'columns' | 'color'
+    label: string
+    help?: string
+    min?: number
+    max?: number
+    step?: number
+    arity?: number        // 'columns': fixed length
+    minArity?: number     // 'columns': minimum length
+    accepts?: ColumnKind[]
+    options?: readonly StageParamOption[]
+    allowCustom?: boolean
+    advanced?: boolean
+    required?: boolean
+}
+
+interface StageParamOption { value: string; label: string; title?: string; disabled?: boolean }
+```
+
+Enum options are derived from the existing model registries — `PADDLE_OCR_PRESETS`,
+`NER_MODELS`, `DETECTOR_MODELS` — rather than duplicated, and private NER models
+come through `disabled` because using one without `configure({ auth })` only
+produces a mid-pipeline 401.
+
+`advanced: true` marks plumbing a form can collapse: `pathCol`, `pageCol`,
+`keepInputData`, `propagateError`, and an inherited-but-unused `inputCol` on
+multi-input stages.
+
+## `StageCacheSpec`
+
+```ts
+type StageCacheSpec =
+    | { kind: 'paddle-preset'; param: string }
+    | { kind: 'hf-repo'; param: string; approxBytes?: number }
+    | { kind: 'ner-id'; param: string }
+```
+
+What the stage will download, and which parameter names it — enough to ask
+`isCached` before a run rather than during it.
+
+## `pipelineCode`
+
+```ts
+interface PipelineCodeOptions {
+    variable?: string    // 'pipeline'
+    imports?: boolean    // true
+    indent?: number      // 4
+}
+```
+
+Emits only options that differ from each stage's defaults, groups imports by
+subpath (root first, then alphabetical), and wraps one option per line once the
+call exceeds 100 characters.
+
+## Keeping it honest
+
+`test/unit/registry.test.ts` fails when a stage gains a parameter with no
+catalogue entry, and the docs site's own generator fails when a stage has no page
+— so the catalogue, the code and this reference cannot drift apart silently.

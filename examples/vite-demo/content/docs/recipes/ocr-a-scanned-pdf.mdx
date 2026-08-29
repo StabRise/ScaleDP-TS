@@ -1,0 +1,86 @@
+---
+title: OCR a scanned PDF
+description: The default pipeline — render every page, read it, and draw what was found.
+---
+
+The shortest useful pipeline, and the right starting point for a scan with no
+text layer.
+
+```ts
+import { Pipeline, ImageDrawBoxes, configure } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+configure({
+    cache: 'indexeddb',
+    pdf: {
+        workerSrc: '/pdf.worker.min.mjs',
+        cMapUrl: '/cmaps/',
+        standardFontDataUrl: '/standard_fonts/',
+    },
+})
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ preset: 'v6-small', keepFormatting: true }),
+    new ImageDrawBoxes({
+        inputCols: ['image', 'text'],
+        outputCol: 'annotated',
+        color: '#3fc9f5',
+        lineWidth: 2,
+    }),
+])
+
+const rows = await pipeline.transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { preset: 'v6-small', keepFormatting: true } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+One row per page:
+
+```ts
+import { renderInto, showImage, showText } from '@stabrise/scaledp/display'
+
+for (const row of rows) {
+    if (row.text.exception) {
+        console.warn(`page ${row.page}:`, row.text.exception)
+        continue
+    }
+    renderInto('#page', showImage(row.annotated))
+    renderInto('#text', showText(row.text))
+}
+```
+
+## Turning the dials
+
+**Too slow.** Drop `resolution` to 150 — it quarters the pixel count. Try
+`preset: 'v6-tiny'`. Prefer WebGPU:
+
+```ts
+import { isWebGpuAvailable } from '@stabrise/scaledp/ocr'
+configure({ executionProviders: (await isWebGpuAvailable()) ? ['webgpu', 'wasm'] : ['wasm'] })
+```
+
+**Wrong script.** `v6-small` covers Latin and CJK. For anything else, pick a v5
+preset — or let the page choose:
+
+```ts
+import { detectScript, presetsForScript } from '@stabrise/scaledp/ocr'
+
+const detected = await detectScript(canvas)
+const options = detected ? await presetsForScript(detected.script) : []
+```
+
+**Skewed or rotated text.** PaddleOCR detects internally and does not handle
+rotation especially well. Use a real detector and
+[a separate recognizer](/docs/recipes/detect-then-recognise).
+
+**Only some pages need this.** If the PDF is a mix, check the text layer first —
+see [Skip OCR when there is a text layer](/docs/recipes/skip-ocr-when-there-is-a-text-layer).
+
+**The tab freezes.** Move it off the main thread:
+[Run off the main thread](/docs/recipes/run-off-the-main-thread).

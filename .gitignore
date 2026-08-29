@@ -60,6 +60,11 @@ yarn.lock
 
 # Demo lockfiles: the demo is a scratch app, not a shipped artifact.
 /examples/*/pnpm-lock.yaml
+
+# ... except the site's own npm lockfile, which is now a shipped artifact: it
+# is what GitHub Pages builds from, and an unpinned install would let a minor
+# release of fumadocs or React Router change the published site with no commit.
+!/examples/vite-demo/package-lock.json
 /examples/*/public/sample.pdf
 /examples/*/public/ort/
 
@@ -67,3 +72,7 @@ yarn.lock
 /.vitest-attachments/
 **/__screenshots__/
 /examples/*/public/tesseract/
+
+# React Router build output and generated route types
+/examples/*/build/
+/examples/*/.react-router/

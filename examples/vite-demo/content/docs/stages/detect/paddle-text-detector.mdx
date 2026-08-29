@@ -1,0 +1,68 @@
+---
+title: PaddleTextDetector
+description: The detection half of a PaddleOCR preset — line-level boxes, no text.
+---
+
+<StageMeta type="PaddleTextDetector" />
+
+Runs only the detection model of a PaddleOCR preset. Use it when you want boxes
+without paying for recognition, or to feed a different recognizer.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextDetector, TesseractRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new PaddleTextDetector({ outputCol: 'boxes' }),
+    new TesseractRecognizer({ inputCols: ['image', 'boxes'] }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'PaddleTextDetector', options: { outputCol: 'boxes' } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'boxes'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+Regions are **line-level** — one box per line of text, as in Python ScaleDP.
+Boxes are axis-aligned with `score: 1`; the confidence a recognizer produces is a
+separate thing. `DetectorOutput.type` is `'paddle'`.
+
+<Callout>
+`PaddleTextRecognizer` detects *and* recognises in a single pass and ignores any
+separate detector's boxes. Running both is how you compare what a detector finds
+against what the recognizer acted on — it is not a way to feed one into the
+other. For that, use [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
+</Callout>
+
+The input may be a `ScaleDpImage`, an `OffscreenCanvas` or `ImageData`. An
+unknown `preset` throws `RangeError` from the constructor; see
+[the preset list](/docs/stages/recognise/paddle-text-recognizer#language-presets).
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Detection and recognition share the download. |
+| `scoreThreshold` | `number` 0–1 | `0` | Drop regions below this confidence. 0 keeps everything. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'boxes'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

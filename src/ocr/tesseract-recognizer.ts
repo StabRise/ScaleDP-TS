@@ -9,11 +9,12 @@
  */
 
 import { OcrError } from '../core/errors.js'
-import { cropBox, decodeImage, toImageData } from '../core/image.js'
+import type { Point } from '../core/geometry.js'
+import { cropBox, cropGeometry, decodeImage, toImageData } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
-import { type Box, isRotated } from '../schemas/box.js'
+import { type Box, boxFromPolygon, isRotated } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
@@ -32,6 +33,18 @@ export interface TesseractRecognizerParams extends BaseStageParams {
     scoreThreshold: number
     keepFormatting: boolean
     lineTolerance: number
+    /**
+     * Granularity of the boxes returned.
+     *
+     * 'region' keeps ScaleDP's behaviour: one box per region the detector
+     * found, carrying everything read inside it. Since the detectors here are
+     * line-level, so are those boxes.
+     *
+     * 'word' returns instead the boxes tesseract reports for each word, mapped
+     * back through the crop -- rotation included -- into page coordinates. Not
+     * in Python ScaleDP, which always returns one box per region.
+     */
+    boxLevel: 'region' | 'word'
     /** Classify each crop 0/180 degrees and turn the inverted ones. */
     detectLineOrientation: boolean
     /**
@@ -58,6 +71,7 @@ export const TESSERACT_RECOGNIZER_DEFAULTS: TesseractRecognizerParams = Object.f
     scoreThreshold: 0.5,
     keepFormatting: false,
     lineTolerance: 0,
+    boxLevel: 'region' as 'region' | 'word',
     detectLineOrientation: true,
     onlyRotated: false,
     oriModel: DEFAULT_ORIENTATION_MODEL,
@@ -107,6 +121,7 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
             scoreThreshold,
             keepFormatting,
             lineTolerance,
+            boxLevel,
             detectLineOrientation,
             onlyRotated,
         } = this.params
@@ -139,7 +154,9 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
                 ctx.signal?.throwIfAborted()
 
                 // Straightens rotated boxes rather than taking their envelope,
-                // which is what makes a skewed line readable at all.
+                // which is what makes a skewed line readable at all. The same
+                // geometry maps word boxes back out again.
+                const geometry = cropGeometry(box, { scaleFactor, padding })
                 let crop = cropBox(bitmap, box, { scaleFactor, padding })
 
                 let inverted = false
@@ -154,28 +171,55 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
 
                 await client.loadImage(toImageData(crop))
                 const items = await client.getTextBoxes('word')
-                const text = items
-                    .map((item) => item.text.trim())
-                    .filter(Boolean)
-                    .join(' ')
-                if (!text) continue
+
+                const words = items.filter((item) => item.text.trim())
+                if (words.length === 0) continue
 
                 // tesseract-wasm reports confidence on a 0-1 scale, not 0-100.
                 // ScaleDP writes its confidence to `conf` and then filters on
                 // `score`, so its threshold silently applies to the detector's
                 // score instead; the value goes where it is read here.
+                // Averaged over every item tesseract returned, empty ones
+                // included, which is what the region mode did before word boxes
+                // existed -- so a pipeline that was passing this gate still is.
                 const score = items.reduce((sum, item) => sum + item.confidence, 0) / (items.length || 1)
+
+                // The gate is the region's score in both modes, so `boxLevel`
+                // changes how finely the result is cut up and nothing else. Per
+                // word it would also change *what was read*: a word scoring 0.3
+                // between two at 0.9 rides out on the region's mean, and would
+                // vanish on its own -- so the same page would yield different
+                // text depending on the box size asked for. Each word still
+                // carries its own confidence for filtering further downstream.
                 if (score < scoreThreshold) continue
 
-                recognized.push({ ...box, text, score })
+                if (boxLevel === 'word') {
+                    for (const item of words) {
+                        recognized.push(
+                            wordBox(
+                                item.rect,
+                                geometry,
+                                inverted,
+                                scaleFactor,
+                                item.text.trim(),
+                                item.confidence
+                            )
+                        )
+                    }
+                    continue
+                }
+
+                recognized.push({ ...box, text: words.map((item) => item.text.trim()).join(' '), score })
             }
         } finally {
             bitmap.close()
         }
 
-        // Coordinates came from the scaled page, so bring them back.
+        // Coordinates came from the scaled page, so bring them back. Word boxes
+        // are already in page coordinates -- `wordBox` divides as it maps, so it
+        // rounds once rather than twice.
         const bboxes =
-            scaleFactor === 1
+            scaleFactor === 1 || boxLevel === 'word'
                 ? recognized
                 : recognized.map((box) => ({
                       ...box,
@@ -205,6 +249,41 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
         await this.orientation?.dispose()
         this.orientation = null
     }
+}
+
+/**
+ * One word's box, in the page's coordinates.
+ *
+ * tesseract reports the rect in the crop's own space: straightened, padded,
+ * scaled, and turned the right way up if the line was upside down. Undo the
+ * turn, then push the four corners back through the crop's own transform, so a
+ * word inside a skewed line comes back skewed the same way.
+ */
+function wordBox(
+    rect: { left: number; top: number; right: number; bottom: number },
+    geometry: ReturnType<typeof cropGeometry>,
+    inverted: boolean,
+    scaleFactor: number,
+    text: string,
+    score: number
+): Box {
+    const { width, height, map } = geometry
+    // rotate180 maps (x, y) to (w - x, h - y), so the rect's corners swap.
+    const [left, top, right, bottom] = inverted
+        ? [width - rect.right, height - rect.bottom, width - rect.left, height - rect.top]
+        : [rect.left, rect.top, rect.right, rect.bottom]
+
+    const toPage = (x: number, y: number): Point => {
+        const [px, py] = map(x, y)
+        return [px / scaleFactor, py / scaleFactor]
+    }
+    const corners: Point[] = [
+        toPage(left, top),
+        toPage(right, top),
+        toPage(right, bottom),
+        toPage(left, bottom),
+    ]
+    return boxFromPolygon(corners, { text, score })
 }
 
 /** Turn a crop 180 degrees, so an inverted line reads the right way up. */

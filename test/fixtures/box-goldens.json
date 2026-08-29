@@ -1818,6 +1818,78 @@
         "expected": true
     },
     {
+        "fn": "is_on_same_line",
+        "args": {
+            "a": {
+                "text": "",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 20,
+                "height": 10,
+                "angle": 5
+            },
+            "b": {
+                "text": "",
+                "score": 1.0,
+                "x": 100,
+                "y": 10,
+                "width": 20,
+                "height": 10,
+                "angle": 5
+            }
+        },
+        "expected": false
+    },
+    {
+        "fn": "is_on_same_line",
+        "args": {
+            "a": {
+                "text": "",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 20,
+                "height": 10,
+                "angle": 8
+            },
+            "b": {
+                "text": "",
+                "score": 1.0,
+                "x": 60,
+                "y": 9,
+                "width": 20,
+                "height": 10,
+                "angle": 8
+            }
+        },
+        "expected": false
+    },
+    {
+        "fn": "is_on_same_line",
+        "args": {
+            "a": {
+                "text": "",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 20,
+                "height": 10,
+                "angle": 5
+            },
+            "b": {
+                "text": "",
+                "score": 1.0,
+                "x": 25,
+                "y": 2,
+                "width": 20,
+                "height": 10,
+                "angle": 5
+            }
+        },
+        "expected": true
+    },
+    {
         "fn": "merge_overlapping_boxes",
         "args": {
             "boxes": [
@@ -2115,6 +2187,271 @@
                 "x": 200,
                 "y": 80,
                 "width": 25,
+                "height": 12,
+                "angle": 0.0
+            }
+        ]
+    },
+    {
+        "fn": "merge_overlapping_boxes",
+        "args": {
+            "boxes": [
+                {
+                    "text": "a",
+                    "score": 1.0,
+                    "x": 0,
+                    "y": 0,
+                    "width": 10,
+                    "height": 10,
+                    "angle": 0.0
+                },
+                {
+                    "text": "b",
+                    "score": 1.0,
+                    "x": 100,
+                    "y": 0,
+                    "width": 10,
+                    "height": 10,
+                    "angle": 0.0
+                },
+                {
+                    "text": "c",
+                    "score": 1.0,
+                    "x": 5,
+                    "y": 0,
+                    "width": 100,
+                    "height": 10,
+                    "angle": 0.0
+                }
+            ],
+            "iou_threshold": 0.02
+        },
+        "expected": [
+            {
+                "text": "a",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 105,
+                "height": 10,
+                "angle": 0.0
+            },
+            {
+                "text": "b",
+                "score": 1.0,
+                "x": 100,
+                "y": 0,
+                "width": 10,
+                "height": 10,
+                "angle": 0.0
+            }
+        ]
+    },
+    {
+        "fn": "merge_overlapping_boxes",
+        "args": {
+            "boxes": [
+                {
+                    "text": "a",
+                    "score": 1.0,
+                    "x": 0,
+                    "y": 0,
+                    "width": 10,
+                    "height": 10,
+                    "angle": 0.0
+                },
+                {
+                    "text": "b",
+                    "score": 1.0,
+                    "x": 100,
+                    "y": 0,
+                    "width": 10,
+                    "height": 10,
+                    "angle": 0.0
+                },
+                {
+                    "text": "c",
+                    "score": 1.0,
+                    "x": 5,
+                    "y": 0,
+                    "width": 100,
+                    "height": 10,
+                    "angle": 0.0
+                }
+            ],
+            "iou_threshold": 0.3
+        },
+        "expected": [
+            {
+                "text": "a",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 10,
+                "height": 10,
+                "angle": 0.0
+            },
+            {
+                "text": "b",
+                "score": 1.0,
+                "x": 100,
+                "y": 0,
+                "width": 10,
+                "height": 10,
+                "angle": 0.0
+            },
+            {
+                "text": "c",
+                "score": 1.0,
+                "x": 5,
+                "y": 0,
+                "width": 100,
+                "height": 10,
+                "angle": 0.0
+            }
+        ]
+    },
+    {
+        "fn": "merge_overlapping_boxes",
+        "args": {
+            "boxes": [
+                {
+                    "text": "one",
+                    "score": 1.0,
+                    "x": 0,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "two",
+                    "score": 1.0,
+                    "x": 28,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "three",
+                    "score": 1.0,
+                    "x": 56,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "four",
+                    "score": 1.0,
+                    "x": 84,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                }
+            ],
+            "iou_threshold": 0.02
+        },
+        "expected": [
+            {
+                "text": "one",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 86,
+                "height": 12,
+                "angle": 0.0
+            },
+            {
+                "text": "four",
+                "score": 1.0,
+                "x": 84,
+                "y": 0,
+                "width": 30,
+                "height": 12,
+                "angle": 0.0
+            }
+        ]
+    },
+    {
+        "fn": "merge_overlapping_boxes",
+        "args": {
+            "boxes": [
+                {
+                    "text": "one",
+                    "score": 1.0,
+                    "x": 0,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "two",
+                    "score": 1.0,
+                    "x": 28,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "three",
+                    "score": 1.0,
+                    "x": 56,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                },
+                {
+                    "text": "four",
+                    "score": 1.0,
+                    "x": 84,
+                    "y": 0,
+                    "width": 30,
+                    "height": 12,
+                    "angle": 0.0
+                }
+            ],
+            "iou_threshold": 0.3
+        },
+        "expected": [
+            {
+                "text": "one",
+                "score": 1.0,
+                "x": 0,
+                "y": 0,
+                "width": 30,
+                "height": 12,
+                "angle": 0.0
+            },
+            {
+                "text": "two",
+                "score": 1.0,
+                "x": 28,
+                "y": 0,
+                "width": 30,
+                "height": 12,
+                "angle": 0.0
+            },
+            {
+                "text": "three",
+                "score": 1.0,
+                "x": 56,
+                "y": 0,
+                "width": 30,
+                "height": 12,
+                "angle": 0.0
+            },
+            {
+                "text": "four",
+                "score": 1.0,
+                "x": 84,
+                "y": 0,
+                "width": 30,
                 "height": 12,
                 "angle": 0.0
             }

@@ -1,0 +1,98 @@
+---
+title: Find signatures and faces
+description: Two pre-set YOLO detectors, and what to do with what they find.
+---
+
+`SignatureDetector` and `FaceDetector` are `YoloOnnxDetector` with a model and
+labels already chosen. They read a page image and write a box column.
+
+```ts
+import { Pipeline, ImageDrawBoxes } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { FaceDetector, SignatureDetector } from '@stabrise/scaledp/detect'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new SignatureDetector({ scoreThreshold: 0.25 }),
+    new FaceDetector(),
+    new ImageDrawBoxes({ inputCols: ['image', 'signatures'], outputCol: 'pass1', color: '#9d8cff' }),
+    new ImageDrawBoxes({ inputCols: ['pass1', 'faces'], outputCol: 'annotated', color: '#ff5c8a' }),
+])
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'SignatureDetector', options: {} },
+    { type: 'FaceDetector', options: {} },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'signatures'], outputCol: 'pass1', color: '#9d8cff', lineWidth: 2 } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['pass1', 'faces'], outputCol: 'annotated', color: '#ff5c8a', lineWidth: 2 } },
+]} />
+
+They write different columns by default — `signatures` and `faces` — so both can
+run in one pipeline without colliding.
+
+200 DPI is enough here. These are object detectors on page-scale features, not
+text recognition, and rendering at 300 costs time for no gain.
+
+## Cropping each one out
+
+```ts
+import { ImageCropBoxes } from '@stabrise/scaledp'
+
+new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new SignatureDetector(),
+    new ImageCropBoxes({ inputCols: ['image', 'signatures'], padding: 8, returnEmpty: false }),
+])
+```
+
+One row per signature, with the crop in `cropped_image` and its source box in
+`box`. `padding: 8` gives the crop a margin — a tight YOLO box usually clips the
+tail of a signature.
+
+`returnEmpty: false` (the default) records `No boxes to crop` in the row's
+`exception` when a page has none, rather than emitting the whole page. Whether
+that is a failure or a result depends on your job; set it to `true` if "no
+signature on this page" is expected.
+
+## Blacking out faces
+
+```ts
+new ImageDrawBoxes({
+    inputCols: ['image', 'faces'],
+    outputCol: 'redacted',
+    filled: true,
+    color: '#000000',
+    padding: 4,
+})
+```
+
+Same shape as [PII redaction](/docs/recipes/redact-pii), and the same caveat: it
+paints the rendered image, not the source PDF.
+
+## Tuning
+
+`scoreThreshold` defaults to 0.2 on both, which is deliberately permissive —
+these detectors are usually used to *route* a document to a human, where a false
+positive is cheap and a miss is not. Raise it for automated filing.
+
+`iouThreshold` (0.5) suppresses duplicate detections per class. Lower it if a
+single large signature comes back as two overlapping boxes.
+
+## Another YOLO model
+
+Anything you have as a YOLO ONNX export runs through the base class:
+
+```ts
+import { YoloOnnxDetector } from '@stabrise/scaledp/detect'
+
+new YoloOnnxDetector({
+    model: 'my-org/stamp-detection',
+    labels: ['stamp', 'seal'],
+    outputCol: 'stamps',
+    outputType: 'stamp',
+})
+```
+
+Both the transposed YOLOv8/v11 layout and a graph with NMS baked in are decoded.
+See [YoloOnnxDetector](/docs/stages/detect/yolo-onnx-detector).

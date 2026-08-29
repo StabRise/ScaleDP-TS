@@ -1,0 +1,160 @@
+---
+title: Installation
+description: Peer dependencies per stage, the assets you have to serve yourself, and the headers that decide whether threaded WASM works.
+---
+
+## The package
+
+```bash
+npm install @stabrise/scaledp
+```
+
+ESM only, `sideEffects: false`, Node ≥ 20 for tooling. It ships eight subpath
+exports and no ML runtime — importing the core pulls in nothing heavy.
+
+| Import | Contains |
+| --- | --- |
+| `@stabrise/scaledp` | `Pipeline`, `configure`, schemas, geometry, image and text helpers, the engine-free stages |
+| `@stabrise/scaledp/pdf` | `PdfToImage`, `PdfToDocument` |
+| `@stabrise/scaledp/ocr` | PaddleOCR, DBNet, Tesseract, line orientation |
+| `@stabrise/scaledp/ner` | `GlinerNer` and the model registry |
+| `@stabrise/scaledp/detect` | YOLO, signature and face detectors |
+| `@stabrise/scaledp/registry` | Stage metadata, `pipelineFromDescriptors`, `pipelineCode` |
+| `@stabrise/scaledp/worker` | Worker host and client |
+| `@stabrise/scaledp/display` | `showText`, `showNer`, `visualizeNer`, `showImage`, `showBoxes` |
+
+## Engines
+
+Every engine is an **optional peer dependency, imported lazily** — a dynamic
+`import()` inside a function, wrapped with a message naming the package to
+install. Install only what your pipeline uses.
+
+| Install | Needed by |
+| --- | --- |
+| `pdfjs-dist` | `PdfToImage`, `PdfToDocument` |
+| `onnxruntime-web` | `DbnetOnnxDetector`, `YoloOnnxDetector`, `SignatureDetector`, `FaceDetector`, `LineOrientationDetector`, `GlinerNer` |
+| `ppu-paddle-ocr` | `PaddleTextDetector`, `PaddleTextRecognizer` |
+| `@huggingface/transformers` | `GlinerNer` (tokenizer only) |
+| `tesseract-wasm` | `TesseractOcr`, `TesseractRecognizer` |
+| `tesseract.js` | `detectScript()` — OSD script detection only |
+
+```bash
+npm install pdfjs-dist                                  # PDF reading
+npm install onnxruntime-web ppu-paddle-ocr              # PaddleOCR
+npm install onnxruntime-web @huggingface/transformers   # GLiNER NER
+npm install tesseract-wasm tesseract.js                 # Tesseract + script detection
+```
+
+## Serve the assets
+
+Three things must come from your own origin, because a library cannot know where
+your app puts them.
+
+### pdf.js worker and data files
+
+```bash
+cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/
+cp -r node_modules/pdfjs-dist/cmaps public/
+cp -r node_modules/pdfjs-dist/standard_fonts public/
+```
+
+```ts
+configure({
+    pdf: {
+        workerSrc: '/pdf.worker.min.mjs',
+        cMapUrl: '/cmaps/',
+        standardFontDataUrl: '/standard_fonts/',
+    },
+})
+```
+
+Without `cMapUrl` a CJK or symbol-font PDF renders as blank boxes; without
+`standardFontDataUrl` a PDF that relies on the base-14 fonts renders with
+substitutes.
+
+### Tesseract runtime and language data
+
+```ts
+configure({ tesseract: { workerUrl: '/tesseract/tesseract-worker.js', dataUrl: '/tesseract/' } })
+```
+
+`dataUrl` is where `eng.traineddata` and friends live — roughly 15 MB per
+language. It defaults to the `tessdata_fast` repository on GitHub, which is fine
+for a demo and not for production.
+
+### onnxruntime-web WASM binaries
+
+Optional. Without this a CDN copy matching your installed version is used.
+
+```bash
+mkdir -p public/ort
+cp node_modules/onnxruntime-web/dist/*.wasm public/ort/
+cp node_modules/onnxruntime-web/dist/*.mjs  public/ort/
+```
+
+```ts
+configure({ ortWasmPaths: '/ort/' })
+```
+
+<Callout type="error" title="Pin one onnxruntime-web">
+The `.mjs` loader and the `.wasm` binary must come from the same build variant
+**and** the same version. A mismatch fails at session creation with an opaque
+error. `wasmPaths` is otherwise derived from the resolved package version — never
+hardcode a CDN URL.
+</Callout>
+
+Self-hosting the ORT runtime cannot be done out of a Vite `public/` directory in
+development: Vite refuses to `import` files from there, and ORT loads its `.mjs`
+glue by dynamic import. It works in a production build.
+
+## Cross-origin isolation
+
+Multi-threaded WebAssembly needs `SharedArrayBuffer`, which needs the **page** to
+be cross-origin isolated:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without them `crossOriginIsolated` is false, onnxruntime-web falls back to its
+single-threaded build, and `numThreads` has no effect. This is a property of the
+page, not the worker — moving work into a worker does not escape it.
+
+```ts
+import { isCrossOriginIsolated } from '@stabrise/scaledp/ocr'
+
+if (!isCrossOriginIsolated()) {
+    console.info('Single-threaded WASM: set COOP/COEP headers, or prefer WebGPU.')
+}
+```
+
+`require-corp` also affects every cross-origin resource the page loads — fonts,
+images, analytics — so it is worth deciding deliberately rather than switching on.
+**WebGPU needs none of this**, and is generally faster than even multi-threaded
+WASM. Where it is available it is the simpler answer. See
+[Execution providers](/docs/concepts/execution-providers).
+
+## Bundler notes
+
+**Vite.** Exclude the engines from dependency pre-bundling; they ship WASM and
+their own workers, and pre-bundling breaks both.
+
+```ts
+optimizeDeps: {
+    exclude: ['onnxruntime-web', 'ppu-paddle-ocr', '@huggingface/transformers'],
+}
+```
+
+Pin the dev server port. IndexedDB is scoped per origin *including the port*, so
+a server that silently moves from 5173 to 5174 starts with an empty model cache
+and looks exactly like caching being broken.
+
+```ts
+server: { port: 5173, strictPort: true }
+```
+
+**No DOM.** The library uses `OffscreenCanvas` and `ImageBitmap` only — never
+`document.createElement`, `HTMLImageElement` or `toDataURL`. That is what lets
+the whole pipeline run in a worker, and it means the core has no jsdom-shaped
+requirements in tests.

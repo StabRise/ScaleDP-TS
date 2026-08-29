@@ -1,0 +1,100 @@
+---
+title: ImageDrawBoxes
+description: Annotate a page with detection boxes or NER entities. Drawing is a pipeline stage, so the annotated page is just another image column.
+---
+
+<StageMeta type="ImageDrawBoxes" />
+
+```ts
+import { Pipeline, ImageDrawBoxes } from '@stabrise/scaledp'
+
+new ImageDrawBoxes({
+    inputCols: ['image', 'text', 'ner'],
+    outputCol: 'annotated',
+    displayDataList: ['entity_group', 'score'],
+    lineWidth: 2,
+})
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'GlinerNer', options: { inputCol: 'text' } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'boxes_drawn', color: '#3fc9f5', lineWidth: 2 } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['boxes_drawn', 'ner'], outputCol: 'annotated', color: '#ff5c8a', lineWidth: 2, displayDataList: ['entity_group'] } },
+]} label="Open a two-pass overlay in the builder" />
+
+The first entry in `inputCols` is the image; every other entry is a box or entity
+source. A source with `entities` is drawn as NER, one with `bboxes` as boxes — so
+one stage can annotate a page with both.
+
+`displayDataList` renders fields above each box, joined by `:`. Valid names are
+the schema's own: `text`, `score`, `angle`, `x`, `y`, `width`, `height` for a
+box; `entity_group`, `word`, `score` for an entity. Numbers are formatted to two
+decimals.
+
+`whiteList` and `blackList` filter entity groups only.
+
+## Colours
+
+`color: null` (the default) colours by group. The colour is a **stable hash** of
+the group name, so a given label is the same colour on every render — Python
+picks a random colour per run, which makes two renders of the same document
+impossible to compare.
+
+```ts
+import { colorForGroup } from '@stabrise/scaledp'
+
+colorForGroup('person')   // the same HSL string every time
+```
+
+One stage takes one `color` for all its sources, which is why a two-colour
+overlay is two chained passes — the second reading what the first wrote. That is
+also how the demo speaks its false-colour language: cyan for what was found,
+magenta for what was understood.
+
+## It is a terminal stage
+
+An annotated page is still an image, but feeding it to a detector means detecting
+through the boxes drawn on top of it. The registry marks the stage `terminal` for
+this reason, and column-suggesting interfaces skip it.
+
+## Rotated boxes
+
+Drawn as rotated quads, with the label chip riding the box's own top edge. Python
+places the chip at the envelope corner instead, which detaches it from a steeply
+rotated box.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2+) | `['image', 'boxes']` | The image first, then one or more box, document or entity columns. |
+| `color` | `string` | `null` | One colour for every box. Unset colours by group instead. |
+| `filled` | `boolean` | `false` | Fill boxes as well as outlining them. |
+| `lineWidth` | `number` 0–20 | `1` | Line width |
+| `textSize` | `number` 4–72 | `12` | Text size |
+| `displayDataList` | `string[]` | `[]` | Rendered above each box, joined by ":". Pick "text" to read the OCR output back off the page. |
+| `padding` | `number` | `0` | Grow each box by this many pixels before drawing. |
+| `whiteList` | `string[]` | `[]` | Draw only these entity groups; empty draws all. |
+| `blackList` | `string[]` | `[]` | Never draw these entity groups. |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Image format |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'image_with_boxes'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

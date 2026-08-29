@@ -76,6 +76,32 @@ Two tolerances are legitimate and already encoded; do not tighten them blindly:
   is compared within the shape's own symmetry group. cv2 itself returns `-0.0`
   or `90` for axis-aligned input depending on which hull edge its scan hits.
 
+## Documentation
+
+The docs are a Fumadocs site living inside the demo app, which is also the
+project's public site: `/` landing, `/docs/*` documentation, `/demo` the
+pipeline builder. Prose is at `examples/vite-demo/content/docs/`.
+
+**Never hand-edit between the `{/* generated:params */}` markers.** Every stage
+page's parameter table is written from `src/registry/catalog.ts` by
+`examples/vite-demo/scripts/generate-stage-docs.mjs`; `npm run docs:check` (part
+of the demo's `typecheck`) fails when the two disagree, and it also fails when a
+stage in the catalogue has no page. Adding a stage therefore means adding
+`content/docs/stages/<group>/<slug>.mdx` with the marker pair in it.
+
+The site deploys to GitHub Pages via `.github/workflows/deploy.yml` on a push
+to `main`. Pages cannot set response headers, so **the deployed site is not
+cross-origin isolated** and onnxruntime-web runs single-threaded there; WebGPU
+is unaffected. The dev server still sets COOP/COEP (a plugin in
+`vite.config.ts`, because `server.headers` does not reach React Router's SSR
+handler) so the threaded path stays testable. Do not "fix" that asymmetry by
+removing the dev headers -- it is deliberate, and documented in the app's
+README.
+
+`examples/vite-demo/package-lock.json` is committed on purpose, against the
+repo's usual rule about example lockfiles: it is what the published site builds
+from.
+
 ## Commands
 
 ```bash
@@ -85,6 +111,13 @@ pnpm typecheck
 pnpm lint / lint:fix
 pnpm build
 pnpm check:pkg         # publint + attw, esm-only profile
+```
+
+```bash
+cd examples/vite-demo
+npm run dev            # the site: landing, /docs, /demo
+npm run build          # static bundle in build/client
+npm run typecheck      # includes docs:check and react-router typegen
 ```
 
 ## Publishing

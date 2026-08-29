@@ -7,6 +7,12 @@
  * quirk that matters: the Python path converts RGB to BGR and never converts
  * back, so the model is fed BGR channels normalised against *RGB* ImageNet
  * statistics. Feeding true RGB instead shifts the boxes.
+ *
+ * The model detects text *lines*, not words -- one region per line, in Python
+ * as here. Nothing downstream subdivides them either: `TesseractRecognizer`
+ * reads each region with PSM.SINGLE_WORD and returns one box per region, which
+ * is what ScaleDP does too. `TesseractOcr`, which runs tesseract's own layout
+ * analysis over the whole page, is the stage that yields word boxes.
  */
 
 import { getConfig } from '../core/config.js'
@@ -46,6 +52,11 @@ export interface DbnetOnnxDetectorParams extends BaseStageParams {
     /**
      * Merge boxes that overlap and share a line. ScaleDP uses an unusually low
      * IoU of 0.02 here, because adjacent words in a line barely overlap.
+     *
+     * In practice it rarely changes anything for this model: the regions are
+     * already whole lines and do not overlap. ScaleDP merges unconditionally
+     * and its box count is likewise unchanged. Kept as a parameter because it
+     * does matter for detectors that emit overlapping candidates.
      */
     mergeBoxes: boolean
 }

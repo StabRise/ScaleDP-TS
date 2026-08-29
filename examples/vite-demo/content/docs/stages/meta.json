@@ -1,0 +1,5 @@
+{
+    "title": "Stages",
+    "root": false,
+    "pages": ["index", "read", "detect", "recognise", "transform", "understand"]
+}

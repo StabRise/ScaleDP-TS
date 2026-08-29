@@ -1,0 +1,67 @@
+---
+title: SignatureDetector
+description: YoloOnnxDetector pre-set to StabRise/signature_detection, writing a `signatures` column.
+---
+
+<StageMeta type="SignatureDetector" />
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { SignatureDetector } from '@stabrise/scaledp/detect'
+import { ImageDrawBoxes } from '@stabrise/scaledp'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new SignatureDetector(),
+    new ImageDrawBoxes({ inputCols: ['image', 'signatures'], outputCol: 'annotated' }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'SignatureDetector', options: {} },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'signatures'], outputCol: 'annotated', color: '#9d8cff', lineWidth: 2 } },
+]} />
+
+Identical to [`YoloOnnxDetector`](/docs/stages/detect/yolo-onnx-detector) with
+`model: 'StabRise/signature_detection'`, `labels: ['signature']`,
+`outputCol: 'signatures'` and `outputType: 'signature'`. Every parameter is still
+overridable.
+
+<Callout type="warn" title="Validators do not run on this subclass">
+It spreads its pre-set options straight into `super` rather than through
+`resolveParams`, so the base class's validators are skipped. Passing
+`model: ''` explicitly is accepted here and fails later at `init()` with a less
+useful message.
+</Callout>
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `string` | `'StabRise/signature_detection'` | Hugging Face repo id, or a URL when self-hosting. No default. |
+| `labels` | `string[]` | `['signature']` | Class index → label. Empty falls back to class_&lt;n&gt;. |
+| `scoreThreshold` | `number` 0–1 | `0.2` | Drop detections below this confidence. |
+| `iouThreshold` | `number` 0–1 | `0.5` | Overlap above which two same-class boxes count as duplicates. |
+| `padding` | `number` 0–1 | `0` | Grow each box by this fraction of its size, to avoid clipping edges. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'signatures'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `outputType` | `string` | `'signature'` | Recorded as DetectorOutput.type. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

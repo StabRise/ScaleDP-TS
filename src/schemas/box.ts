@@ -190,7 +190,13 @@ export function isOnSameLine(a: Box, b: Box, angleThresh = 10, lineThresh = 0.5)
     const bcx = b.x + b.width / 2
     const bcy = b.y + b.height / 2
 
-    if (Math.abs(a.angle) < ROTATION_EPSILON_DEGREES) {
+    // Python branches on the caller's `angleThresh`, not on the much smaller
+    // rotation epsilon: a box a few degrees off is still treated as horizontal
+    // here, and compared by raw vertical distance. Using the epsilon instead
+    // sends slightly skewed boxes down the projection path, where a large
+    // horizontal gap cancels most of the vertical one and unrelated lines start
+    // reading as the same line.
+    if (Math.abs(a.angle) < angleThresh) {
         return Math.abs(acy - bcy) < avgHeight * lineThresh
     }
 
@@ -214,23 +220,33 @@ export function mergeOverlappingBoxes(
     angleThresh = 10,
     lineThresh = 0.5
 ): Box[] {
-    const result = [...boxes]
+    // One greedy pass, exactly as Python does it: each box either starts a
+    // group or is absorbed into an earlier one, and a group that has been
+    // emitted is never revisited. Iterating to a fixed point instead merges
+    // transitively -- a chain of boxes that each overlap their neighbour
+    // collapses into one -- which quietly turns detections into whole lines.
+    const merged: Box[] = []
+    const used = new Array<boolean>(boxes.length).fill(false)
 
-    let merged = true
-    while (merged) {
-        merged = false
-        outer: for (let i = 0; i < result.length; i++) {
-            for (let j = i + 1; j < result.length; j++) {
-                const a = result[i] as Box
-                const b = result[j] as Box
-                if (boxIou(a, b) > iouThreshold && isOnSameLine(a, b, angleThresh, lineThresh)) {
-                    result.splice(j, 1)
-                    result[i] = mergeBoxes(a, b)
-                    merged = true
-                    break outer
-                }
+    for (let i = 0; i < boxes.length; i++) {
+        if (used[i]) continue
+        let current = boxes[i] as Box
+
+        // Compares against the *growing* box, so a group can still extend as it
+        // absorbs -- but only forwards, never back into what is already emitted.
+        for (let j = i + 1; j < boxes.length; j++) {
+            if (used[j]) continue
+            const other = boxes[j] as Box
+            if (
+                boxIou(current, other) > iouThreshold &&
+                isOnSameLine(current, other, angleThresh, lineThresh)
+            ) {
+                current = mergeBoxes(current, other)
+                used[j] = true
             }
         }
+        merged.push(current)
+        used[i] = true
     }
-    return result
+    return merged
 }

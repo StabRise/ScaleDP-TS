@@ -197,11 +197,20 @@ if (row.text.exception) console.warn('OCR failed:', row.text.exception)
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md)
-- [Stage reference](docs/stages.md)
-- [Models and caching](docs/models.md)
-- [Workers, threading and COOP/COEP](docs/workers.md)
-- [Porting from Python ScaleDP](docs/porting.md)
+The docs are a site at **[scaledp-ts.stabrise.com](https://scaledp-ts.stabrise.com)**,
+built with [Fumadocs](https://fumadocs.dev) and served next to a live pipeline
+builder — every stage page has an **Open in builder** link that seeds it with a
+working pipeline you can run on your own file.
+
+```bash
+cd examples/vite-demo && npm install && npm run dev
+```
+
+- [Quickstart](examples/vite-demo/content/docs/quickstart.mdx)
+- [Stage reference](examples/vite-demo/content/docs/stages/) — one page per stage, with parameter tables generated from the stage registry
+- [Concepts](examples/vite-demo/content/docs/concepts/) — rows and columns, the stage lifecycle, the error contract, schemas, models and caching, workers
+- [Recipes](examples/vite-demo/content/docs/recipes/) — complete pipelines for OCR, redaction, detection and workers
+- [Porting from Python ScaleDP](examples/vite-demo/content/docs/porting-from-python.mdx)
 
 ## License
 

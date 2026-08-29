@@ -1,0 +1,69 @@
+---
+title: Image helpers
+description: OffscreenCanvas and ImageBitmap only — which is what lets the whole pipeline run in a worker.
+---
+
+```ts
+import {
+    createCanvas, context2d, decodeImage, toImageData, imageDataToCanvas,
+    encodeImage, probeImageSize, letterbox, resize, cropGeometry, cropBox,
+    toNchwFloat32, IMAGENET_MEAN, IMAGENET_STD,
+} from '@stabrise/scaledp'
+```
+
+<Callout title="No DOM, anywhere">
+Never `document.createElement`, `HTMLImageElement` or `toDataURL`. That
+constraint is what makes every stage worker-safe, and it is enforced by the fact
+that the browser test suite runs stages inside a worker.
+</Callout>
+
+## Decode, encode, measure
+
+| | |
+| --- | --- |
+| `decodeImage(data)` | `Promise<ImageBitmap>` from bytes or a `Blob` |
+| `encodeImage(source, type = 'image/png', quality?)` | `Promise<Uint8Array>` |
+| `probeImageSize(data)` | `Promise<{ width, height }>` without retaining a bitmap |
+| `toImageData(source)` / `imageDataToCanvas(image)` | Between the two representations |
+
+`probeImageSize` is what lets `DataToImage` wrap a 40 MB scan for the price of a
+header read.
+
+## Letterboxing
+
+```ts
+interface LetterboxResult { canvas: OffscreenCanvas; scale: number; resized: Size; source: Size }
+
+letterbox(source, { width: 1280, height: 1280 }, { padding: 'end', fill: '#ffffff' })
+```
+
+`padding: 'end'` (the default) pads bottom and right — what PaddleOCR and DBNet
+expect. `'center'` pads evenly — what YOLO expects. Getting this wrong shifts
+every box by half the padding, which looks like a subtly bad model rather than a
+preprocessing bug.
+
+`scale` is what you divide detected coordinates by to get back to the source
+image's space.
+
+## Cropping a box
+
+```ts
+cropBox(source, box, { scaleFactor: 1, padding: 5 })   // OffscreenCanvas
+cropGeometry(box, { scaleFactor, padding })            // { scaled, width, height, map }
+```
+
+`cropBox` straightens rotated boxes with an affine transform onto the box's own
+axes — a port of `TesseractRecognizer._prepare_box_for_ocr`. `cropGeometry`
+returns the same geometry without doing the work, including a `map(x, y)` that
+takes a coordinate inside the crop back to the page. That is how
+`TesseractRecognizer`'s `boxLevel: 'word'` returns word boxes in page space.
+
+## Tensor construction
+
+```ts
+toNchwFloat32(imageData, { mean: IMAGENET_MEAN, std: IMAGENET_STD, scale: 1 / 255, bgr: true })
+```
+
+`scale` defaults to `1 / 255`. `bgr: true` swaps the channel order —
+`DbnetOnnxDetector` needs it, and needs it *with RGB statistics*, reproducing a
+quirk of the Python implementation that parity requires.

@@ -1,0 +1,52 @@
+---
+title: Text reconstruction
+description: Turning a bag of boxes back into text that reads like the page did.
+---
+
+```ts
+import {
+    cluster, getSize, getCharacterWidth,
+    groupBoxesIntoLines, linesToFormattedText, boxesToFormattedText, boxesToText,
+} from '@stabrise/scaledp'
+```
+
+A port of ScaleDP's `BaseOcr.box_to_formatted_text`, `cluster` and `get_size`.
+This is what `keepFormatting: true` runs on every recognizer.
+
+| | |
+| --- | --- |
+| `boxesToText(boxes, separator = ' ')` | Reading order, joined |
+| `boxesToFormattedText(boxes, lineTolerance = 0)` | Layout preserved |
+| `groupBoxesIntoLines(boxes, lineTolerance = 0)` | `Box[][]`; `0` derives from character height |
+| `linesToFormattedText(lines, characterHeight)` | The second half, if you grouped yourself |
+| `getCharacterWidth(lines)` | The modal character width |
+| `cluster(items, maxGap, key?)` / `getSize(items, key?)` | The primitives |
+
+## How it works
+
+`getSize` is a trimmed-quartile mode, not a mean — one enormous heading must not
+set the character height for the page. `cluster` groups by gap. Together they
+turn "these boxes are at these coordinates" into "this is a line, this is an
+indent, this is a paragraph break".
+
+`lineTolerance: 0` derives the tolerance from the measured character height,
+which is almost always better than a fixed pixel number because it scales with
+the render DPI. Set it explicitly only when a page's line spacing is unusual.
+
+## Truncation matters
+
+All truncation is `Math.trunc`, matching Python's `int()` rather than
+`Math.floor`. The two differ on negatives, and the parity goldens catch it.
+
+## Where you would use it directly
+
+Rarely — the recognizers call it. It is exported for the case where you have
+boxes from somewhere else (a text layer, a different engine, a merged set) and
+want the same reconstruction:
+
+```ts
+import { boxesToFormattedText } from '@stabrise/scaledp'
+
+const merged = [...row.pdf_text.bboxes, ...row.text.bboxes]
+const combined = boxesToFormattedText(merged)
+```

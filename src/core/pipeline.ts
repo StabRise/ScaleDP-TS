@@ -22,8 +22,42 @@ export interface ExecutionTime {
 
 export const EXECUTION_TIME_COL = 'execution_time'
 
+/**
+ * Per-row timings, accumulated as a row travels the pipeline.
+ *
+ * `execution_time` is per *run* -- one number per stage, the same on every row,
+ * which is what Python records. That cannot answer "how long did page 7 take",
+ * because a stage's number covers every page at once. This column can: each row
+ * carries the time spent on it alone.
+ *
+ * A stage that expands produces several rows from one call, so its cost is
+ * split evenly between them. The parts still sum to the call, but no finer
+ * attribution is available from outside the stage.
+ */
+export interface RowTime {
+    stages: Record<string, number>
+    total: number
+}
+
+export const ROW_TIME_COL = 'row_time'
+
 /** Anything a pipeline can be fed directly. */
 export type PipelineInput = Uint8Array | ArrayBuffer | Blob | File | string | Row | Row[]
+
+/**
+ * A stage described well enough to reconstruct it from plain data.
+ *
+ * This is the serialised form of a pipeline: `StageDescriptor[]` is JSON, so it
+ * crosses the worker boundary (see `@stabrise/scaledp/worker`) and survives a
+ * round trip through storage. `@stabrise/scaledp/registry` turns it back into
+ * live stages.
+ */
+export interface StageDescriptor {
+    /** Exported class name, e.g. 'PdfToImage'. */
+    type: string
+    /** Constructor options. Must be structured-cloneable. */
+    options?: Record<string, unknown>
+}
 
 export interface StageContext {
     /** Zero-based index of this stage in the pipeline. */
@@ -81,6 +115,7 @@ export abstract class Stage<P extends BaseStageParams = BaseStageParams> {
             const input = row[inputCol]
             let next: Row[]
 
+            const started = performance.now()
             try {
                 const expanded = await this.expand(input, row, ctx)
                 next = expanded ?? [{ ...row, [outputCol]: await this.apply(input, row, ctx) }]
@@ -88,14 +123,32 @@ export abstract class Stage<P extends BaseStageParams = BaseStageParams> {
                 if (propagateError) throw error
                 next = [{ ...row, [outputCol]: this.onError(formatException(this.name, error), row) }]
             }
+            // Failures are timed too: a stage that spent nine seconds before
+            // throwing still cost nine seconds.
+            const elapsed = performance.now() - started
 
             if (!keepInputData && inputCol !== outputCol) {
                 for (const r of next) delete r[inputCol]
             }
+            for (const r of next) chargeRow(r, this.name, elapsed / next.length)
             out.push(...next)
         }
         return out
     }
+}
+
+/**
+ * Add a stage's cost to one row's running total.
+ *
+ * The row inherited its predecessor's timings by the spread that built it, so
+ * the record is copied before writing -- sibling rows from one expand would
+ * otherwise share it and every charge would land on all of them.
+ */
+function chargeRow(row: Row, name: string, ms: number): void {
+    const previous = row[ROW_TIME_COL] as RowTime | undefined
+    const stages = { ...previous?.stages }
+    stages[name] = (stages[name] ?? 0) + ms
+    row[ROW_TIME_COL] = { stages, total: (previous?.total ?? 0) + ms }
 }
 
 export interface PipelineOptions {

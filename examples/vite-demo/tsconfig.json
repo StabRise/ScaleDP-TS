@@ -1,0 +1,46 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "jsx": "react-jsx",
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "verbatimModuleSyntax": true,
+        "isolatedModules": true,
+        "skipLibCheck": true,
+        "noEmit": true,
+        "types": [
+            "node",
+            "vite/client"
+        ],
+        // React Router generates route types into .react-router/types mirroring
+        // the src tree; rootDirs is what lets `./+types/docs` resolve from a
+        // route file that lives in src/routes.
+        "rootDirs": [
+            ".",
+            "./.react-router/types"
+        ],
+        "paths": {
+            "@stabrise/scaledp": [
+                "../../dist/index.d.ts"
+            ],
+            "@stabrise/scaledp/*": [
+                "../../dist/*/index.d.ts"
+            ]
+        }
+    },
+    "include": [
+        "src",
+        "scripts",
+        "*.ts",
+        ".react-router/types/**/*"
+    ]
+}

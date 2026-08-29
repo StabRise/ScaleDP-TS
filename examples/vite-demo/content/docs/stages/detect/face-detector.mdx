@@ -1,0 +1,65 @@
+---
+title: FaceDetector
+description: YoloOnnxDetector pre-set to StabRise/face_detection, writing a `faces` column.
+---
+
+<StageMeta type="FaceDetector" />
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { DataToImage, ImageDrawBoxes } from '@stabrise/scaledp'
+import { FaceDetector } from '@stabrise/scaledp/detect'
+
+const rows = await new Pipeline([
+    new DataToImage(),
+    new FaceDetector(),
+    new ImageDrawBoxes({ inputCols: ['image', 'faces'], outputCol: 'annotated', filled: true }),
+]).transform(scan)
+```
+
+<TryIt stages={[
+    { type: 'DataToImage', options: {} },
+    { type: 'FaceDetector', options: {} },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'faces'], outputCol: 'annotated', filled: true, color: '#ff5c8a' } },
+]} />
+
+Identical to [`YoloOnnxDetector`](/docs/stages/detect/yolo-onnx-detector) with
+`model: 'StabRise/face_detection'`, `labels: ['face']`, `outputCol: 'faces'` and
+`outputType: 'face'`.
+
+For redaction, `filled: true` on `ImageDrawBoxes` paints over the region rather
+than outlining it — see
+[Signatures and faces](/docs/recipes/signatures-and-faces).
+
+The same caveat as `SignatureDetector` applies: pre-set options bypass the base
+class's validators.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `string` | `'StabRise/face_detection'` | Hugging Face repo id, or a URL when self-hosting. No default. |
+| `labels` | `string[]` | `['face']` | Class index → label. Empty falls back to class_&lt;n&gt;. |
+| `scoreThreshold` | `number` 0–1 | `0.2` | Drop detections below this confidence. |
+| `iouThreshold` | `number` 0–1 | `0.5` | Overlap above which two same-class boxes count as duplicates. |
+| `padding` | `number` 0–1 | `0` | Grow each box by this fraction of its size, to avoid clipping edges. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'faces'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `outputType` | `string` | `'face'` | Recorded as DetectorOutput.type. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

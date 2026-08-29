@@ -39,8 +39,16 @@ export {
     BASE_STAGE_DEFAULTS,
     resolveParams,
 } from './core/params.js'
-export type { ExecutionTime, PipelineInput, PipelineOptions, Row, StageContext } from './core/pipeline.js'
-export { EXECUTION_TIME_COL, Pipeline, Stage, toRows } from './core/pipeline.js'
+export type {
+    ExecutionTime,
+    PipelineInput,
+    PipelineOptions,
+    Row,
+    RowTime,
+    StageContext,
+    StageDescriptor,
+} from './core/pipeline.js'
+export { EXECUTION_TIME_COL, Pipeline, ROW_TIME_COL, Stage, toRows } from './core/pipeline.js'
 export * from './core/text.js'
 export * from './schemas/index.js'
 export type { DataToImageParams } from './stages/data-to-image.js'

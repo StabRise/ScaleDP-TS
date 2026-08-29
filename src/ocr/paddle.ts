@@ -110,7 +110,15 @@ export class PaddleTextDetector extends Stage<PaddleTextDetectorParams> {
 }
 
 export interface PaddleTextRecognizerParams extends PaddleOcrParams {
-    /** 'per-box' yields word-level boxes; 'per-line' merges them into lines. */
+    /**
+     * How recognized regions are grouped. 'per-box' keeps them as detected,
+     * 'per-line' merges them into lines.
+     *
+     * ScaleDP's docstring calls 'per-box' word-level. That describes the
+     * grouping, not the geometry: the boxes are whatever the preset's detector
+     * produced, and PaddleOCR's detector is line-level. No strategy can
+     * subdivide a region. `TesseractOcr` is the stage that returns words.
+     */
     strategy: RecognitionStrategy
     /** Rebuild the original layout with spaces and blank lines. */
     keepFormatting: boolean
