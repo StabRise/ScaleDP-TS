@@ -7,6 +7,7 @@
  */
 
 import type { StageParamSpec } from '@stabrise/scaledp/registry'
+import { useState } from 'react'
 import type { Column } from '../lib/columns'
 import { effective, type StageNode, same } from '../store/pipeline'
 
@@ -35,6 +36,46 @@ const parseList = (text: string): string[] =>
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean)
+
+/**
+ * A comma-separated list, typed rather than parsed out from under you.
+ *
+ * The value in the store is a `string[]`, so rendering `value.join(', ')` back
+ * into the input means the comma you just pressed parses to nothing and
+ * disappears on the next render -- `eng,` becomes `eng`, and a second language
+ * can never be typed. The raw text is kept here instead, and used only while it
+ * still describes the value in the store: a revert, a preset load or one of the
+ * toggles below changes the array underneath, and the field follows.
+ */
+function ListInput({
+    id,
+    value,
+    empty,
+    onChange,
+}: {
+    id: string
+    value: unknown
+    empty: boolean | undefined
+    onChange: (next: string[]) => void
+}) {
+    const [draft, setDraft] = useState<string | null>(null)
+    const text = draft !== null && same(parseList(draft), value) ? draft : asList(value)
+
+    return (
+        <input
+            id={id}
+            type="text"
+            value={text}
+            data-empty={empty || undefined}
+            placeholder="comma separated"
+            onChange={(event) => {
+                setDraft(event.target.value)
+                onChange(parseList(event.target.value))
+            }}
+            onBlur={() => setDraft(null)}
+        />
+    )
+}
 
 export function ParamField({ stage, param, columns, defaults, onChange, onReset }: Props) {
     const value = effective(stage, param.key)
@@ -107,13 +148,11 @@ export function ParamField({ stage, param, columns, defaults, onChange, onReset 
 
             {param.kind === 'stringList' && (
                 <>
-                    <input
+                    <ListInput
                         id={id}
-                        type="text"
-                        value={asList(value)}
-                        data-empty={empty || undefined}
-                        placeholder="comma separated"
-                        onChange={(event) => onChange(param.key, parseList(event.target.value))}
+                        value={value}
+                        empty={empty}
+                        onChange={(next) => onChange(param.key, next)}
                     />
                     {/* The list stays open -- any string is valid -- but the
                         values that actually do something are not guessable, so

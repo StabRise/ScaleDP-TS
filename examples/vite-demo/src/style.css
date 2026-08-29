@@ -90,7 +90,14 @@ html:not(.dark) {
 }
 
 /*
- * From here down, the bare element selectors are scoped to `html[data-demo]`.
+ * From here down, the bare element selectors are scoped with
+ * `:where(html[data-demo])`.
+ *
+ * `:where()` and not a plain descendant selector: it contributes no
+ * specificity, so scoping confines what a rule *matches* without changing what
+ * it *beats*. A plain `html[data-demo] input[type='text']` weighs (0,2,2) and
+ * would outrank `.field > input[type='text']` at (0,2,1) -- the rule that stops
+ * a one-line column name rendering in a box a third of the card tall.
  *
  * The builder shares an origin -- and therefore a stylesheet cache -- with the
  * documentation, and this file is not layered, so an unscoped `body` or
@@ -108,7 +115,7 @@ html[data-demo]:not(.dark) {
     color-scheme: light;
 }
 
-html[data-demo] body {
+:where(html[data-demo]) body {
     margin: 0;
     background: var(--housing);
     color: var(--label);
@@ -934,8 +941,8 @@ html[data-demo] body {
 }
 
 
-html[data-demo] select,
-html[data-demo] input[type='text'] {
+:where(html[data-demo]) select,
+:where(html[data-demo]) input[type='text'] {
     font: inherit;
     font-size: 13px;
     color: var(--label);
@@ -951,19 +958,19 @@ html[data-demo] input[type='text'] {
     flex: 1 1 11rem;
 }
 
-html[data-demo] input[type='text'] {
+:where(html[data-demo]) input[type='text'] {
     flex: 1 1 12rem;
     font-family: var(--mono);
     font-size: 12px;
 }
 
-html[data-demo] select:disabled {
+:where(html[data-demo]) select:disabled {
     opacity: 0.4;
 }
 
-html[data-demo] select:focus-visible,
-html[data-demo] input:focus-visible,
-html[data-demo] button:focus-visible {
+:where(html[data-demo]) select:focus-visible,
+:where(html[data-demo]) input:focus-visible,
+:where(html[data-demo]) button:focus-visible {
     outline: 2px solid var(--detect);
     outline-offset: 2px;
 }
