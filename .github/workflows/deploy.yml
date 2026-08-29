@@ -51,10 +51,18 @@ jobs:
       # ../../dist and its `prebuild` builds the library with tsdown.
       - run: pnpm install --frozen-lockfile
 
+      # `dist/` is gitignored, so nothing downstream can run until it exists:
+      # the docs generator imports the stage catalogue from it, and the site's
+      # tsconfig resolves @stabrise/scaledp's types there.
+      - run: pnpm build
+
       - name: Install the site's dependencies
         working-directory: examples/vite-demo
         run: npm ci
 
+      # Must run *before* the site build. `prebuild` regenerates the stage
+      # tables as part of `prepare:assets`, so checking afterwards would only
+      # confirm that the generator agrees with itself.
       - name: Check the generated stage reference is current
         working-directory: examples/vite-demo
         run: npm run typecheck
