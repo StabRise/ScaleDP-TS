@@ -1,1 +1,9 @@
-{ "title": "Recognise", "pages": ["paddle-text-recognizer", "tesseract-ocr", "tesseract-recognizer"] }
+{
+    "title": "Recognise",
+    "pages": [
+        "paddle-text-recognizer",
+        "paddle-recognizer",
+        "tesseract-ocr",
+        "tesseract-recognizer"
+    ]
+}

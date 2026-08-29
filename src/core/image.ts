@@ -225,6 +225,21 @@ export function cropBox(
 }
 
 /**
+ * Turn a crop 180 degrees, so an inverted line reads the right way up.
+ *
+ * Maps (x, y) to (w - x, h - y) -- a recognizer mapping word boxes back out of
+ * an inverted crop has to undo exactly that.
+ */
+export function rotate180(source: ImageBitmap | OffscreenCanvas): OffscreenCanvas {
+    const out = createCanvas(source.width, source.height)
+    const ctx = context2d(out)
+    ctx.translate(source.width / 2, source.height / 2)
+    ctx.rotate(Math.PI)
+    ctx.drawImage(source, -source.width / 2, -source.height / 2)
+    return out
+}
+
+/**
  * Build an NCHW float32 tensor from an image.
  *
  * `bgr` exists because ScaleDP's DBNet path converts RGB->BGR and never swaps

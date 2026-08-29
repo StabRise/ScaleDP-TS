@@ -10,7 +10,7 @@
 
 import { OcrError } from '../core/errors.js'
 import type { Point } from '../core/geometry.js'
-import { cropBox, cropGeometry, decodeImage, toImageData } from '../core/image.js'
+import { cropBox, cropGeometry, decodeImage, rotate180, toImageData } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
@@ -284,15 +284,4 @@ function wordBox(
         toPage(left, bottom),
     ]
     return boxFromPolygon(corners, { text, score })
-}
-
-/** Turn a crop 180 degrees, so an inverted line reads the right way up. */
-function rotate180(source: OffscreenCanvas): OffscreenCanvas {
-    const out = new OffscreenCanvas(source.width, source.height)
-    const ctx = out.getContext('2d')
-    if (!ctx) throw new OcrError('Failed to acquire a 2D context', 'TesseractRecognizer')
-    ctx.translate(source.width / 2, source.height / 2)
-    ctx.rotate(Math.PI)
-    ctx.drawImage(source, -source.width / 2, -source.height / 2)
-    return out
 }

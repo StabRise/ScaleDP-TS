@@ -16,7 +16,7 @@ import { createDetectorOutput, type DetectorOutput } from '../schemas/detector-o
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
 import { getPaddleService } from './paddle-service.js'
-import { DEFAULT_OCR_PRESET, isKnownPreset } from './presets.js'
+import { DEFAULT_OCR_PRESET, validatePreset } from './presets.js'
 
 /** Recognizing per box gives word-level output; per line merges them first. */
 export type RecognitionStrategy = 'per-box' | 'per-line' | 'cross-line'
@@ -30,7 +30,7 @@ export interface PaddleOcrParams extends BaseStageParams {
 
 export interface PaddleTextDetectorParams extends PaddleOcrParams {}
 
-export const PADDLE_DETECTOR_DEFAULTS: PaddleTextDetectorParams = Object.freeze({
+export const PADDLE_TEXT_DETECTOR_DEFAULTS: PaddleTextDetectorParams = Object.freeze({
     ...BASE_STAGE_DEFAULTS,
     inputCol: 'image',
     outputCol: 'boxes',
@@ -38,12 +38,6 @@ export const PADDLE_DETECTOR_DEFAULTS: PaddleTextDetectorParams = Object.freeze(
     preset: DEFAULT_OCR_PRESET,
     scoreThreshold: 0,
 })
-
-function validatePreset(value: string): void {
-    if (!isKnownPreset(value)) {
-        throw new RangeError(`Unknown OCR preset "${value}". See PADDLE_OCR_PRESETS for valid values.`)
-    }
-}
 
 /** Decode a stage input into something ppu-paddle-ocr accepts. */
 async function toCanvas(input: unknown): Promise<OffscreenCanvas> {
@@ -80,7 +74,7 @@ export class PaddleTextDetector extends Stage<PaddleTextDetectorParams> {
     readonly name = 'PaddleTextDetector'
 
     constructor(options: Partial<PaddleTextDetectorParams> = {}) {
-        super(resolveParams(PADDLE_DETECTOR_DEFAULTS, options, { preset: validatePreset }))
+        super(resolveParams(PADDLE_TEXT_DETECTOR_DEFAULTS, options, { preset: validatePreset }))
     }
 
     override async init(): Promise<void> {
@@ -126,7 +120,7 @@ export interface PaddleTextRecognizerParams extends PaddleOcrParams {
     lineTolerance: number
 }
 
-export const PADDLE_RECOGNIZER_DEFAULTS: PaddleTextRecognizerParams = Object.freeze({
+export const PADDLE_TEXT_RECOGNIZER_DEFAULTS: PaddleTextRecognizerParams = Object.freeze({
     ...BASE_STAGE_DEFAULTS,
     inputCol: 'image',
     outputCol: 'text',
@@ -143,7 +137,7 @@ export class PaddleTextRecognizer extends Stage<PaddleTextRecognizerParams> {
     readonly name = 'PaddleTextRecognizer'
 
     constructor(options: Partial<PaddleTextRecognizerParams> = {}) {
-        super(resolveParams(PADDLE_RECOGNIZER_DEFAULTS, options, { preset: validatePreset }))
+        super(resolveParams(PADDLE_TEXT_RECOGNIZER_DEFAULTS, options, { preset: validatePreset }))
     }
 
     override async init(): Promise<void> {

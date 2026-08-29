@@ -34,7 +34,8 @@ separate thing. `DetectorOutput.type` is `'paddle'`.
 `PaddleTextRecognizer` detects *and* recognises in a single pass and ignores any
 separate detector's boxes. Running both is how you compare what a detector finds
 against what the recognizer acted on — it is not a way to feed one into the
-other. For that, use [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
+other. For that, use [`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer)
+or [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
 </Callout>
 
 The input may be a `ScaleDpImage`, an `OffscreenCanvas` or `ImageData`. An

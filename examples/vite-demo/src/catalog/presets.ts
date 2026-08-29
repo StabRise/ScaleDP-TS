@@ -70,6 +70,29 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
         ],
     },
     {
+        id: 'builtin:detect-then-read-paddle',
+        name: 'Detect, then read with PaddleOCR',
+        summary:
+            'The same shape, with PP-OCR doing the reading. Only the recognition model is downloaded, so it is the lighter half of a preset.',
+        stages: [
+            { type: 'PdfToImage', options: { resolution: 200 } },
+            { type: 'DbnetOnnxDetector', options: { outputCol: 'detected' } },
+            {
+                type: 'PaddleRecognizer',
+                options: { inputCols: ['image', 'detected'], keepFormatting: true },
+            },
+            {
+                type: 'ImageDrawBoxes',
+                options: {
+                    inputCols: ['image', 'text'],
+                    outputCol: 'annotated',
+                    color: BOX_COLOR,
+                    lineWidth: 2,
+                },
+            },
+        ],
+    },
+    {
         id: 'builtin:pii',
         name: 'Find PII',
         summary: 'Read the page, then score it against GLiNER labels and outline what was understood.',

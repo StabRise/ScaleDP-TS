@@ -1,0 +1,121 @@
+---
+title: PaddleRecognizer
+description: Reads exactly the regions a detector found with a PaddleOCR preset. The stage that connects any detector to PP-OCR recognition.
+---
+
+<StageMeta type="PaddleRecognizer" />
+
+[`PaddleTextRecognizer`](/docs/stages/recognise/paddle-text-recognizer) detects
+and recognises in a single pass, so boxes from a separate detector never reach
+it. This stage does the opposite: it reads exactly the boxes it is handed,
+cropping and straightening each one — the PaddleOCR counterpart to
+[`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, PaddleRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new DbnetOnnxDetector({ outputCol: 'boxes' }),
+    new PaddleRecognizer({ inputCols: ['image', 'boxes'] }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'boxes' } },
+    { type: 'PaddleRecognizer', options: { inputCols: ['image', 'boxes'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+`Document.type` is `'paddle-recognizer'`. A missing box column produces a helpful
+`OcrError` in `exception` rather than an empty result.
+
+## Only the recognition model is downloaded
+
+A preset pairs a detection model, a recognition model and a character
+dictionary. This stage never detects, so it fetches only the last two. The cache
+keys are shared with [`PaddleTextDetector`](/docs/stages/detect/paddle-text-detector)
+and `PaddleTextRecognizer`, so a pipeline that also uses one of those pays for
+each file once.
+
+The preset is still what picks the script: the same list, and the same choice as
+everywhere else in the library.
+
+## One box in, one box out
+
+There is no `strategy` parameter, unlike `PaddleTextRecognizer`. PaddleOCR's
+`'per-line'` and `'cross-line'` strategies merge boxes together before reading
+them; the contract here is one result per box you hand in, which only
+`'per-box'` can honour. The box that comes back is the detector's own — angle
+included — carrying the recognised `text` and its `score`.
+
+<Callout title="Why the crops are stacked">
+PaddleOCR batches several crops into one inference, but only within a single
+call, and it cuts those crops out of one canvas. So the straightened crops are
+stacked onto a sheet canvas and read together: a forty-line page costs a handful
+of inferences rather than forty. The blank width beside a narrow crop is never
+sampled, because each crop is re-cut from its own slot.
+
+`recBatchSize` controls how many crops share an inference. Lower it to `1` on a
+memory-constrained device.
+</Callout>
+
+## Straightening
+
+The crop is a perspective warp onto the box's own axes, which is what makes a
+skewed line readable at all — PaddleOCR's own cropping is axis-aligned, so
+handing it a rotated box would read that box's envelope instead.
+
+`padding` defaults to 5, which is what ScaleDP hardcodes. `scaleFactor` resizes
+the page before cropping and scales the box to index into it — useful for small
+text. The boxes reported back are the originals, in the space they arrived in.
+
+## `detectLineOrientation` defaults off here
+
+`TesseractRecognizer` defaults it to `true`; this stage defaults it to `false`.
+PaddleOCR already turns a crop that is markedly taller than it is wide, so only
+the 180° case is missing — and catching it costs a separate ~9 MB model that an
+ordinary page never needs.
+
+Turn it on for scans that come in upside down. It uses the same model as
+[`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector),
+so putting that stage in front as well would run it twice.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the detector output whose regions to read. |
+| `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Only the recognition half is downloaded here. |
+| `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
+| `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
+| `scoreThreshold` | `number` 0–1 | `0.5` | Drop regions below this confidence. |
+| `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
+| `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
+| `detectLineOrientation` | `boolean` | `false` | Classify each crop 0°/180° and turn the inverted ones. Off by default: PaddleOCR turns tall crops itself, and only the 180° case needs this extra model. |
+| `onlyRotated` | `boolean` | `false` | Read only rotated or inverted boxes. On, an ordinary page returns nothing. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'text'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `oriModel` | `string` | `'StabRise/line_orientation_detection_v0.1'` | Hugging Face repo id. Defaults to StabRise/line_orientation_detection_v0.1. |
+| `spaceRecovery` | `boolean` | `false` | Recover inter-word spaces the greedy CTC decode drops. Helps Latin text; can add spurious spaces in dense symbol runs. |
+| `recBatchSize` | `number` | `6` | Crops per batched inference. 1 disables batching. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

@@ -18,6 +18,7 @@ schemas. What differs is the runtime.
 | `HasDetectLineOrientation` | [`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector) | A stage, not a recognizer mixin |
 | `TesseractRecognizer` | [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer) | `onlyRotated` defaults to false; adds `boxLevel` |
 | `EasyOcr`, `SuryaOcr`, `DocTROcr` | [`PaddleTextRecognizer`](/docs/stages/recognise/paddle-text-recognizer) | No browser builds of those engines |
+| — | [`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) | No Python equivalent: PP-OCR reading another detector's boxes |
 | `DBNetOnnxDetector` | [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector) | Same model, same thresholds |
 | `CraftTextDetector` | — | PyTorch only |
 | `LayoutDetector` | — | Needs the PaddleOCR Python runtime |

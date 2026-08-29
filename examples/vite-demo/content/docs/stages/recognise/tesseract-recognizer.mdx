@@ -8,6 +8,8 @@ description: Reads exactly the regions a detector found, straightening each one 
 `PaddleTextRecognizer` detects and recognises in a single pass, so boxes from a
 separate detector never reach it. This stage does the opposite: it reads exactly
 the boxes it is handed, cropping and straightening each one.
+[`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) is the same idea
+with PP-OCR doing the reading.
 
 ```ts
 import { Pipeline } from '@stabrise/scaledp'

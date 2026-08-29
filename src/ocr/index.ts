@@ -3,6 +3,7 @@
  *
  * Engines:
  *   PaddleTextDetector / PaddleTextRecognizer  default; PP-OCR via ppu-paddle-ocr
+ *   PaddleRecognizer                           PP-OCR reading another detector's boxes
  *   DbnetOnnxDetector                          the direct ScaleDP mirror
  *   TesseractOcr                               mirrors ScaleDP's TesseractOcr stage
  *
@@ -45,7 +46,14 @@ export {
     LineOrientationDetector,
 } from './line-orientation-stage.js'
 export type { SessionOptions } from './ort.js'
-export { createSession, isCrossOriginIsolated, isWebGpuAvailable, loadOrt, resetOrt } from './ort.js'
+export {
+    createSession,
+    isCrossOriginIsolated,
+    isWebGpuAvailable,
+    loadOrt,
+    resetOrt,
+    wasmFallbackProviders,
+} from './ort.js'
 export type {
     PaddleOcrParams,
     PaddleTextDetectorParams,
@@ -53,13 +61,17 @@ export type {
     RecognitionStrategy,
 } from './paddle.js'
 export {
-    PADDLE_DETECTOR_DEFAULTS,
-    PADDLE_RECOGNIZER_DEFAULTS,
+    PADDLE_TEXT_DETECTOR_DEFAULTS,
+    PADDLE_TEXT_RECOGNIZER_DEFAULTS,
     PaddleTextDetector,
     PaddleTextRecognizer,
 } from './paddle.js'
+export type { PaddleRecognizerParams } from './paddle-recognizer.js'
+export { PADDLE_RECOGNIZER_DEFAULTS, PaddleRecognizer } from './paddle-recognizer.js'
+export type { PaddleRecognitionService, PaddleRecognizerOptions } from './paddle-service.js'
 export {
     disposePaddleServices,
+    getPaddleRecognizer,
     getPaddleService,
     isPresetCached,
     loadPreset,
@@ -71,6 +83,7 @@ export {
     isKnownPreset,
     PADDLE_OCR_PRESETS,
     presetsForScript,
+    validatePreset,
 } from './presets.js'
 export type { DetectedScript } from './script-detect.js'
 export { detectScript, disposeScriptDetection, suggestPresets } from './script-detect.js'

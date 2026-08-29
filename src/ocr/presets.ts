@@ -49,6 +49,13 @@ export function isKnownPreset(value: string): boolean {
     return PADDLE_OCR_PRESETS.some((p) => p.value === value)
 }
 
+/** Shared by every Paddle stage, so an unknown preset fails at construction. */
+export function validatePreset(value: string): void {
+    if (!isKnownPreset(value)) {
+        throw new RangeError(`Unknown OCR preset "${value}". See PADDLE_OCR_PRESETS for valid values.`)
+    }
+}
+
 /** Presets able to read a script name as reported by OSD script detection. */
 export function presetsForScript(script: string): OcrPreset[] {
     return PADDLE_OCR_PRESETS.filter((p) => p.scripts.includes(script))

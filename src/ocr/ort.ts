@@ -65,6 +65,29 @@ export interface SessionOptions {
     executionProviders?: readonly string[]
     /** Companion `.onnx_data` files for models with external weights. */
     externalData?: { path: string; data: ArrayBuffer | Uint8Array }[]
+    /**
+     * Retry on WASM when the preferred providers cannot run the graph.
+     *
+     * Off by default, so a misconfigured provider still fails loudly. Turn it on
+     * for a model known to be picky: WebGPU rewrites convolutions into its
+     * `com.ms.internal.nhwc` domain and a graph it has no kernel for dies at
+     * session creation, not at inference.
+     */
+    fallbackToWasm?: boolean
+}
+
+/** Providers that exist in every onnxruntime-web build. */
+const ALWAYS_AVAILABLE = new Set(['cpu', 'wasm'])
+
+/**
+ * The provider list to retry with, or `null` when there is nothing safer left.
+ *
+ * Mirrors ppu-paddle-ocr's own fallback, so a stage building its own session
+ * behaves the same as one going through `PaddleOcrService`.
+ */
+export function wasmFallbackProviders(providers: readonly string[]): string[] | null {
+    if (providers.length === 0 || providers.every((name) => ALWAYS_AVAILABLE.has(name))) return null
+    return [providers.find((name) => ALWAYS_AVAILABLE.has(name)) ?? 'wasm']
 }
 
 /** Create an inference session from model bytes. */
@@ -74,12 +97,26 @@ export async function createSession(
 ): Promise<import('onnxruntime-web').InferenceSession> {
     const ort = await loadOrt()
     const bytes = model instanceof Uint8Array ? model : new Uint8Array(model)
+    const providers = [...(options.executionProviders ?? getConfig().executionProviders)] as string[]
+    const create = (executionProviders: string[]) =>
+        ort.InferenceSession.create(bytes, {
+            executionProviders,
+            graphOptimizationLevel: 'all',
+            ...(options.externalData ? { externalData: options.externalData } : {}),
+        })
 
-    return ort.InferenceSession.create(bytes, {
-        executionProviders: [...(options.executionProviders ?? getConfig().executionProviders)] as string[],
-        graphOptimizationLevel: 'all',
-        ...(options.externalData ? { externalData: options.externalData } : {}),
-    })
+    try {
+        return await create(providers)
+    } catch (cause) {
+        const fallback = options.fallbackToWasm ? wasmFallbackProviders(providers) : null
+        if (!fallback) throw cause
+        console.warn(
+            `[scaledp] executionProviders ${JSON.stringify(providers)} could not run this model ` +
+                `(${cause instanceof Error ? cause.message : String(cause)}); ` +
+                `falling back to ${JSON.stringify(fallback)}.`
+        )
+        return create(fallback)
+    }
 }
 
 /** True when the browser exposes a usable WebGPU adapter. */
