@@ -15,10 +15,12 @@ stage page lands on a builder that already has the weights.
 One header sits on all three, sticky. `/docs` uses Fumadocs' **notebook** layout
 (`nav.mode: 'top'`) rather than its default, where the navigation lives inside
 the sidebar and disappears on wide screens; `/` and `/demo` use `HomeLayout`,
-which is that same navbar plus its children. The builder is dark-only -- it is a
-lightbox -- so `root.tsx` pins the theme to dark on `/demo` and the header hides
-its theme switch there. Everywhere else the reader's choice stands, and it
-survives the round trip through the builder.
+which is that same navbar plus its children. The theme switch works everywhere,
+the builder included: `style.css` defines its palette twice, keyed on the `.dark`
+class Fumadocs toggles. Dark is the design -- a dark surround raises the
+perceived contrast of the page being read, which is why photo and film tools look
+that way -- and light is the same instrument on a bench rather than an
+inversion.
 
 ```bash
 cd examples/vite-demo

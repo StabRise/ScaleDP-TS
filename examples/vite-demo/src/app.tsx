@@ -21,7 +21,7 @@ export function App({ caps }: { caps: { label: string; on: boolean }[] }) {
             <div className="sheet">
                 <section className="stage">
                     <h1 className="lede">
-                        Read a document <em>without sending it anywhere.</em>
+                        Process a document <em>without sending it anywhere.</em>
                     </h1>
                     <p className="sub">
                         Assemble a pipeline from the stages below and run it here, on WebAssembly or WebGPU.

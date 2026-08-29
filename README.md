@@ -9,8 +9,9 @@
 </p>
 
 <p align="center">
-    <a href="https://www.npmjs.com/package/@stabrise/scaledp" alt="Package on npm"><img src="https://img.shields.io/npm/v/@stabrise/scaledp.svg" /></a>
-    <a href="https://github.com/StabRise/scaledp-ts/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/@stabrise/scaledp.svg?color=blue"></a>
+    <a href="https://scaledp-ts.stabrise.com/docs"><img alt="Documentation" src="https://img.shields.io/badge/docs-scaledp--ts.stabrise.com-3fc9f5.svg"></a>
+    <a href="https://www.npmjs.com/package/@stabrise/scaledp" alt="Package on npm"><img alt="npm" src="https://img.shields.io/npm/v/@stabrise/scaledp.svg?color=blue" /></a>
+    <a href="https://github.com/StabRise/scaledp-ts/blob/main/LICENSE"><img alt="License: AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg"></a>
     <a href="https://stabrise.com"><img alt="StabRise" src="https://img.shields.io/badge/powered%20by-StabRise-orange.svg?style=flat&colorA=E1523D&colorB=blue"></a>
 </p>
 
