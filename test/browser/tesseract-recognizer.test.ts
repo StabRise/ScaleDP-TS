@@ -190,7 +190,7 @@ describe('TesseractRecognizer', () => {
         const rows = await new Pipeline([stage]).transform([
             { image: createImage({ exception: 'PdfToImage exploded' }), boxes: createDetectorOutput({}) },
         ])
-        expect((rows[0]?.text as Document).exception).toContain('PdfToImage exploded')
+        expect((rows[0]?.text as Document | undefined)?.exception).toContain('PdfToImage exploded')
     })
 
     it('rebuilds the layout when keepFormatting is set', async () => {

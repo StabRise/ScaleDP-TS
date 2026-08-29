@@ -1,7 +1,16 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
     "files": {
-        "includes": ["src/**", "test/**", "examples/*/src/**/*.ts", "examples/*/src/**/*.tsx", "examples/*/*.ts", "examples/*/scripts/**/*.mjs", "*.ts", "*.json"]
+        "includes": [
+            "src/**",
+            "test/**",
+            "examples/*/src/**/*.ts",
+            "examples/*/src/**/*.tsx",
+            "examples/*/*.ts",
+            "examples/*/scripts/**/*.mjs",
+            "*.ts",
+            "*.json"
+        ]
     },
     "formatter": {
         "enabled": true,
@@ -14,6 +23,6 @@
     },
     "linter": {
         "enabled": true,
-        "rules": { "recommended": true }
+        "rules": { "preset": "recommended" }
     }
 }

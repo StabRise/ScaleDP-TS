@@ -108,7 +108,9 @@ describe('ImageDrawBoxes', () => {
         const rows = await new Pipeline([new ImageDrawBoxes()]).transform([
             { image: createImage({ exception: 'PdfToImage exploded' }), boxes: createDetectorOutput({}) },
         ])
-        expect((rows[0]?.image_with_boxes as ScaleDpImage).exception).toContain('PdfToImage exploded')
+        expect((rows[0]?.image_with_boxes as ScaleDpImage | undefined)?.exception).toContain(
+            'PdfToImage exploded'
+        )
     })
 
     it('rejects an inputCols list without a box column', () => {
@@ -166,9 +168,11 @@ describe('ImageCropBoxes', () => {
         const input = [{ image: await whitePage(), boxes: createDetectorOutput({}) }]
 
         const failed = await new Pipeline([new ImageCropBoxes()]).transform(input)
-        expect((failed[0]?.cropped_image as ScaleDpImage).exception).toContain('No boxes to crop')
+        expect((failed[0]?.cropped_image as ScaleDpImage | undefined)?.exception).toContain(
+            'No boxes to crop'
+        )
 
         const passed = await new Pipeline([new ImageCropBoxes({ returnEmpty: true })]).transform(input)
-        expect((passed[0]?.cropped_image as ScaleDpImage).exception).toBe('')
+        expect((passed[0]?.cropped_image as ScaleDpImage | undefined)?.exception).toBe('')
     })
 })

@@ -150,7 +150,7 @@ describe('LineOrientationDetector', () => {
         const rows = await new Pipeline([new LineOrientationDetector()]).transform([
             { image: createImage({ exception: 'PdfToImage exploded' }), boxes: createDetectorOutput({}) },
         ])
-        expect((rows[0]?.oriented as ScaleDpImage).exception).toContain('PdfToImage exploded')
+        expect((rows[0]?.oriented as ScaleDpImage | undefined)?.exception).toContain('PdfToImage exploded')
     })
 
     it('rejects an inputCols list that is not [image, boxes]', () => {

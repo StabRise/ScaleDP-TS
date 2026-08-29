@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { configure, resetConfig } from '../../src/core/config.js'
 import { OcrError } from '../../src/core/errors.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../../src/core/params.js'
-import { Pipeline, type Row, Stage } from '../../src/core/pipeline.js'
+import { Pipeline, Stage } from '../../src/core/pipeline.js'
 import { describePdfError } from '../../src/pdf/pdfjs.js'
 import { createImage, type ScaleDpImage } from '../../src/schemas/image.js'
 
@@ -76,7 +76,7 @@ describe('upstream failures', () => {
         const rows = await new Pipeline([new Consumer()]).transform([
             { image: createImage({ data: new Uint8Array(0) }) },
         ])
-        expect((rows[0]?.text as { exception: string }).exception).toContain(
+        expect((rows[0]?.text as { exception: string } | undefined)?.exception).toContain(
             'Expected an Image with decoded bytes'
         )
     })
