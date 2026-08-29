@@ -1,0 +1,143 @@
+---
+title: Build a pipeline from data
+description: The registry describes every stage at run time and turns plain JSON back into live stages — which is what an interface that assembles pipelines needs.
+---
+
+The stage classes carry no parameter metadata, and there is no way to ask a
+`Stage` what it accepts. `@stabrise/scaledp/registry` is that missing layer.
+
+```ts
+import { pipelineFromDescriptors } from '@stabrise/scaledp/registry'
+
+const stages = [
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+]
+
+const rows = await pipelineFromDescriptors(stages).transform(file)
+```
+
+A `StageDescriptor` — `{ type, options }` — is the serialised form of one stage.
+It is the same shape the [worker protocol](/docs/recipes/run-off-the-main-thread)
+sends across the boundary, so a saved pipeline, a posted message and a pipeline
+built on the main thread are all the same data.
+
+<Callout title="Importing it costs no engine">
+The registry statically imports all fifteen stage classes and none of the ML
+runtimes: every engine is reached through a dynamic `import()`, so
+`onnxruntime-web`, `pdfjs-dist`, `ppu-paddle-ocr` and `tesseract-wasm` stay lazy.
+It does pull in the stage code itself, which is why it is a separate subpath
+rather than part of the root barrel.
+</Callout>
+
+## What a spec carries
+
+```ts
+import { getStageSpec, STAGE_SPECS } from '@stabrise/scaledp/registry'
+
+const spec = getStageSpec('GlinerNer')
+
+spec.group      // 'Understand'
+spec.subpath    // '@stabrise/scaledp/ner'
+spec.consumes   // ['document']
+spec.produces   // 'ner'
+spec.peer       // '@huggingface/transformers'
+spec.cache      // { kind: 'ner-id', param: 'model' }
+spec.defaults   // GLINER_NER_DEFAULTS itself, not a copy
+spec.params     // one StageParamSpec per parameter
+```
+
+Each `StageParamSpec` gives a widget kind (`number`, `boolean`, `enum`,
+`stringList`, `column`, `columns`, `color`, `string`), a range where the stage
+validates one, and enum options drawn from the model registries — so a preset
+picker offers exactly the fourteen `PADDLE_OCR_PRESETS`, with the private NER
+repos marked `disabled`, without a second copy of either list. `advanced: true`
+marks plumbing a form can collapse.
+
+Three flags describe how a stage behaves in a row rather than what it takes:
+
+- **`expands`** — one input row becomes several (page explosion, box cropping).
+- **`alsoProduces`** — a second output column, like `LineOrientationDetector`'s
+  orientation labels.
+- **`terminal`** — the output is for looking at, not for feeding onward.
+
+`spec.cache` says what a stage will download, which is how an interface can warn
+about a 333 MB model before the run rather than during it.
+
+## Rendering a form
+
+```ts
+for (const spec of STAGE_SPECS) {
+    for (const param of spec.params) {
+        if (param.advanced) continue
+        renderWidget(param.kind, {
+            label: param.label,
+            help: param.help,
+            value: descriptor.options[param.key] ?? spec.defaults[param.key],
+            options: param.options,
+            min: param.min,
+            max: param.max,
+        })
+    }
+}
+```
+
+Storing only the options that *differ* from `spec.defaults` is what makes an
+exported pipeline read as the decisions someone made rather than a dump of every
+field.
+
+## Writing it back out as source
+
+```ts
+import { pipelineCode } from '@stabrise/scaledp/registry'
+
+pipelineCode([
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+])
+```
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+])
+```
+
+Imports are grouped by subpath and only the options that differ from each stage's
+defaults are emitted. `variable`, `indent` and `imports` are configurable. It
+emits the pipeline only — a `configure()` call for asset paths and caching is the
+app's own.
+
+## Going the other way
+
+```ts
+import { describePipeline } from '@stabrise/scaledp/registry'
+
+describePipeline(pipeline)   // StageDescriptor[], with fully-resolved options
+```
+
+Note that `describeStage` returns the stage's *resolved* params, so the round
+trip through `describe` → `pipelineCode` emits nothing, every value now matching
+its default. Keep the user's sparse options if you want sparse output.
+
+## Validation still happens in the constructor
+
+`createStage` throws on an unknown type, and lets each stage's own validators
+throw on a bad parameter — an unknown OCR preset fails while the pipeline is
+being built, where the message can name the offending field, rather than several
+stages later. Wrap the call if a form should report that rather than crash:
+
+```ts
+import { createStage } from '@stabrise/scaledp/registry'
+
+try {
+    createStage(descriptor)
+} catch (error) {
+    showFieldError(String(error))
+}
+```

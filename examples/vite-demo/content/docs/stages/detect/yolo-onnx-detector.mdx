@@ -1,0 +1,88 @@
+---
+title: YoloOnnxDetector
+description: Any YOLO ONNX graph as a pipeline stage — bring your own model and labels.
+---
+
+<StageMeta type="YoloOnnxDetector" />
+
+The general object detector. `SignatureDetector` and `FaceDetector` are this
+class with a model and labels pre-set; anything else you have as a YOLO ONNX
+export goes here.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { YoloOnnxDetector } from '@stabrise/scaledp/detect'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new YoloOnnxDetector({
+        model: 'my-org/stamp-detection',
+        labels: ['stamp', 'seal'],
+        scoreThreshold: 0.35,
+        outputCol: 'stamps',
+        outputType: 'stamp',
+    }),
+]).transform(file)
+```
+
+`model` is **required** — an empty one throws `RangeError('model is required')`
+from the constructor. `labels` maps class index to name; leave it empty and
+classes come back as `class_0`, `class_1`.
+
+## What it accepts
+
+The input size is read off the graph, falling back to 960. Both common output
+layouts are decoded: `[1, 4 + numClasses, anchors]` (YOLOv8/v11, transposed) and
+`[1, N, 6]` (a graph with NMS already baked in).
+
+Letterboxing is **centred** here, and there is no mean/std normalisation — which
+is the opposite of [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector)
+on both counts. Each detector's preprocessing matches the model it was trained
+with.
+
+`padding` grows each box by a fraction of its own size, which is usually what you
+want before cropping a signature out for storage.
+
+## The pieces, separately
+
+```ts
+import { decodeYoloOutput, iou, nonMaximumSuppression } from '@stabrise/scaledp/detect'
+```
+
+Exported for anyone wiring a YOLO graph up by hand. NMS is per class.
+
+<Callout title="A Python bug not reproduced">
+ScaleDP's `YoloOnnxTextDetector` multiplies by the letterbox scale where DBNet
+divides. Coordinates here are mapped back correctly.
+</Callout>
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `string` | `''` | Hugging Face repo id, or a URL when self-hosting. No default. |
+| `labels` | `string[]` | `[]` | Class index → label. Empty falls back to class_&lt;n&gt;. |
+| `scoreThreshold` | `number` 0–1 | `0.2` | Drop detections below this confidence. |
+| `iouThreshold` | `number` 0–1 | `0.5` | Overlap above which two same-class boxes count as duplicates. |
+| `padding` | `number` 0–1 | `0` | Grow each box by this fraction of its size, to avoid clipping edges. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'boxes'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `outputType` | `string` | `'yolo'` | Recorded as DetectorOutput.type. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

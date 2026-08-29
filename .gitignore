@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 
@@ -34,3 +34,45 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# build
+/dist
+/coverage
+*.tsbuildinfo
+
+# test artifacts
+/test-results
+/playwright-report
+
+# tooling artifacts
+/.claude/tdd-guard/data
+
+# Demo assets copied out of node_modules by `prepare:assets`.
+/examples/*/public/cmaps/
+/examples/*/public/standard_fonts/
+/examples/*/public/pdf.worker.min.mjs
+
+# This repo standardises on pnpm; other lockfiles are incidental.
+bun.lock
+bun.lockb
+package-lock.json
+yarn.lock
+
+# Demo lockfiles: the demo is a scratch app, not a shipped artifact.
+/examples/*/pnpm-lock.yaml
+
+# ... except the site's own npm lockfile, which is now a shipped artifact: it
+# is what GitHub Pages builds from, and an unpinned install would let a minor
+# release of fumadocs or React Router change the published site with no commit.
+!/examples/vite-demo/package-lock.json
+/examples/*/public/sample.pdf
+/examples/*/public/ort/
+
+# Vitest browser-mode failure artifacts.
+/.vitest-attachments/
+**/__screenshots__/
+/examples/*/public/tesseract/
+
+# React Router build output and generated route types
+/examples/*/build/
+/examples/*/.react-router/

@@ -1,0 +1,59 @@
+---
+title: DataToImage
+description: Raw image bytes into an Image record, without re-encoding them.
+---
+
+<StageMeta type="DataToImage" />
+
+The entry point for a pipeline that starts from an image rather than a PDF. It
+wraps the bytes as they are and probes the dimensions, so wrapping a 40 MB scan
+costs a header read rather than a full decode.
+
+```ts
+import { Pipeline, DataToImage } from '@stabrise/scaledp'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new DataToImage(),
+    new PaddleTextRecognizer(),
+]).transform(pngFile)
+```
+
+<TryIt stages={[
+    { type: 'DataToImage', options: {} },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+]} />
+
+`imageType` is recorded on the output; the bytes pass through unchanged, so
+declaring `'jpeg'` for a PNG mislabels it rather than converting it. `resolution`
+is the DPI to record when the row does not already carry one — it is metadata,
+not a resample.
+
+Zero bytes throw `ImageError('Empty image data')`, which under the default error
+contract becomes an `Image` with that message in `exception`.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Encoding recorded on the output; the bytes pass through unchanged. |
+| `resolution` | `number` | `0` | DPI to record when the row carries no resolution field. 0 leaves it unknown. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'content'` | Raw file bytes, normally the content column. |
+| `outputCol` | `string` | `'image'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `false` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

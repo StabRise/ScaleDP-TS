@@ -1,0 +1,58 @@
+# Publishes @stabrise/scaledp to npm on a version tag.
+#
+# Uses OIDC trusted publishing, so there is no NPM_TOKEN. One-time setup:
+# npmjs.com -> package Settings -> Publish access -> Trusted Publishers ->
+# add GitHub Actions with owner StabRise, repo scaledp-ts, workflow publish.yml.
+# Configs created after 2026-05-20 must explicitly allow the `npm publish`
+# action.
+#
+# Requires npm CLI >= 11.5.1 and id-token: write. Provenance attestations are
+# generated automatically; --provenance is no longer needed.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # The bundled npm is older than the OIDC requirement.
+      - run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm check:pkg
+
+      - name: Verify the tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $TAG does not match package.json version $PKG" >&2
+            exit 1
+          fi
+
+      # access:public comes from publishConfig; scoped packages default to
+      # private and would fail with 402.
+      - run: npm publish

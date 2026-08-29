@@ -1,0 +1,74 @@
+---
+title: Model cache
+description: Ask what is cached, pre-warm a model, and free the space — before a run rather than during it.
+---
+
+```ts
+import { cacheKey, ensureModelFiles, evict, fileUrl, isCached } from '@stabrise/scaledp'
+
+interface ModelFile { path: string; approxBytes?: number }
+interface ModelSpec { repo: string; revision?: string; files: ModelFile[] }
+type ModelFiles = Record<string, ArrayBuffer>   // keyed by repo-relative path
+```
+
+| | |
+| --- | --- |
+| `isCached(spec)` | `Promise<boolean>` — every file present |
+| `ensureModelFiles(spec, signal?)` | Fetch what is missing, return all of them |
+| `evict(spec)` | Remove the spec's files |
+| `cacheKey(spec, path)` | `` `${repo}@${revision ?? 'main'}/${path}` `` |
+| `fileUrl(spec, path)` | The URL a file would be fetched from |
+
+Storage is IndexedDB — database name from `config.cacheDbName`, object store
+`files` — and writes resolve on transaction commit rather than on request, so a
+`ensureModelFiles` that resolves has genuinely persisted.
+
+`fileUrl` has three behaviours: an absolute path passes through untouched; the
+Hugging Face host produces `${host}/${repo}/resolve/${revision}/${path}`; any
+other host produces `${host}/${repo}/${path}`. That is what lets
+[self-hosting](/docs/guides/self-hosting-models) be a one-line change.
+
+## Asking before downloading
+
+```ts
+import { isCached } from '@stabrise/scaledp'
+import { getNerModel, modelSizeBytes } from '@stabrise/scaledp/ner'
+
+const model = getNerModel('gliner-multi-pii')
+if (model && !(await isCached({ repo: model.repo, files: model.files }))) {
+    if (!confirm(`This will download ${Math.round(modelSizeBytes(model) / 1e6)} MB. Continue?`)) return
+}
+```
+
+The [registry](/docs/api/registry)'s `spec.cache` says which parameter names the
+model for a given stage, so an interface can do this generically rather than
+per-stage.
+
+## OCR presets
+
+Paddle models are routed through this same cache rather than ppu-paddle-ocr's own
+fetching, and have their own helpers:
+
+```ts
+import { isPresetCached, loadPreset, removePreset } from '@stabrise/scaledp/ocr'
+
+await isPresetCached('v6-small')
+await loadPreset('v6-small')      // pre-warm; the first OCR is then instant
+await removePreset('v6-medium')
+```
+
+## Progress
+
+`ensureModelFiles` reports through `configure({ onProgress })`, aggregated across
+every missing file. A declared `approxBytes` is used as-is; otherwise a `HEAD`
+probe supplies `content-length`, and `total` stays `0` if neither can.
+
+Auth headers come from `config.auth(repo)` — see
+[Private models and auth](/docs/guides/private-models-and-auth).
+
+## What this cache does not hold
+
+onnxruntime-web's own `.wasm` runtime. That is fetched by ORT and cached by the
+browser's HTTP cache, so it appears in the network panel on every load even when
+it is a hit. See
+[When it looks like the cache is not working](/docs/concepts/models-and-cache#when-it-looks-like-the-cache-is-not-working).

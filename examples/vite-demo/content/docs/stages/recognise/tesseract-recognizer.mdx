@@ -1,0 +1,119 @@
+---
+title: TesseractRecognizer
+description: Reads exactly the regions a detector found, straightening each one first. This is the stage that connects a detector to recognition.
+---
+
+<StageMeta type="TesseractRecognizer" />
+
+`PaddleTextRecognizer` detects and recognises in a single pass, so boxes from a
+separate detector never reach it. This stage does the opposite: it reads exactly
+the boxes it is handed, cropping and straightening each one.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, TesseractRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new DbnetOnnxDetector({ outputCol: 'boxes' }),
+    new TesseractRecognizer({ inputCols: ['image', 'boxes'] }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'boxes' } },
+    { type: 'TesseractRecognizer', options: { inputCols: ['image', 'boxes'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+`Document.type` is `'tesseract-recognizer'`. A missing box column produces a
+helpful `OcrError` in `exception` rather than an empty result.
+
+## `boxLevel` decides how fine the output boxes are
+
+`'region'` is ScaleDP's behaviour: one box per region the detector found,
+carrying everything read inside it. Since the detectors here are line-level, so
+are those boxes.
+
+`'word'` returns Tesseract's own word boxes instead, mapped back through the crop
+— padding, `scaleFactor` and the rotation included — so a word inside a skewed
+line comes back skewed the same way. Python has no equivalent; the words were
+always in the response, only their geometry was being discarded.
+
+<Callout>
+`scoreThreshold` gates the **region** in both modes, so switching `boxLevel`
+changes how finely the result is cut up and nothing else.
+
+Gating each word separately would also change what was read: a word scoring 0.3
+between two at 0.9 rides out on the region's mean and would vanish on its own, so
+the same page would yield different text depending on the box size asked for.
+Each word still carries its own confidence in `score`, to filter on downstream.
+</Callout>
+
+## `onlyRotated` defaults the other way from Python
+
+ScaleDP defaults it to `true`, because there the stage refines an OCR pass that
+already ran and skipping upright boxes is the whole point. Standalone it is the
+primary recognizer, and that default would return an empty document for the
+ordinary detector-then-recognize pipeline.
+
+Set it to `true` to use the stage as a fix-up pass over boxes that already carry
+text.
+
+## Straightening
+
+The crop is a perspective warp onto the box's own axes, verified readable end to
+end at 0, +25 and −18 degrees. Recognition quality on skewed text is then bounded
+by the detector: a box whose reported angle does not match the text's produces a
+crop that is still skewed.
+
+`padding` defaults to 5, which is what ScaleDP hardcodes. `scaleFactor` resizes
+the page before cropping — useful for small text — and coordinates are divided
+back out, so the boxes stay in the page's own space.
+
+`detectLineOrientation` classifies each crop 0°/180° and turns the inverted ones
+before reading, using the same ~9 MB model as
+[`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector).
+
+<Callout title="A Python bug not reproduced">
+ScaleDP sets `b.conf` but filters on `b.score`, so its `scoreThreshold` is
+applied to the *detector's* score rather than the recognizer's. Here it gates
+the recognition confidence, as the name says.
+</Callout>
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the detector output whose regions to read. |
+| `lang` | `string[]` | `['eng']` | Tesseract language codes, e.g. eng or eng, deu. Each needs its traineddata file. |
+| `boxLevel` | `'region'` \| `'word'` | `'region'` | The detectors here are line-level, so “region” gives line boxes. Pick “word” to get one box per word instead. |
+| `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
+| `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
+| `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |
+| `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
+| `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
+| `detectLineOrientation` | `boolean` | `true` | Classify each crop 0°/180° and turn the inverted ones. |
+| `onlyRotated` | `boolean` | `false` | Read only rotated or inverted boxes. On, an ordinary page returns nothing. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'text'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `oriModel` | `string` | `'StabRise/line_orientation_detection_v0.1'` | Hugging Face repo id. Defaults to StabRise/line_orientation_detection_v0.1. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

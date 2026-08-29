@@ -1,0 +1,87 @@
+---
+title: Detect, then recognise
+description: Two stages instead of one — a real detector for the geometry, and a recognizer that reads exactly what it found.
+---
+
+`PaddleTextRecognizer` detects and reads in a single pass, which is fast and
+convenient and gives you no say in the geometry. When the page is skewed,
+rotated or unusually laid out, split the two jobs.
+
+```ts
+import { Pipeline, ImageDrawBoxes } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, TesseractRecognizer } from '@stabrise/scaledp/ocr'
+
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new DbnetOnnxDetector({ outputCol: 'boxes', unclipRatio: 2.5 }),
+    new TesseractRecognizer({
+        inputCols: ['image', 'boxes'],
+        boxLevel: 'word',
+        padding: 5,
+    }),
+    new ImageDrawBoxes({ inputCols: ['image', 'text'], outputCol: 'annotated', lineWidth: 2 }),
+])
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'boxes' } },
+    { type: 'TesseractRecognizer', options: { inputCols: ['image', 'boxes'], boxLevel: 'word' } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+## Why `TesseractRecognizer` and not the Paddle one
+
+Because it is the only recognizer that reads boxes it is *given*.
+`PaddleTextRecognizer` ignores an upstream box column entirely — the boxes it
+returns are the ones its own detector found. Putting a detector in front of it
+gives you two opinions about the page, not a pipeline.
+
+## Add orientation correction
+
+If lines may be upside down, put the classifier between the two:
+
+```ts
+new Pipeline([
+    new PdfToImage(),
+    new DbnetOnnxDetector({ outputCol: 'boxes' }),
+    new LineOrientationDetector({ inputCols: ['image', 'boxes'] }),
+    new TesseractRecognizer({ inputCols: ['oriented', 'boxes'] }),
+])
+```
+
+The recognizer now reads the corrected page. Box coordinates survive the
+correction because a rectangle maps onto itself under a 180° turn about its own
+centre.
+
+`TesseractRecognizer` can also do this itself — `detectLineOrientation` is on by
+default and classifies each crop. The separate stage is what you want when the
+recognizer is Paddle's, which offers no such seam.
+
+## Word boxes out of line-level detectors
+
+Every detector here is line-level, in Python ScaleDP as here. `boxLevel: 'word'`
+maps Tesseract's own word rects back through the crop — padding, `scaleFactor`
+and rotation included — so a word inside a skewed line comes back skewed the same
+way.
+
+That is what makes [entity redaction](/docs/recipes/redact-pii) precise rather
+than line-shaped.
+
+## Comparing detectors
+
+Run two and draw them in different colours:
+
+```ts
+new Pipeline([
+    new PdfToImage(),
+    new PaddleTextDetector({ outputCol: 'paddle_boxes' }),
+    new DbnetOnnxDetector({ outputCol: 'dbnet_boxes' }),
+    new ImageDrawBoxes({ inputCols: ['image', 'paddle_boxes'], outputCol: 'pass1', color: '#3fc9f5' }),
+    new ImageDrawBoxes({ inputCols: ['pass1', 'dbnet_boxes'], outputCol: 'annotated', color: '#ff5c8a' }),
+])
+```
+
+Two passes rather than one, because a single `ImageDrawBoxes` takes one colour
+for all its sources.

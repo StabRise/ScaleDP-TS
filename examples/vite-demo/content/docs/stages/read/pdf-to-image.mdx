@@ -1,0 +1,75 @@
+---
+title: PdfToImage
+description: A PDF into one rendered image row per page. Mirrors ScaleDP's PdfDataToImage.
+---
+
+<StageMeta type="PdfToImage" />
+
+Rasterises every page and expands one input row into one row per page, writing
+the page index to `pageCol`.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer(),
+]).transform(pdfFile)
+
+rows.length          // one per page
+rows[0].page         // 0
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+]} />
+
+## Choosing a resolution
+
+The scale factor is `resolution / 72`. 300 DPI suits OCR; 150 halves the render
+time and the pixel count, and is usually enough for clean digital PDFs. Detection
+quality falls off below about 150 for body text.
+
+Whatever you choose, **use the same number on `PdfToDocument`** if both run —
+its boxes are emitted in the pixel space of that DPI, and mismatched values put
+the two sets of boxes in different coordinate systems.
+
+## Requirements
+
+Needs `pdfjs-dist` installed and `configure({ pdf: { workerSrc, cMapUrl, standardFontDataUrl } })`
+pointing at assets you serve. Failures here are wrapped with an actionable
+message naming the missing setting rather than pdf.js's own — a missing
+`workerSrc` is the single most common first-run problem.
+
+`renderPage(document, pageNumber, options)` is exported separately for rendering
+one page outside a pipeline; page numbers there are 1-based, as in pdf.js.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `resolution` | `number` 36–600 | `300` | Render DPI. 300 matches ScaleDP; 200 is a good speed/accuracy trade. |
+| `pageLimit` | `number` | `0` | 0 renders every page. |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Image format |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'content'` | Raw PDF bytes, normally the content column. |
+| `outputCol` | `string` | `'image'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `false` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

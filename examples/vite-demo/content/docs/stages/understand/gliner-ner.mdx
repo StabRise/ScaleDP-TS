@@ -1,0 +1,124 @@
+---
+title: GlinerNer
+description: Zero-shot named-entity recognition over a Document. The labels are the prompt, and every entity carries the boxes it came from.
+---
+
+<StageMeta type="GlinerNer" />
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new GlinerNer({
+        inputCol: 'text',
+        labels: ['person', 'organization', 'email', 'phone', 'address'],
+        threshold: 0.5,
+    }),
+]).transform(file)
+
+for (const entity of rows[0].ner.entities) {
+    console.log(entity.entity_group, entity.word, entity.score, entity.boxes)
+}
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'GlinerNer', options: { inputCol: 'text', labels: ['person', 'organization', 'email', 'phone', 'address'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'annotated', color: '#ff5c8a', lineWidth: 2, displayDataList: ['entity_group'] } },
+]} />
+
+<Callout type="warn" title="333 MB on first run">
+That is the default `gliner-multi-pii` model. It downloads once into IndexedDB.
+See [Models and caching](/docs/concepts/models-and-cache#ner) for the alternatives
+and their sizes.
+</Callout>
+
+## Labels are the prompt
+
+GLiNER scores a label by its **text**, so the wording is part of the query.
+`'phone'` and `'phone_number'` are different questions, and a model fine-tuned on
+one will score the other lower. Ask for `'medical_condition'` and it looks for
+one, with no retraining.
+
+```ts
+import { DEFAULT_PII_LABELS, GLINER2_PII_LABELS } from '@stabrise/scaledp/ner'
+```
+
+`whiteList` filters the results by group after the fact, which is different from
+narrowing `labels` — narrowing the labels changes the inference.
+
+## Entities carry boxes
+
+`Entity.start`/`end` are character offsets into `Document.text`, and `boxes` are
+the page boxes those characters fall in. The mapping is built by locating each
+box's text in the document text.
+
+<Callout title="A deliberate divergence from Python">
+Python derives the map from `len(box.text) + 1`, assuming exactly one separator
+per box. That drifts as soon as `keepFormatting` inserts several spaces or a
+newline, shifting every entity's boxes after the first wide gap.
+</Callout>
+
+That is what makes [redaction](/docs/recipes/redact-pii) work: the boxes are
+where the entity actually is on the page.
+
+## Chunking
+
+Long documents are windowed at `chunkLength` 500 characters with a `chunkStride`
+of 480, so a 20-character overlap catches entities that straddle a seam.
+Duplicates from that overlap are de-duplicated here; Python's sliding window
+reports them twice.
+
+## `normaliseCasing`
+
+On by default, and it matters for scans. GLiNER1 models are cased, and a document
+set entirely in capitals looks unlike anything in training. The rewrite
+title-cases all-caps runs before inference and is **length-preserving**, so
+character offsets stay valid and reported words keep their original casing.
+
+## Model registry
+
+```ts
+import { NER_MODELS, getNerModel, modelSizeBytes } from '@stabrise/scaledp/ner'
+```
+
+An id not in the registry is rejected by the constructor. Two of the four models
+are private StabRise repos and need `configure({ auth })` — see
+[Private models and auth](/docs/guides/private-models-and-auth).
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `'gliner-multi-pii'` \| `'gliner-small'` \| `'stabrise-pii-multi'` \| `'stabrise-pii-multi-g2'` | `'gliner-multi-pii'` | Registry id. Private repos need configure(&#123; auth &#125;). |
+| `labels` | `string[]` | `['person', 'organization', 'location', 'email', 'phone_number', 'url', 'id', 'account_number', 'zip_code', 'address', 'ip_address', 'date', 'ssn', 'driver_license', 'passport', 'age', 'credit_card', 'medical_condition']` | GLiNER scores a label by its prompt text, so other wording asks a different question. |
+| `threshold` | `number` 0–1 | `0.5` | Minimum score an entity must reach. |
+| `whiteList` | `string[]` | `[]` | Keep only these entity groups; empty keeps everything. |
+| `normaliseCasing` | `boolean` | `true` | Title-case runs of capitals first. GLiNER1 models are cased; scans are often all caps. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'text'` | Input column |
+| `outputCol` | `string` | `'ner'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `chunkLength` | `number` | `500` | Tokens per inference window. |
+| `chunkStride` | `number` | `480` | Window step. Below chunk length, windows overlap. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

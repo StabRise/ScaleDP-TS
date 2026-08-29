@@ -1,0 +1,115 @@
+---
+title: PaddleTextRecognizer
+description: Full OCR in one pass — PaddleOCR detects and reads the page, across thirteen language presets.
+---
+
+<StageMeta type="PaddleTextRecognizer" />
+
+The default OCR engine, and the best all-rounder: about 6 MB of weights, WebGPU
+capable, and thirteen language presets.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ preset: 'v6-small', keepFormatting: true }),
+]).transform(file)
+
+rows[0].text.text      // the recognised text
+rows[0].text.bboxes    // one box per detected region
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+<Callout title="It detects internally">
+This stage detects *and* recognises in a single pass over the page, so boxes
+produced by a separate detector never reach it — rotated boxes in particular.
+To read exactly the regions a detector found, use
+[`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
+</Callout>
+
+`Document.type` is `'ocr'`.
+
+## Strategy
+
+- `'per-box'` (default) — the regions as detected.
+- `'per-line'` — merge boxes that share a line.
+- `'cross-line'` — merge across line breaks too.
+
+This changes how the result is cut up, not what was read.
+
+## Keeping the layout
+
+`keepFormatting: true` rebuilds the page's layout in the text: indents from the
+left edge of each line, blank lines where vertical gaps are large, spacing
+derived from the modal character width. `lineTolerance` controls line grouping in
+pixels, and `0` derives it from the measured character height — which is almost
+always better than a fixed number, because it scales with the render DPI.
+
+The reconstruction is a port of ScaleDP's `box_to_formatted_text` and is verified
+against Python goldens.
+
+## Language presets
+
+`v6-small` is the default and covers Latin and CJK. No single model covers every
+script, so this is a real choice.
+
+| Family | Presets |
+| --- | --- |
+| PP-OCRv6 | `v6-small`, `v6-medium`, `v6-tiny` |
+| PP-OCRv5 mobile | `v5-latin-mobile`, `v5-en-mobile`, `v5-eslav-mobile`, `v5-cyrillic-mobile`, `v5-greek-mobile`, `v5-arabic-mobile`, `v5-devanagari-mobile`, `v5-korean-mobile`, `v5-thai-mobile`, `v5-tamil-mobile`, `v5-telugu-mobile` |
+
+```ts
+import { PADDLE_OCR_PRESETS, detectScript, presetsForScript } from '@stabrise/scaledp/ocr'
+
+const script = await detectScript(canvas)          // needs tesseract.js
+const options = await presetsForScript(script.script)
+```
+
+`detectScript()` reports what a page contains and `presetsForScript()` lists what
+can read it — useful for offering the user a sensible default rather than
+guessing.
+
+An unknown preset throws `RangeError` from the constructor.
+
+## Switching presets mid-session
+
+Handled internally: the call into ppu-paddle-ocr passes `noCache: true`, without
+which changing the preset returns the previous model's result. Worth knowing if
+you are debugging why a language change did nothing.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Pick the one matching your documents. |
+| `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |
+| `strategy` | `'per-box'` \| `'per-line'` \| `'cross-line'` | `'per-box'` | How the detected regions are grouped. It cannot subdivide them: the boxes are whatever the preset’s detector found, which is line-level. |
+| `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
+| `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'text'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

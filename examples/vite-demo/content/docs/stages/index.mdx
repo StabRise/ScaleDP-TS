@@ -1,0 +1,84 @@
+---
+title: Stage reference
+description: Every stage, grouped by what it does, with what it reads, what it writes and what it needs installed.
+---
+
+Every stage takes an options object, reads one row field and writes another.
+Defaults match the Python ScaleDP stage of the same name wherever one exists.
+
+The parameter tables on each page are generated from the same catalogue the
+[registry](/docs/api/registry) exposes and the demo builder renders its controls
+from, so a default here is the stage's own frozen constant rather than a
+transcription of it.
+
+{/* generated:catalogue */}
+
+### Read
+
+| Stage | Reads | Writes | Needs |
+| --- | --- | --- | --- |
+| [DataToImage](/docs/stages/read/data-to-image) | bytes | image | — |
+| [PdfToImage](/docs/stages/read/pdf-to-image) | bytes | image | `pdfjs-dist` |
+| [PdfToDocument](/docs/stages/read/pdf-to-document) | bytes | document | `pdfjs-dist` |
+
+### Detect
+
+| Stage | Reads | Writes | Needs |
+| --- | --- | --- | --- |
+| [PaddleTextDetector](/docs/stages/detect/paddle-text-detector) | image | boxes | `ppu-paddle-ocr` |
+| [DbnetOnnxDetector](/docs/stages/detect/dbnet-onnx-detector) | image | boxes | `onnxruntime-web` |
+| [YoloOnnxDetector](/docs/stages/detect/yolo-onnx-detector) | image | boxes | `onnxruntime-web` |
+| [SignatureDetector](/docs/stages/detect/signature-detector) | image | boxes | `onnxruntime-web` |
+| [FaceDetector](/docs/stages/detect/face-detector) | image | boxes | `onnxruntime-web` |
+
+### Recognise
+
+| Stage | Reads | Writes | Needs |
+| --- | --- | --- | --- |
+| [PaddleTextRecognizer](/docs/stages/recognise/paddle-text-recognizer) | image | document | `ppu-paddle-ocr` |
+| [TesseractOcr](/docs/stages/recognise/tesseract-ocr) | image | document | `tesseract-wasm` |
+| [TesseractRecognizer](/docs/stages/recognise/tesseract-recognizer) | image, boxes | document | `tesseract-wasm` |
+
+### Transform
+
+| Stage | Reads | Writes | Needs |
+| --- | --- | --- | --- |
+| [LineOrientationDetector](/docs/stages/transform/line-orientation-detector) | image, boxes | image | `onnxruntime-web` |
+| [ImageDrawBoxes](/docs/stages/transform/image-draw-boxes) | image, boxes | image | — |
+| [ImageCropBoxes](/docs/stages/transform/image-crop-boxes) | image, boxes | image | — |
+
+### Understand
+
+| Stage | Reads | Writes | Needs |
+| --- | --- | --- | --- |
+| [GlinerNer](/docs/stages/understand/gliner-ner) | document | ner | `@huggingface/transformers` |
+
+{/* /generated:catalogue */}
+
+## The six parameters every stage has
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | per stage | Row field to read |
+| `outputCol` | `string` | per stage | Row field to write |
+| `pathCol` | `string` | `'path'` | Field holding the source path |
+| `pageCol` | `string` | `'page'` | Field holding the page index |
+| `keepInputData` | `boolean` | per stage | Keep `inputCol` instead of dropping it |
+| `propagateError` | `boolean` | `false` | Throw on failure instead of recording it |
+
+`keepInputData` is the one that bites: with it off, the stage *deletes* its input
+column on the way through. See [Columns are the wiring](/docs/concepts/columns).
+
+Four stages read more than one column and take an `inputCols` array instead;
+their inherited `inputCol` is unused.
+
+## Reading the tables
+
+- **Reads / Writes** are column *kinds*, not names — `image`, `boxes`,
+  `document`, `ner`, `orientations`, `box`, `bytes`. The names are whatever
+  `inputCol` and `outputCol` say.
+- **Needs** is the optional peer dependency to install. A stage with no peer
+  runs with nothing beyond the core.
+- A stage marked **expands** turns one input row into several.
+- A stage marked **terminal** produces output for looking at, not for feeding
+  onward.

@@ -1,0 +1,91 @@
+---
+title: Self-hosting models
+description: Serve the weights from your own origin — for air-gapped deployments, for latency, or because Hugging Face is not reachable.
+---
+
+## Point `modelHost` at yourself
+
+```ts
+configure({ modelHost: '/models' })
+```
+
+Then mirror the repo-relative layout underneath it:
+
+```
+/models/onnx-community/gliner_multi_pii-v1/gliner_config.json
+/models/onnx-community/gliner_multi_pii-v1/onnx/model_int8.onnx
+/models/StabRise/text_detection_dbnet_ml_v0.2/model.onnx
+```
+
+Any host that is not the Hugging Face one produces `${host}/${repo}/${path}` —
+no `resolve/${revision}` segment. That is the only difference from the default,
+and it is why the mirror is a plain directory tree.
+
+## Finding out what to mirror
+
+Every model registry exposes its file list:
+
+```ts
+import { NER_MODELS, getNerModel } from '@stabrise/scaledp/ner'
+import { DETECTOR_MODELS } from '@stabrise/scaledp/ocr'
+import { fileUrl } from '@stabrise/scaledp'
+
+const model = getNerModel('gliner-multi-pii')
+for (const file of model.files) {
+    console.log(fileUrl({ repo: model.repo, files: model.files }, file.path))
+}
+```
+
+Download those URLs and serve them at the matching paths.
+
+## A single-file model by URL
+
+`DbnetOnnxDetector` and `YoloOnnxDetector` accept a URL in `model`, which is
+treated as a one-file spec and bypasses `modelHost` entirely:
+
+```ts
+new DbnetOnnxDetector({ model: 'https://cdn.example.com/dbnet-v0.2.onnx' })
+```
+
+This is also how ppu-paddle-ocr's own catalogue keeps working — absolute URLs in
+a catalogue are never rewritten.
+
+## The other three asset sets
+
+`modelHost` covers ONNX weights. Three other things are fetched, and each has its
+own setting:
+
+```ts
+configure({
+    ortWasmPaths: '/ort/',                             // onnxruntime-web runtime
+    tesseract: { workerUrl: '/tesseract/tesseract-worker.js', dataUrl: '/tesseract/' },
+    pdf: { workerSrc: '/pdf.worker.min.mjs', cMapUrl: '/cmaps/', standardFontDataUrl: '/standard_fonts/' },
+})
+```
+
+See [Installation](/docs/installation#serve-the-assets) for where to copy each
+from.
+
+<Callout type="error" title="Pin one onnxruntime-web">
+The `.mjs` loader and the `.wasm` binary must come from the same build variant
+**and** the same version. A mismatch fails at session creation with an opaque
+error.
+</Callout>
+
+## Fully offline
+
+With all four settings pointed at your own origin, `cache: 'indexeddb'`, and one
+warm-up run, nothing leaves the machine at any point — which is usually the
+reason for choosing this library in the first place.
+
+Pre-warm on install rather than on first use:
+
+```ts
+import { ensureModelFiles } from '@stabrise/scaledp'
+import { loadPreset } from '@stabrise/scaledp/ocr'
+import { getNerModel } from '@stabrise/scaledp/ner'
+
+await loadPreset('v6-small')
+const ner = getNerModel('gliner-multi-pii')
+if (ner) await ensureModelFiles({ repo: ner.repo, files: ner.files })
+```

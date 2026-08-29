@@ -1,0 +1,85 @@
+---
+title: Private models and auth
+description: Supplying a Hugging Face token for gated repos, without shipping it to the browser.
+---
+
+Two of the four NER models live in private StabRise repos. Reaching them needs a
+token.
+
+```ts
+configure({
+    auth: async (repo) => {
+        const response = await fetch('/api/hf-token')
+        if (!response.ok) throw new Error('Sign in to use this model')
+        return (await response.json()).token
+    },
+})
+```
+
+`auth` is called with the repo id, so one callback can mint different tokens for
+different repos — or refuse.
+
+<Callout type="error" title="Never embed the token">
+Mint it server-side and scope it to the repos you need. A Hugging Face token
+shipped in client-side code is a published token, regardless of how it is
+obfuscated.
+</Callout>
+
+Prefer short-lived tokens: `auth` is called per fetch, so the callback is a
+natural place to hit an endpoint that issues one with a few minutes of life.
+
+## Tokenizers take a different path
+
+`GlinerNer` needs a tokenizer, and that is fetched by
+`@huggingface/transformers`, which has its own host settings and does not see
+`auth`. For a gated repo, proxy it through your origin:
+
+```ts
+configure({
+    hf: {
+        remoteHost: `${location.origin}/`,
+        remotePathTemplate: 'api/hf-model/{model}/resolve/{revision}/',
+    },
+})
+```
+
+Your endpoint then forwards to Hugging Face with the token attached server-side.
+`{model}` and `{revision}` are substituted by the transformers library.
+
+Forgetting this is the most common failure: the ONNX weights download fine
+because they went through `auth`, and then the tokenizer 401s.
+
+## In a worker
+
+`auth` is a function and does not survive `postMessage`, so
+`client.configure({ auth })` is excluded by type. Set it inside the worker entry
+instead:
+
+```ts
+// src/scaledp.worker.ts
+import { configure } from '@stabrise/scaledp'
+import { registerStages, startScaleDpWorker } from '@stabrise/scaledp/worker'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+configure({
+    auth: async () => (await (await fetch('/api/hf-token')).json()).token,
+})
+
+registerStages({ GlinerNer })
+startScaleDpWorker()
+```
+
+The fetch happens on the worker's thread but against the same origin and with the
+same cookies, so a session-cookie-authenticated endpoint works unchanged.
+
+## Checking before you try
+
+The [registry](/docs/api/registry) marks private models `disabled` in their enum
+options, which is enough for an interface to grey them out rather than let
+someone pick one and hit a 401 three stages into a run.
+
+```ts
+import { getNerModel } from '@stabrise/scaledp/ner'
+
+getNerModel('stabrise-pii-multi')?.private   // true
+```

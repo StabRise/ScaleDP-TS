@@ -1,0 +1,96 @@
+---
+title: Run off the main thread
+description: The same pipeline in a worker, so a multi-second OCR pass does not freeze the tab.
+---
+
+OCR and NER are multi-second CPU-bound operations. Everything in this library is
+`OffscreenCanvas`-based and DOM-free precisely so the whole pipeline can move
+into a worker.
+
+## The worker entry
+
+```ts
+// src/scaledp.worker.ts
+import { registerStages, startScaleDpWorker } from '@stabrise/scaledp/worker'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+registerStages({ PdfToImage, PaddleTextRecognizer, GlinerNer })
+startScaleDpWorker()
+```
+
+It lives in your app because only your bundler can resolve a worker URL.
+Register only the stages you use — importing all fifteen pulls pdf.js, ORT,
+PaddleOCR and Tesseract into the worker bundle.
+
+## The main thread
+
+```ts
+import { createScaleDpWorker } from '@stabrise/scaledp/worker'
+
+const client = createScaleDpWorker({
+    worker: new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    onProgress: ({ file, loaded, total }) => setProgress(loaded / total),
+    onStage: (name, ms) => console.log(`${name}: ${ms}ms`),
+})
+
+await client.configure({
+    cache: 'indexeddb',
+    pdf: { workerSrc: '/pdf.worker.min.mjs', cMapUrl: '/cmaps/' },
+})
+
+const rows = await client.transform(
+    [
+        { type: 'PdfToImage', options: { resolution: 300 } },
+        { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    ],
+    [{ content: bytes, path: 'invoice.pdf' }]
+)
+
+await client.dispose()
+```
+
+The stages are `StageDescriptor[]` — the same `{ type, options }` data a saved
+pipeline is written in, so a pipeline built in an interface runs unchanged here.
+See [Building a pipeline from data](/docs/recipes/build-a-pipeline-from-data).
+
+## Two things do not survive `postMessage`
+
+`auth` and `onProgress` are functions. The client's `configure` type excludes
+them.
+
+- **Progress** comes back through `createScaleDpWorker({ onProgress })`; the host
+  installs a forwarding callback inside the worker.
+- **Auth** must be set in the worker entry itself:
+
+```ts
+// src/scaledp.worker.ts
+import { configure } from '@stabrise/scaledp'
+
+configure({ auth: async (repo) => (await fetch('/api/hf-token')).json().then((r) => r.token) })
+registerStages({ /* … */ })
+startScaleDpWorker()
+```
+
+## Concurrency
+
+An onnxruntime-web session runs one inference at a time; a concurrent call fails
+with `Session already started`. Both the client and the host queue requests, so
+several `transform` calls are safe — they run in order rather than overlapping.
+
+Two workers means two copies of every model in memory, and they will contend for
+the same cores. One worker is almost always right.
+
+## Isolation still applies
+
+Threaded WASM needs the **page** cross-origin isolated. Moving work into a worker
+does not escape that:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+WebGPU needs none of it. See
+[Execution providers](/docs/concepts/execution-providers).

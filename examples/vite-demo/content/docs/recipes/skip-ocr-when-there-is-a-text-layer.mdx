@@ -1,0 +1,72 @@
+---
+title: Skip OCR when the PDF already has text
+description: Most PDFs carry their own text. Lifting it is instant and exact — run OCR only on the pages that need it.
+---
+
+OCR is the expensive part of any PDF pipeline, and most PDFs do not need it.
+`PdfToDocument` reads the embedded text layer with word-level boxes, in the same
+pixel space `PdfToImage` renders at.
+
+## One pass to find out
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToDocument, hasUsableTextLayer } from '@stabrise/scaledp/pdf'
+
+const probe = new Pipeline([new PdfToDocument({ resolution: 300 })])
+const pages = await probe.transform(file)
+
+const withText = pages.filter((row) => hasUsableTextLayer(row.document))
+const needsOcr = pages.filter((row) => !hasUsableTextLayer(row.document))
+```
+
+<TryIt stages={[
+    { type: 'PdfToDocument', options: { resolution: 300 } },
+]} label="Inspect the text layer in the builder" />
+
+`hasUsableTextLayer(document, minimumBoxes = 1)` is the whole decision. Raise
+`minimumBoxes` if your corpus contains PDFs whose "text layer" is a single stamped
+watermark.
+
+## Then OCR only what is left
+
+```ts
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const ocr = new Pipeline([
+    new PdfToImage({ resolution: 300, pageLimit: 0 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+])
+
+const scanned = needsOcr.length > 0 ? await ocr.transform(file) : []
+```
+
+Because both stages use the same `resolution`, the boxes from the text layer and
+the boxes from OCR are in one coordinate space — so the two sets of pages can be
+merged, drawn together, or fed to the same NER stage without conversion.
+
+<Callout title="Match the resolution">
+`PdfToDocument`'s `resolution` is not a render DPI — it is the pixel space its
+boxes are expressed in. Set it to the same number as `PdfToImage` or the two
+box sets will not line up.
+</Callout>
+
+## One pipeline, both columns
+
+If you would rather not branch, run both readers and decide per row afterwards:
+
+```ts
+const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 300, keepInputData: true }),
+    new PdfToDocument({ resolution: 300, outputCol: 'pdf_text' }),
+])
+```
+
+Note that `keepInputData: true` on the first stage is required — `PdfToImage`
+deletes `content` by default, and `PdfToDocument` would then find nothing to
+read. And be aware this multiplies rows: two expanding stages over the same
+source column turn a five-page file into twenty-five rows. See
+[Columns are the wiring](/docs/concepts/columns#expanding-stages-multiply).
+
+For most corpora the two-pass version above is both cheaper and clearer.

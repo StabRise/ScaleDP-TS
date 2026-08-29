@@ -1,0 +1,84 @@
+---
+title: TesseractOcr
+description: A whole page through Tesseract's own layout analysis — the one stage that returns word-level boxes without a detector.
+---
+
+<StageMeta type="TesseractOcr" />
+
+Tesseract does its own page segmentation, so this stage needs no detector and
+returns **word** boxes rather than line boxes. That makes it the simplest route
+to word-level geometry on clean Latin scans.
+
+```ts
+import { Pipeline, configure } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { TesseractOcr } from '@stabrise/scaledp/ocr'
+
+configure({ tesseract: { workerUrl: '/tesseract/tesseract-worker.js', dataUrl: '/tesseract/' } })
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new TesseractOcr({ lang: ['eng'], keepFormatting: true }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'TesseractOcr', options: { keepFormatting: true } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5' } },
+]} />
+
+`Document.type` is `'tesseract'`.
+
+## Languages
+
+`lang` is an array joined with `+` for tesseract-wasm, so `['eng', 'deu']` loads
+both. Each language is roughly 15 MB of `traineddata`. An empty array is
+rejected by the constructor.
+
+By default the data comes from the `tessdata_fast` repository on GitHub, which
+is fine for a demo and not for production — point `configure({ tesseract: { dataUrl } })`
+at your own copy.
+
+## Where it stands against the others
+
+| | Box level | Weights | WebGPU |
+| --- | --- | --- | --- |
+| `TesseractOcr` | **word** | ~15 MB per language | no |
+| `PaddleTextRecognizer` | line | ~6 MB | yes |
+| `TesseractRecognizer` | line, or word with `boxLevel` | ~15 MB per language | no |
+
+No ONNX is involved, so execution providers and thread settings do not apply to
+it. It is a good fallback where WebGPU is absent and the document is clean, and a
+poor choice for dense or noisy scans.
+
+Confidence is reported 0–1 here, not Tesseract's native 0–100, so
+`scoreThreshold` reads the same as on every other stage.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `lang` | `string[]` | `['eng']` | Tesseract language codes, e.g. eng or eng, deu. Each needs its traineddata file. |
+| `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |
+| `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
+| `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Input column |
+| `outputCol` | `string` | `'text'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

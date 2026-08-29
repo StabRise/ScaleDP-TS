@@ -1,0 +1,115 @@
+---
+title: Pipeline and Stage
+description: The two classes everything else is built on.
+---
+
+## `Pipeline`
+
+```ts
+class Pipeline {
+    constructor(readonly stages: Stage[])
+    transform(input: PipelineInput, options?: PipelineOptions): Promise<Row[]>
+    dispose(): Promise<void>
+}
+```
+
+```ts
+interface PipelineOptions {
+    signal?: AbortSignal
+    onStage?: (name: string, ms: number, rows: number) => void
+}
+```
+
+`transform` normalises the input, then for each stage: checks the signal, awaits
+`init()`, runs `transform` over the rows, and records elapsed milliseconds. Every
+returned row gets `execution_time`.
+
+`stages` is a plain array and is not frozen — pushing an `ImageDrawBoxes` onto an
+existing pipeline is a supported way to add an annotation pass.
+
+## `Stage`
+
+```ts
+abstract class Stage<P extends BaseStageParams = BaseStageParams> {
+    abstract readonly name: string
+    constructor(readonly params: P)
+
+    async init(): Promise<void>
+    protected abstract apply(input, row, ctx): Promise<unknown>
+    protected expand(input, row, ctx): Promise<Row[] | null>
+    protected abstract onError(message: string, row: Row): unknown
+    async dispose(): Promise<void>
+
+    transform(rows: Row[], ctx: StageContext): Promise<Row[]>   // final
+}
+```
+
+`name` is also the `StageDescriptor.type`. The full contract, including why
+`onError` must return a well-formed empty schema instance, is in
+[The stage lifecycle](/docs/concepts/stages).
+
+## Rows and input
+
+```ts
+type Row = Record<string, unknown>
+
+type PipelineInput =
+    | Uint8Array | ArrayBuffer | Blob | File | string | Row | Row[]
+
+interface StageContext { index: number; signal?: AbortSignal }
+```
+
+```ts
+import { toRows } from '@stabrise/scaledp'
+```
+
+`toRows` is exported for anyone building rows by hand. Arrays pass through
+shallow-copied; a `string` is fetched and throws on a non-ok response; bytes
+become `{ content, path: 'memory' }`; a `File` uses its `name` as the path.
+
+## Timing columns
+
+```ts
+const EXECUTION_TIME_COL = 'execution_time'
+const ROW_TIME_COL = 'row_time'
+
+interface ExecutionTime { stages: Record<string, number>; total: number }
+interface RowTime { stages: Record<string, number>; total: number }
+```
+
+See [Timings](/docs/concepts/timings) for what each measures and why they differ.
+
+## Params
+
+```ts
+import { BASE_STAGE_DEFAULTS, resolveParams, assertInRange, assertPositiveInt } from '@stabrise/scaledp'
+
+interface BaseStageParams {
+    inputCol: string        // 'content'
+    outputCol: string       // 'output'
+    pathCol: string         // 'path'
+    pageCol: string         // 'page'
+    keepInputData: boolean  // false
+    propagateError: boolean // false
+}
+
+type Validator<T> = { [K in keyof T]?: (value: T[K], all: T) => void }
+resolveParams<T>(defaults: Readonly<T>, options?: Partial<T>, validators?: Validator<T>): T
+```
+
+`resolveParams` ignores `undefined` values, so spreading an optional config never
+erases a default. Validators run against the resolved object and throw
+`RangeError`.
+
+## Errors
+
+```ts
+import {
+    ScaleDpError, ImageError, OcrError, DetectionError, NerError, ConfigError,
+    formatException,
+} from '@stabrise/scaledp'
+```
+
+All extend `ScaleDpError`, which carries the `stage` it came from.
+`formatException(stage, error)` produces the string that lands in an output
+schema's `exception`. See [The error contract](/docs/concepts/error-contract).

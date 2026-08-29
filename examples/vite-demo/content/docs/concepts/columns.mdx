@@ -1,0 +1,100 @@
+---
+title: Columns are the wiring
+description: Stages do not connect to each other. They read and write named fields on the row, and the order of the array is the order they run.
+---
+
+There are no ports, no graph and no `connect()`. Each stage reads one named
+field and writes another, and the pipeline array is the order.
+
+```ts
+new Pipeline([
+    new PdfToImage(),                                        // content -> image
+    new DbnetOnnxDetector({ inputCol: 'image' }),            // image   -> boxes
+    new TesseractRecognizer({ inputCols: ['image', 'boxes'] }), // -> text
+])
+```
+
+Every stage's defaults name the columns of the pipeline it was designed for, so
+the common shapes wire themselves. Rename one and the rest of the chain has to
+be told.
+
+## Two things that surprise people
+
+### A stage deletes its input by default
+
+`keepInputData` is `false` on most stages, which means `inputCol` is *removed*
+from the row on the way through. `PdfToImage` does this, so `content` is gone by
+the second stage — and a `PdfToDocument` added after it finds nothing to read.
+
+```ts
+new Pipeline([
+    new PdfToImage({ keepInputData: true }),   // content survives
+    new PdfToDocument(),                       // ... so this can read it
+])
+```
+
+The stages that already default to `keepInputData: true` are the ones whose
+input is obviously still wanted: recognizers keep the page they read,
+`ImageDrawBoxes` keeps the page it annotated.
+
+<Callout>
+When `inputCol` and `outputCol` are the same column, nothing is dropped —
+overwriting in place is not a deletion.
+</Callout>
+
+### An annotated page is the end of the line
+
+`ImageDrawBoxes` writes an image, and that image is still an image. But feeding
+it to a detector means detecting text through the boxes drawn on top of it. The
+registry marks the stage `terminal` for exactly this reason, and the builder
+wires a following detector to the page rather than the overlay.
+
+## Expanding stages multiply
+
+`PdfToImage`, `PdfToDocument` and `ImageCropBoxes` turn one input row into
+several. Two expanding stages reading the *same pre-existing* column multiply
+rather than subdivide: a `PdfToImage` and a `PdfToDocument` both reading
+`content` turn a five-page file into twenty-five rows.
+
+Reading what the first one *wrote* is fine — cropping the boxes found on a
+rendered page is a subdivision, not a product.
+
+## Pointing at a column nothing writes
+
+The run still goes ahead. Stages record failures in their output rather than
+throwing, so a mis-wired column costs one column, not the other forty pages:
+
+```ts
+rows[0].text.exception
+// 'TesseractRecognizer: OcrError: column "regions" not found on the row'
+```
+
+That is the [error contract](/docs/concepts/error-contract) working as intended,
+not a missed validation. Set `propagateError: true` on a stage while developing
+if you would rather it threw.
+
+## Multi-input stages
+
+Four stages read more than one column, and take an `inputCols` array instead:
+
+| Stage | `inputCols` | Meaning |
+| --- | --- | --- |
+| `ImageDrawBoxes` | `['image', 'boxes']` | `[image, ...boxOrEntitySources]`, two or more |
+| `ImageCropBoxes` | `['image', 'boxes']` | `[image, boxes]`, exactly two |
+| `TesseractRecognizer` | `['image', 'boxes']` | `[image, boxes]`, exactly two |
+| `LineOrientationDetector` | `['image', 'boxes']` | `[image, boxes]`, exactly two |
+
+Their `inputCol` is inherited from the base parameters and unused. The arity is
+validated in the constructor, so a two-element array where three were meant
+fails while the pipeline is being built.
+
+## Second output columns
+
+Two stages write a column beyond `outputCol`:
+
+- `LineOrientationDetector` writes `orientationCol` (`'orientations'`) — one
+  `'0_degree'` or `'180_degree'` per box.
+- `ImageCropBoxes` writes `boxCol` (`'box'`) — the source box beside each crop.
+
+Both are visible in the registry as `alsoProduces`, so an interface that
+suggests columns knows they exist.

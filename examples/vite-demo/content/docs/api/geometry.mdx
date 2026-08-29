@@ -1,0 +1,49 @@
+---
+title: Geometry
+description: OpenCV-compatible convex hull, minimum-area rectangle and box points — hand-ported, no opencv.js.
+---
+
+```ts
+import { convexHull, minAreaRect, boxPoints, polygonArea, polygonPerimeter } from '@stabrise/scaledp'
+
+type Point = [number, number]
+interface RotatedRect { center: Point; size: [number, number]; angle: number }
+```
+
+| | |
+| --- | --- |
+| `convexHull(points)` | Monotone chain, counter-clockwise in a y-down space |
+| `minAreaRect(points)` | Rotating calipers; `angle` in (0, 90] |
+| `boxPoints(rect)` | Four corners in cv2's order: BL, TL, TR, BR |
+| `polygonArea(points)` | Shoelace, non-negative |
+| `polygonPerimeter(points)` | |
+
+These exist because the detectors' post-processing is a port of Python code that
+calls `cv2.minAreaRect` and `cv2.boxPoints`, and shipping opencv.js to get two
+functions is not a trade worth making.
+
+## Parity, and its two legitimate tolerances
+
+`test/fixtures/generate-box-goldens.py` runs the real OpenCV and writes goldens;
+`test/unit/*-parity.test.ts` diffs against them. Two tolerances are encoded
+deliberately and should not be tightened:
+
+- **1px on integer fields.** cv2 computes in float32 while JavaScript is float64,
+  so a value sitting on a `.5` rounding boundary can round the other way.
+- **`angle` within the shape's own symmetry group.** A rectangle is invariant
+  under a 180° rotation — 90° when square — and cv2 itself returns `-0.0` or `90`
+  for axis-aligned input depending on which hull edge its scan happens to hit.
+
+## Relationship to `Box`
+
+`minAreaRect` returns a `RotatedRect`; the [`Box`](/docs/concepts/schemas#box)
+schema stores the same information differently — `x`/`y` as the top-left of the
+axis-aligned box of the same size centred on the rect's centre, `width` always
+the longer side. `boxFromPolygon` does that conversion.
+
+```ts
+import { boxFromPolygon, boxFromBBox } from '@stabrise/scaledp'
+
+boxFromPolygon(quad, { text: 'hello', score: 0.98 })   // exactly 4 points
+boxFromBBox([x0, y0, x1, y1], { angle: 0 })
+```

@@ -1,0 +1,78 @@
+# The site: landing page, documentation and the pipeline builder, one static
+# bundle on GitHub Pages.
+#
+# There is no server to build for -- every docs loader is prerendered and search
+# is a static index the browser queries locally -- so a Pages artifact is the
+# whole deployment.
+#
+# What Pages cannot do is set response headers, so the deployed site is not
+# cross-origin isolated: `SharedArrayBuffer` is unavailable and onnxruntime-web
+# runs its single-threaded build. WebGPU needs none of that and is faster than
+# threaded WASM anyway, so most visitors are unaffected; the demo's runtime strip
+# reports which one this tab actually got. Hosting anywhere that can set headers
+# (Netlify, Cloudflare Pages) restores threading with COOP/COEP site-wide.
+
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'examples/vite-demo/**'
+      - 'package.json'
+      - 'tsdown.config.ts'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; never cancel one half-way through.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The root's dependencies, because the site resolves @stabrise/scaledp at
+      # ../../dist and its `prebuild` builds the library with tsdown.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install the site's dependencies
+        working-directory: examples/vite-demo
+        run: npm ci
+
+      - name: Check the generated stage reference is current
+        working-directory: examples/vite-demo
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: examples/vite-demo
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/vite-demo/build/client
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

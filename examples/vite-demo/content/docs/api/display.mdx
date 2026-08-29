@@ -1,0 +1,54 @@
+---
+title: '@stabrise/scaledp/display'
+description: Browser equivalents of ScaleDP's notebook helpers. Each returns an HTMLElement you place wherever you like.
+---
+
+Python monkey-patches `show_image` and friends onto the DataFrame and renders
+Jinja into IPython. These return an `HTMLElement`.
+
+```ts
+import { renderInto, showText, showNer, visualizeNer, showImage, showBoxes } from '@stabrise/scaledp/display'
+
+renderInto('#page', showImage(row.annotated))
+renderInto('#text', showText(row.text))
+renderInto('#entities', showNer(row.ner, { limit: 20 }))
+renderInto('#inline', visualizeNer(row.text, row.ner))
+```
+
+| Function | Mirrors | Notes |
+| --- | --- | --- |
+| `showImage(image, { width, alt })` | `show_image` | Revokes its object URL once decoded. `width` defaults `'100%'` |
+| `showText(document, { preserveLayout, maxHeight })` | `show_text` | `<pre>`; layout preserved by default, `maxHeight` `'30rem'` |
+| `showJson(value, indent)` | `show_json` | |
+| `showNer(ner, { limit, whiteList })` | `show_ner` | Table; `limit` defaults 20, `0` shows all |
+| `visualizeNer(document, ner, { labelsList, showLabels })` | `visualize_ner` | Text with entities highlighted inline |
+| `showBoxes(output, limit)` | — | Box table: text, score, x, y, w, h, angle |
+| `renderInto(target, node)` | — | `replaceChildren`; throws if the selector matches nothing |
+| `colorForGroup(name)` | — | The same stable HSL hash `ImageDrawBoxes` uses |
+
+## Safety
+
+Everything is built from **text nodes** rather than interpolated markup.
+Recognised text and entity words come straight from the document, and a page
+containing `<` would otherwise corrupt the DOM — or worse, on a document from an
+untrusted source.
+
+## Failures render as failures
+
+Any input with a non-empty `exception` renders a red error block instead of the
+normal output. A failed column is visible rather than merely absent, which is
+what makes the [error contract](/docs/concepts/error-contract) usable in an
+interface.
+
+## `visualizeNer` and overlapping entities
+
+It splices spans by character offset, which is exactly what `Entity.start`/`end`
+index. Overlapping entities are **dropped rather than nested** — two spans cannot
+occupy the same characters in a flat text run — with the highest score winning,
+so the rendered text always reads identically to the original.
+
+## Annotating the page itself
+
+Drawing on the image is a pipeline stage, not a display helper — see
+[`ImageDrawBoxes`](/docs/stages/transform/image-draw-boxes). The annotated page is
+just another image column, so `showImage` renders it like any other.

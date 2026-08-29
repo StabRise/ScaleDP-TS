@@ -1,0 +1,17 @@
+{
+    "title": "Documentation",
+    "pages": [
+        "index",
+        "quickstart",
+        "installation",
+        "---How it works---",
+        "concepts",
+        "---Reference---",
+        "stages",
+        "api",
+        "---Guides---",
+        "recipes",
+        "guides",
+        "porting-from-python"
+    ]
+}

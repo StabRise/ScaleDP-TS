@@ -1,0 +1,120 @@
+---
+title: The stage lifecycle
+description: init, apply or expand, onError, dispose — and why writing a custom stage is mostly about the last two.
+---
+
+Every stage extends `Stage<P>` and implements a small contract.
+
+```ts
+abstract class Stage<P extends BaseStageParams = BaseStageParams> {
+    abstract readonly name: string
+    constructor(readonly params: P)
+
+    async init(): Promise<void>                    // once per run
+    protected abstract apply(input, row, ctx): Promise<unknown>
+    protected expand(input, row, ctx): Promise<Row[] | null>  // default: null
+    protected abstract onError(message: string, row: Row): unknown
+    async dispose(): Promise<void>
+
+    transform(rows, ctx): Promise<Row[]>           // final
+}
+```
+
+## `init()`
+
+Called once per run, before the first row. This is where a model is downloaded
+and a session created, which is why it is separate from `apply`: forty pages
+should not mean forty downloads.
+
+It is also why per-row timings do not sum to the run total — `init()` is charged
+to the run, not to any row. See [Timings](/docs/concepts/timings).
+
+## `apply()` — one row in, one value out
+
+The common case. Return the value to be written to `outputCol`; the base class
+handles reading `inputCol`, dropping it when `keepInputData` is off, catching
+errors, and recording time.
+
+```ts
+protected async apply(input: ScaleDpImage, row: Row): Promise<Document> {
+    const boxes = await this.read(input)
+    return createDocument({ path: input.path, type: 'ocr', text: …, bboxes: boxes })
+}
+```
+
+## `expand()` — one row in, several out
+
+Return an array of rows and the multi-row path is taken instead; return `null`
+(the default) and `apply` is used. This is how PDF page explosion and box
+cropping work, and it is also how a stage writes more than one column.
+
+Stages that implement `expand` leave `apply` throwing "unreachable" — the base
+class never calls both.
+
+The elapsed time of one `expand` call is split evenly across the rows it
+produced. No finer attribution exists from outside the stage.
+
+## `onError()` — the load-bearing one
+
+```ts
+protected onError(message: string): Document {
+    return createDocument({ exception: message })
+}
+```
+
+**Return a well-formed, empty instance of the output schema, carrying the
+message.** Not `null`, not a partial object. Downstream stages and display
+helpers read `.bboxes`, `.entities`, `.text` without guarding, and the whole
+non-throwing contract rests on the failed column still having the right shape.
+
+The message is already formatted by the time it arrives —
+`formatException(name, error)` produces `'StageName: OcrError: …'` with the
+stack appended.
+
+## `dispose()`
+
+Release sessions, workers and services. The base implementation does nothing;
+`Pipeline.dispose()` calls every stage's.
+
+## Parameters
+
+Stages never read `options` directly. They merge over a frozen defaults constant:
+
+```ts
+export const MY_STAGE_DEFAULTS: MyStageParams = Object.freeze({
+    ...BASE_STAGE_DEFAULTS,
+    inputCol: 'image',
+    outputCol: 'text',
+    threshold: 0.5,
+})
+
+export class MyStage extends Stage<MyStageParams> {
+    readonly name = 'MyStage'
+
+    constructor(options: Partial<MyStageParams> = {}) {
+        super(resolveParams(MY_STAGE_DEFAULTS, options, {
+            threshold: (value) => assertInRange('threshold', value, 0, 1),
+        }))
+    }
+}
+```
+
+`resolveParams` ignores `undefined` values, so spreading an optional config never
+erases a default. Validators run against the fully resolved object and throw
+`RangeError` — **in the constructor**, where the message can name the offending
+field, rather than several stages into a run.
+
+That defaults constant is also what the [registry](/docs/api/registry) points
+at: `spec.defaults` is the frozen object itself, not a copy, so documentation
+and the builder's controls cannot describe a default the stage does not have.
+
+## The six every stage has
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `inputCol` | per stage | Row field to read |
+| `outputCol` | per stage | Row field to write |
+| `pathCol` | `'path'` | Field holding the source path |
+| `pageCol` | `'page'` | Field holding the page index |
+| `keepInputData` | per stage | Keep `inputCol` instead of dropping it |
+| `propagateError` | `false` | Throw on failure instead of recording it |

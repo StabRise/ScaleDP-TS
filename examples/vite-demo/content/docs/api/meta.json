@@ -1,0 +1,14 @@
+{
+    "title": "API",
+    "pages": [
+        "configure",
+        "pipeline",
+        "registry",
+        "display",
+        "model-cache",
+        "geometry",
+        "image",
+        "text",
+        "worker"
+    ]
+}

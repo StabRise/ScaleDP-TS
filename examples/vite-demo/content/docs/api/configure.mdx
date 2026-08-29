@@ -1,0 +1,100 @@
+---
+title: configure()
+description: The one place asset URLs, model hosts, auth, caching and execution providers are set.
+---
+
+```ts
+import { configure, getConfig, resetConfig } from '@stabrise/scaledp'
+
+configure({ cache: 'indexeddb', pdf: { workerSrc: '/pdf.worker.min.mjs' } })
+```
+
+Call it once, before any stage runs. It merges into the current config and
+returns the result; `pdf`, `tesseract` and `hf` merge per key rather than being
+replaced wholesale, so two calls can each set one field.
+
+`getConfig()` returns the current config read-only. `resetConfig()` restores the
+defaults and exists for tests.
+
+<Callout title="No app-owned paths">
+The library never guesses where your app puts things. A hardcoded
+`/pdf.worker.min.mjs` or `/api/hf-token` inside the library would be a bug —
+everything an app owns comes through here.
+</Callout>
+
+## `ScaleDpConfig`
+
+```ts
+interface ScaleDpConfig {
+    modelHost: string                      // 'https://huggingface.co'
+    cache: 'indexeddb' | 'none'            // 'indexeddb'
+    cacheDbName: string                    // 'scaledp-models'
+    auth?: (repo: string) => Promise<string | undefined> | string | undefined
+    onProgress?: (progress: ModelProgress) => void
+    executionProviders: readonly string[]  // ['wasm']
+    numThreads: number                     // 0 = auto
+    ortWasmPaths?: string
+    pdf: { workerSrc?; cMapUrl?; standardFontDataUrl?; wasmUrl? }
+    tesseract: { workerUrl?; dataUrl? }
+    hf: { remoteHost?; remotePathTemplate? }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `modelHost` | Where repo-relative model files are fetched from. `/models` self-hosts. Absolute URLs in a catalogue bypass it. |
+| `cache` | `'indexeddb'` caches weights across visits; `'none'` refetches every time. |
+| `cacheDbName` | The IndexedDB database name. Change it to isolate two apps on one origin. |
+| `auth` | Called with a repo id; return a bearer token. Used for private Hugging Face repos. |
+| `onProgress` | Download and initialisation progress. See below. |
+| `executionProviders` | Priority order, e.g. `['webgpu', 'wasm']`. See [Execution providers](/docs/concepts/execution-providers). |
+| `numThreads` | `0` derives from `hardwareConcurrency`. Only has effect on a cross-origin-isolated page. |
+| `ortWasmPaths` | Where onnxruntime-web's `.wasm`/`.mjs` live. Defaults to a version-matched CDN. |
+| `pdf` | pdf.js worker and data files. |
+| `tesseract` | Tesseract worker and `traineddata`. |
+| `hf` | `@huggingface/transformers` host overrides, for proxying gated tokenizers. |
+
+## `ModelProgress`
+
+```ts
+interface ModelProgress {
+    repo: string
+    file: string
+    loaded: number
+    total: number
+    phase: 'downloading' | 'initializing' | 'ready'
+}
+```
+
+`total` can be `0` when neither the catalogue nor a `HEAD` request could supply a
+size — render an indeterminate state rather than dividing by it.
+
+```ts
+configure({
+    onProgress: ({ repo, file, loaded, total, phase }) => {
+        if (phase === 'ready') return clearProgress()
+        const what = (file || repo).split('/').pop()
+        setProgress(total > 0 ? `${phase} ${what} — ${Math.round((loaded / total) * 100)}%` : `${phase} ${what}…`)
+    },
+})
+```
+
+`onProgress` takes one callback, and it is set before React (or anything else)
+mounts. A common shape is to have it write into a module-level sink a component
+subscribes to, rather than rebuilding the config on every render.
+
+## In a worker
+
+`auth` and `onProgress` are functions and do not survive `postMessage`. The
+worker client's `configure` excludes them by type; set `auth` inside the worker
+entry and take progress from the client's own `onProgress`. See
+[Workers](/docs/concepts/workers).
+
+## Threads
+
+```ts
+import { defaultNumThreads, resolveNumThreads } from '@stabrise/scaledp'
+
+defaultNumThreads()   // max(1, min(4, hardwareConcurrency - 1)); 4 assumed if unknown
+resolveNumThreads()   // config.numThreads > 0 ? it : defaultNumThreads()
+```

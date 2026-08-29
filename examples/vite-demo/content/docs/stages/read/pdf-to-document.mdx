@@ -1,0 +1,74 @@
+---
+title: PdfToDocument
+description: A PDF's embedded text layer into one Document row per page, with word-level boxes — no OCR.
+---
+
+<StageMeta type="PdfToDocument" />
+
+Most PDFs already contain their text. Lifting it is instant, exact, and needs no
+model at all — so the first question for any PDF pipeline is whether OCR is
+needed.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToDocument, hasUsableTextLayer } from '@stabrise/scaledp/pdf'
+
+const rows = await new Pipeline([new PdfToDocument({ resolution: 300 })]).transform(file)
+
+const needsOcr = rows.filter((row) => !hasUsableTextLayer(row.document))
+```
+
+<TryIt stages={[
+    { type: 'PdfToDocument', options: { resolution: 300 } },
+]} />
+
+See [Skip OCR when the PDF already has text](/docs/recipes/skip-ocr-when-there-is-a-text-layer)
+for the full two-pass pipeline.
+
+## Coordinates are pixels, not points
+
+<Callout title="A deliberate divergence from Python">
+ScaleDP's `PdfDataToText` leaves boxes in PDF points. Here they come out in the
+same pixel space `PdfToImage` renders at, so text-layer boxes and OCR boxes are
+directly comparable — and drawing both on one page needs no conversion.
+</Callout>
+
+That is what `resolution` controls: it is not a render DPI here, it is the pixel
+space the boxes are expressed in. Match it to your `PdfToImage`.
+
+## Words versus runs
+
+pdf.js reports text as *runs* — a line, a styled span, whatever the producer
+emitted. `splitWords: true` (the default) splits those into word boxes by
+measuring the run's own font, which is what makes entity boxes usable. Turning
+it off gives run-level boxes, which are coarser but exactly what the PDF said.
+
+`Document.text` is the run texts joined by newlines either way, and
+`Document.type` is `'pdf'`.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `resolution` | `number` 36–600 | `300` | Pixel space the boxes are expressed in. Match PdfToImage to align them. |
+| `pageLimit` | `number` | `0` | 0 reads every page. |
+| `splitWords` | `boolean` | `true` | Split pdf.js line runs into word boxes. Off yields run-level boxes. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'content'` | Raw PDF bytes, normally the content column. |
+| `outputCol` | `string` | `'document'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

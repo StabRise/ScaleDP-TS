@@ -1,0 +1,148 @@
+---
+title: Troubleshooting
+description: The failures people actually hit, and what each one really means.
+---
+
+## "The models download every time"
+
+Almost always one of two things, and neither is a model download.
+
+**The cache is scoped per origin — including the port.** IndexedDB is
+partitioned by scheme, host and port, so `localhost:5173` and `localhost:5174`
+have entirely separate caches. Vite silently moves to the next free port when one
+is busy, so restarting a dev server while an old one is still running lands you
+on a new origin with nothing cached.
+
+```ts
+server: { port: 5173, strictPort: true }
+```
+
+**The onnxruntime-web runtime is not a model.** ORT fetches a ~5 MB `.wasm` at
+load time, served from a CDN and cached by the *browser's HTTP cache*, not by
+IndexedDB — so it shows up in the network panel on every load even when it is a
+hit. DevTools' "Disable cache" checkbox turns those hits back into real
+downloads.
+
+Check what is actually true rather than inferring it:
+
+```ts
+import { isCached } from '@stabrise/scaledp'
+import { getNerModel } from '@stabrise/scaledp/ner'
+import { isPresetCached } from '@stabrise/scaledp/ocr'
+
+console.log(location.origin, await isPresetCached('v6-small'))
+const model = getNerModel('gliner-multi-pii')
+if (model) console.log(await isCached({ repo: model.repo, files: model.files }))
+```
+
+## A column is empty and there is no error in the console
+
+That is the [error contract](/docs/concepts/error-contract) working. Read the
+`exception` field:
+
+```ts
+console.log(row.text.exception)
+// 'TesseractRecognizer: OcrError: column "regions" not found on the row'
+```
+
+Set `propagateError: true` on the stage while debugging to have it throw instead.
+
+## PDF pages render blank, or as boxes
+
+Missing pdf.js assets. `workerSrc` is required; without `cMapUrl` a CJK or
+symbol-font PDF renders blank, and without `standardFontDataUrl` a PDF relying on
+the base-14 fonts renders with substitutes.
+
+```ts
+configure({ pdf: { workerSrc: '/pdf.worker.min.mjs', cMapUrl: '/cmaps/', standardFontDataUrl: '/standard_fonts/' } })
+```
+
+## Session creation fails with an opaque error
+
+The onnxruntime-web `.mjs` loader and the `.wasm` binary are from different
+versions or build variants. Copy both from the same `node_modules/onnxruntime-web/dist`,
+or drop `ortWasmPaths` and let the version-matched CDN default apply.
+
+In Vite development, `ortWasmPaths` pointing at `public/` does not work: Vite
+refuses to `import` files from there and ORT loads its glue by dynamic import.
+It works in a production build.
+
+## The hosted demo says it is not cross-origin isolated
+
+Expected. This site is on GitHub Pages, which cannot set response headers, so
+`crossOriginIsolated` is false and onnxruntime-web runs its single-threaded WASM
+build. WebGPU needs none of that and is faster than threaded WASM anyway, so on
+a machine with a usable adapter nothing is lost.
+
+It is a property of the *host*, not of the library. Serve your own app from
+anywhere that can set COOP/COEP and threading works — see below.
+
+## `numThreads` has no effect
+
+The page is not cross-origin isolated. Threaded WASM needs `SharedArrayBuffer`,
+which needs both headers on the **page**:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+```ts
+import { isCrossOriginIsolated } from '@stabrise/scaledp/ocr'
+console.log(isCrossOriginIsolated())
+```
+
+Moving work into a worker does not escape this. WebGPU needs none of it.
+
+## `require-corp` broke my fonts and images
+
+Expected: it blocks every cross-origin subresource that is not CORS-fetched. Add
+`crossorigin` to the tags, serve the assets from your own origin, or decide that
+threaded WASM is not worth it and prefer WebGPU instead.
+
+## `Session already started`
+
+Two inferences at once. The pipeline and the worker host both serialise requests,
+so this means something is calling into a stage outside the pipeline, or two
+pipelines share a stage instance. Give each pipeline its own stages.
+
+## GLiNER2 returns no entities on WebGPU
+
+Known, and the reason that model is pinned to WASM. onnxruntime-web's WebGPU
+backend silently drops entities on the GLiNER2 architecture: its dynamic
+span-gather and `count_embed` ops fall back to CPU mid-graph, and the partition
+boundary corrupts data rather than erroring.
+
+## NER finds nothing on an all-caps scan
+
+Check `normaliseCasing` is on — it is by default. GLiNER1 models are cased, and a
+document set entirely in capitals looks unlike anything in training.
+
+If it is on and results are still poor, the labels are the next thing to look at:
+they *are* the prompt, so `'phone'` and `'phone_number'` are different queries.
+
+## Boxes are offset by a constant amount
+
+Two things to check. `PdfToDocument`'s `resolution` must match `PdfToImage`'s —
+it sets the pixel space its boxes are expressed in, not a render DPI. And if you
+are wiring a model by hand, letterbox padding must match what the model was
+trained with: `'end'` for Paddle and DBNet, `'center'` for YOLO.
+
+## Entity boxes drift further down the page
+
+Symptom of a character-to-box map built by assuming one separator per box —
+which is Python's behaviour, not this library's. If you see it here, the document
+text and the boxes came from different sources; entity boxes are mapped against
+the `Document` passed to `GlinerNer`, so pass it the same one the boxes are from.
+
+## Memory climbs across documents
+
+Sessions hold real memory — a GLiNER graph is hundreds of megabytes resident.
+Dispose pipelines you are done with:
+
+```ts
+await pipeline.dispose()
+```
+
+Better still, build one pipeline and reuse it across documents; `init()` then
+runs once rather than per file, which is also faster.

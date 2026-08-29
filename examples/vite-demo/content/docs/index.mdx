@@ -1,0 +1,62 @@
+---
+title: Introduction
+description: A document-processing pipeline that runs entirely in the browser — PDF rendering, text detection, OCR and entity recognition, with nothing uploaded.
+---
+
+`@stabrise/scaledp` reads PDFs and images in the browser. PDF rendering, text
+detection, OCR and named-entity recognition compose into one pipeline, and
+inference runs on [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/)
+over WebAssembly or WebGPU.
+
+It mirrors the [ScaleDP](https://github.com/StabRise/ScaleDP) Python library —
+same stages, same parameter names, same schemas — so a pipeline reads the same
+in both. What differs is the runtime: no Spark, no server, and **no document
+ever leaves the browser**, which is the point for anything sensitive.
+
+```ts
+import { Pipeline, configure } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+configure({ cache: 'indexeddb', pdf: { workerSrc: '/pdf.worker.min.mjs' } })
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new GlinerNer({ labels: ['person', 'organization', 'email', 'phone'] }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'GlinerNer', options: { inputCol: 'text', labels: ['person', 'organization', 'email', 'phone'] } },
+]} label="Run this on your own file" />
+
+## Where to start
+
+<Cards>
+  <Card title="Quickstart" href="/docs/quickstart" description="Install, configure, and read a page in about five minutes." />
+  <Card title="Concepts" href="/docs/concepts/pipelines-and-rows" description="Rows, columns, the stage lifecycle and the error contract." />
+  <Card title="Stages" href="/docs/stages" description="Every stage, what it reads and writes, and every parameter." />
+  <Card title="Recipes" href="/docs/recipes/ocr-a-scanned-pdf" description="Complete pipelines for the jobs people actually have." />
+</Cards>
+
+## What it is not
+
+It is not a hosted API, and it is not a wrapper around one. Everything runs in
+the tab, which sets the shape of the trade-offs: models are downloaded once and
+cached, the first run of a pipeline is slower than the tenth, and a 1.2 GB model
+is a real cost rather than someone else's problem. Those constraints are
+documented rather than hidden — see [Models and caching](/docs/concepts/models-and-cache).
+
+It also does not attempt to be the Python library. Several ScaleDP stages have
+no browser equivalent because their engines have no browser build, and a few
+Python behaviours are deliberately not reproduced. Both lists are in
+[Porting from Python ScaleDP](/docs/porting-from-python).
+
+## License
+
+AGPL-3.0-or-later, matching the Python library. Contact
+[StabRise](https://stabrise.com) for commercial licensing.
