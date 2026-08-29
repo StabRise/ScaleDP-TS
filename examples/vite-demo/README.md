@@ -282,9 +282,11 @@ The two accents are the false-colour language OCR tools already use. Cyan is
 what the machine *found*, magenta is what it *understood*, and the page uses
 the same two colours as the chrome, so the overlay and the interface agree.
 Boxes are drawn by chained `ImageDrawBoxes` stages -- one per colour -- rather
-than one, because a single stage takes one colour for all its sources. The
-built-in pipelines are written that way, and the chaining idiom is visible in the
-builder: each pass reads `annotated` and writes it again.
+than one, because a single stage takes one colour for all its sources. **Find
+PII** is written that way -- cyan for the words, magenta over them for the
+entities -- and the chaining idiom is visible in the builder: each pass reads
+`annotated` and writes it again. The pipelines that produce one colour use a
+single pass.
 
 The drop target carries registration marks at its corners, the crop marks on a
 press sheet, and a scan beam sweeps it while stages run. The beam is tied to

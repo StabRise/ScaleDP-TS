@@ -5,16 +5,15 @@
  * controls, now written out as data. They are read-only; "Save as" copies one
  * into the saved list.
  *
- * The colours match --detect and --entity in style.css. Boxes are drawn by
- * chained ImageDrawBoxes passes rather than one, because a single stage takes
- * one colour for all its sources -- so the page speaks the same false-colour
- * language as the interface: cyan for what was found, violet for a second
- * detector's view of it, magenta for what was understood.
+ * The colours match --detect and --entity in style.css, so the page speaks the
+ * same false-colour language as the interface: cyan for what was found, magenta
+ * for what was understood. Where both appear the boxes are drawn by chained
+ * ImageDrawBoxes passes rather than one, because a single stage takes one
+ * colour for all its sources.
  */
 
 export const BOX_COLOR = '#3fc9f5'
 export const ENTITY_COLOR = '#ff5c8a'
-export const DETECT_COLOR = '#9d8cff'
 
 export interface BuiltinPreset {
     id: string
@@ -46,35 +45,26 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
         id: 'builtin:detect-then-read',
         name: 'Detect, then read',
         summary:
-            'DBNet finds the regions, upside-down ones are turned, and Tesseract reads exactly those boxes. The path a rotated scan needs.',
+            'DBNet finds the regions and Tesseract reads exactly those boxes, turning any that are upside down. The path a rotated scan needs.',
         stages: [
             { type: 'PdfToImage', options: { resolution: 200 } },
             { type: 'DbnetOnnxDetector', options: { outputCol: 'detected' } },
-            {
-                type: 'LineOrientationDetector',
-                options: { inputCols: ['image', 'detected'], onlyRotated: false },
-            },
+            // No LineOrientationDetector: the recognizer classifies each crop
+            // itself -- `detectLineOrientation` is on by default -- so a
+            // separate pass would run the same model twice. The standalone
+            // stage is for putting in front of a recognizer that has no such
+            // seam, which is PaddleTextRecognizer.
             {
                 type: 'TesseractRecognizer',
-                options: { inputCols: ['oriented', 'detected'], keepFormatting: true },
+                options: { inputCols: ['image', 'detected'], keepFormatting: true },
             },
             {
                 type: 'ImageDrawBoxes',
                 options: {
-                    inputCols: ['oriented', 'text'],
+                    inputCols: ['image', 'text'],
                     outputCol: 'annotated',
                     color: BOX_COLOR,
                     lineWidth: 2,
-                },
-            },
-            {
-                type: 'ImageDrawBoxes',
-                options: {
-                    inputCols: ['annotated', 'detected'],
-                    outputCol: 'annotated',
-                    color: DETECT_COLOR,
-                    lineWidth: 2,
-                    padding: 3,
                 },
             },
         ],
@@ -111,4 +101,4 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
     },
 ]
 
-export const DEFAULT_PRESET_ID = 'builtin:read'
+export const DEFAULT_PRESET_ID = 'builtin:detect-then-read'
