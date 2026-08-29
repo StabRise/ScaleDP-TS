@@ -885,6 +885,34 @@ html[data-demo]:not(.dark) {
     color: var(--detect);
 }
 
+/* Sample documents, beside the drop target. Reuses .pill so a thing you can
+   pick looks the same wherever it appears. */
+.samples {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    margin-top: 0.8rem;
+}
+
+.samples__key {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--readout);
+}
+
+.pill:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.pill:disabled:hover {
+    border-color: var(--rule);
+    color: var(--label);
+}
+
 .pill--saved {
     display: inline-flex;
     align-items: center;

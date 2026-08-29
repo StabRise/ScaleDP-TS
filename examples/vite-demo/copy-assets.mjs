@@ -37,3 +37,9 @@ if (!existsSync(trained)) {
     await writeFile(trained, Buffer.from(await response.arrayBuffer()))
 }
 console.log('tesseract language data ready')
+
+// The sample documents the demo offers beside the drop target. They live at
+// examples/pdfs so the repository has one copy, and are served from this app
+// because fetching them cross-origin would be blocked by COEP require-corp.
+await cp('../pdfs', 'public/samples', { recursive: true })
+console.log('copied sample documents into public/samples/')

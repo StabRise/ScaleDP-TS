@@ -149,6 +149,22 @@ lockfiles: this one is what the published site is built from, and an unpinned
 install would let a minor release of fumadocs or React Router change the site
 with no commit behind it.
 
+## Something to run it on
+
+Drop or browse for your own PDF or image, or pick one of the samples beside the
+drop target. They live at `examples/pdfs`, so the repository keeps one copy, and
+`copy-assets.mjs` puts them in `public/samples/` — the browser has to fetch them
+same-origin because the page sets COEP `require-corp`.
+
+Each sample exercises something specific and says so on hover: rotated lines,
+signatures, a face, a scan with no text layer, Cyrillic. Picking one loads the
+file and nothing else — the stages stay yours. That is the same stance as the
+reader swap, which is announced rather than done quietly, so a sample that wants
+`SignatureDetector` tells you rather than rewriting your pipeline to suit itself.
+
+`src/catalog/samples.ts` is the list; adding a PDF to `examples/pdfs` and an
+entry there is the whole job.
+
 ## Building a pipeline
 
 The pipeline is the interface. Every stage the library exposes is in the **Add a

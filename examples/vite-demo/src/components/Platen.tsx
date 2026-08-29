@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { run } from '../lib/run'
 import { usePipeline } from '../store/pipeline'
 import { useRun } from '../store/run'
+import { Samples } from './Samples'
 
 interface Props {
     /** Model download progress, reported by configure()'s onProgress. */
@@ -74,6 +75,8 @@ export function Platen({ progress }: Props) {
                     accept(picked)
                 }}
             />
+
+            <Samples />
 
             <div className={`rerun${stale ? ' is-stale' : ''}`}>
                 {busy ? (
