@@ -21,7 +21,7 @@ new ImageDrawBoxes({
     { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
     { type: 'GlinerNer', options: { inputCol: 'text' } },
     { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'boxes_drawn', color: '#3fc9f5', lineWidth: 2 } },
-    { type: 'ImageDrawBoxes', options: { inputCols: ['boxes_drawn', 'ner'], outputCol: 'annotated', color: '#ff5c8a', lineWidth: 2, displayDataList: ['entity_group'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['boxes_drawn', 'ner'], outputCol: 'annotated', lineWidth: 2, displayDataList: ['entity_group'] } },
 ]} label="Open a two-pass overlay in the builder" />
 
 The first entry in `inputCols` is the image; every other entry is a box or entity
@@ -37,10 +37,11 @@ decimals.
 
 ## Colours
 
-`color: null` (the default) colours by group. The colour is a **stable hash** of
-the group name, so a given label is the same colour on every render — Python
-picks a random colour per run, which makes two renders of the same document
-impossible to compare.
+`color: null` (the default) colours by group, and the colour is **stable**: a
+given label is the same colour on every render, in the drawn boxes and in
+[`visualizeNer`](/docs/api/display)'s text, because both call `colorForGroup`.
+Python picks a random colour per run, which makes two renders of the same
+document impossible to compare.
 
 ```ts
 import { colorForGroup } from '@stabrise/scaledp'
@@ -48,10 +49,19 @@ import { colorForGroup } from '@stabrise/scaledp'
 colorForGroup('person')   // the same HSL string every time
 ```
 
+Every entity group the NER models in this library emit has a hue assigned by
+hand, spaced 18° from its neighbours. Hashing the name alone is not enough: over
+the default PII labels it gives `phone_number` and `date` the *same* hue and puts
+`person` one degree from `ip_address`, which defeats the point of colouring by
+group. Any hash over that many labels collides — it is the birthday problem, not
+a bad multiplier. Names for one concept share a hue on purpose, so `phone` and
+`phone_number` match. A group outside that table still gets a colour, hashed from
+its name, so a label nobody anticipated still works.
+
 One stage takes one `color` for all its sources, which is why a two-colour
 overlay is two chained passes — the second reading what the first wrote. That is
-also how the demo speaks its false-colour language: cyan for what was found,
-magenta for what was understood.
+how the demo draws detections in cyan and then leaves the entity pass unset, so
+each kind of PII gets its own colour.
 
 ## It is a terminal stage
 
@@ -75,7 +85,7 @@ rotated box.
 | `color` | `string` | `null` | One colour for every box. Unset colours by group instead. |
 | `filled` | `boolean` | `false` | Fill boxes as well as outlining them. |
 | `lineWidth` | `number` 0–20 | `1` | Line width |
-| `textSize` | `number` 4–72 | `12` | Text size |
+| `textSize` | `number` 4–72 | `24` | Text size |
 | `displayDataList` | `string[]` | `[]` | Rendered above each box, joined by ":". Pick "text" to read the OCR output back off the page. |
 | `padding` | `number` | `0` | Grow each box by this many pixels before drawing. |
 | `whiteList` | `string[]` | `[]` | Draw only these entity groups; empty draws all. |

@@ -16,8 +16,12 @@ import { type Box, createBox } from '../../src/schemas/box.js'
 import { createDetectorOutput } from '../../src/schemas/detector-output.js'
 import type { Document } from '../../src/schemas/document.js'
 import { createImage, type ScaleDpImage } from '../../src/schemas/image.js'
+import { createScriptOutput } from '../../src/schemas/script.js'
 
-async function page(marker = false): Promise<ScaleDpImage> {
+async function page(
+    marker = false,
+    paint?: (ctx: OffscreenCanvasRenderingContext2D) => void
+): Promise<ScaleDpImage> {
     const canvas = createCanvas(300, 200)
     const ctx = context2d(canvas)
     ctx.fillStyle = '#ffffff'
@@ -28,6 +32,7 @@ async function page(marker = false): Promise<ScaleDpImage> {
         ctx.fillStyle = '#000000'
         ctx.fillRect(0, 0, 10, 10)
     }
+    paint?.(ctx)
     return createImage({ data: await encodeImage(canvas), width: 300, height: 200 })
 }
 
@@ -54,11 +59,14 @@ const fake = {
     /** Return results in reverse, as ppu's reading-order sort may. */
     reverse: false,
     read: 0,
+    /** Every preset `getPaddleRecognizer` was asked for, in order. */
+    presets: [] as (string | undefined)[],
 }
 
 vi.mock('../../src/ocr/paddle-service.js', () => ({
-    getPaddleRecognizer: async () => ({
+    getPaddleRecognizer: async (preset?: string) => ({
         run: async (sheet: OffscreenCanvas, slots: PpuBox[]) => {
+            fake.presets.push(preset)
             fake.calls.push({
                 sheet: { width: sheet.width, height: sheet.height },
                 slots: slots.map((slot) => ({ ...slot })),
@@ -89,6 +97,7 @@ function stubPaddle(
     fake.scores = opts.scores ?? null
     fake.reverse = opts.reverse ?? false
     fake.read = 0
+    fake.presets = []
     return fake.calls
 }
 
@@ -100,9 +109,6 @@ function stubOrientation(stage: PaddleRecognizer, inverted: boolean) {
             classify: async () => (inverted ? '180_degree' : '0_degree'),
             dispose: async () => undefined,
         }
-        ;(stage as unknown as { recognition: unknown }).recognition = await (
-            await import('../../src/ocr/paddle-service.js')
-        ).getPaddleRecognizer()
     })
 }
 
@@ -181,7 +187,9 @@ describe('PaddleRecognizer', () => {
 
     it('matches results back by slot, not by position in the returned array', async () => {
         stubPaddle(['first', 'second', 'third'], { reverse: true })
-        const stage = new PaddleRecognizer()
+        // Region level, so each box is the detector's own and the mapping is
+        // readable without reasoning about padding.
+        const stage = new PaddleRecognizer({ boxLevel: 'region' })
 
         const document_ = await run(
             stage,
@@ -307,8 +315,221 @@ describe('PaddleRecognizer', () => {
         expect(document_.bboxes).toHaveLength(300)
     })
 
+    it('reads the line whole, then splits the reading into words', async () => {
+        const calls = stubPaddle(['TOTAL 42'])
+        // Two ink runs with a wide blank between them, inside one detector box.
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 20, 60, 30)
+            ctx.fillRect(140, 20, 40, 30)
+        })
+        const stage = new PaddleRecognizer({ padding: 0 })
+
+        const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 50 })], marked)
+
+        expect(stage.params.boxLevel).toBe('word')
+        // One inference for the whole line -- the unit the model reads best --
+        // and the words come from splitting what it returned.
+        expect(calls[0]?.slots).toHaveLength(1)
+        expect(document_.bboxes.map((box) => box.text)).toEqual(['TOTAL', '42'])
+        // Each word's box brackets its own ink, inside the detector's box.
+        const [first, second] = document_.bboxes
+        expect(first?.x).toBeGreaterThanOrEqual(10)
+        expect(second?.x).toBeGreaterThan((first?.x ?? 0) + (first?.width ?? 0))
+        expect((second?.x ?? 0) + (second?.width ?? 0)).toBeLessThanOrEqual(210)
+    })
+
+    it('brackets each word own ink, so a short word is not reported rotated', async () => {
+        stubPaddle(['TOTAL 42'])
+        // The second block is narrower than the crop is tall. Taking the full
+        // crop height would make it a *tall* rect, and Box normalises width to
+        // the longer side -- so an upright word would come back at 90 degrees.
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 25, 60, 20)
+            ctx.fillRect(140, 25, 40, 20)
+        })
+        const stage = new PaddleRecognizer({ padding: 0 })
+
+        const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 60 })], marked)
+
+        expect(document_.bboxes).toHaveLength(2)
+        for (const box of document_.bboxes) {
+            expect(box.angle).toBe(0)
+            // Trimmed to the ink, not stretched to the detector's line height.
+            expect(box.height).toBeLessThan(30)
+        }
+    })
+
+    it('merges spans when the model read fewer words than the ink shows', async () => {
+        // Two ink blocks, but the greedy CTC decode dropped the space. Merging
+        // is the safe direction: it widens a box, and never invents a word by
+        // cutting the string where the model did not.
+        stubPaddle(['TOTAL42'])
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 20, 60, 30)
+            ctx.fillRect(140, 20, 40, 30)
+        })
+
+        const document_ = await run(
+            new PaddleRecognizer({ padding: 0 }),
+            [createBox({ x: 10, y: 10, width: 200, height: 50 })],
+            marked
+        )
+
+        expect(document_.bboxes.map((box) => box.text)).toEqual(['TOTAL42'])
+        // One box covering both blocks, not one block with the whole string.
+        expect(document_.bboxes[0]?.width).toBeGreaterThan(100)
+    })
+
+    it('joins words back together when the model read more than the ink shows', async () => {
+        // One ink block read as three words -- routine on a signature, where the
+        // model emits a scatter of letters for one continuous stroke. Splitting
+        // the block to match would fabricate three boxes of identical size; the
+        // ink says one block, so one box comes back carrying all three words.
+        stubPaddle(['A BB CCC'])
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 20, 120, 30)
+        })
+
+        const document_ = await run(
+            new PaddleRecognizer({ padding: 0 }),
+            [createBox({ x: 10, y: 10, width: 200, height: 50 })],
+            marked
+        )
+
+        expect(document_.bboxes.map((box) => box.text)).toEqual(['A BB CCC'])
+        expect(document_.bboxes[0]?.x).toBeGreaterThanOrEqual(20)
+        expect((document_.bboxes[0]?.x ?? 0) + (document_.bboxes[0]?.width ?? 0)).toBeLessThanOrEqual(141)
+    })
+
+    it('keeps every ink span when the extra words are shared out', async () => {
+        // Two blocks, four words: each block keeps a box, and no measured ink is
+        // dropped just because the counts did not line up.
+        stubPaddle(['AA BB CC DD'])
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 20, 60, 30)
+            ctx.fillRect(140, 20, 60, 30)
+        })
+
+        const document_ = await run(
+            new PaddleRecognizer({ padding: 0 }),
+            [createBox({ x: 10, y: 10, width: 220, height: 50 })],
+            marked
+        )
+
+        expect(document_.bboxes).toHaveLength(2)
+        // Words stay in reading order, and every one is still reported.
+        expect(document_.bboxes.map((box) => box.text).join(' ')).toBe('AA BB CC DD')
+        // Two distinct measured spans, not one span cut in half.
+        const [first, second] = document_.bboxes
+        expect((second?.x ?? 0) - ((first?.x ?? 0) + (first?.width ?? 0))).toBeGreaterThan(20)
+    })
+
+    it('keeps one box per region when boxLevel is region', async () => {
+        const calls = stubPaddle(['TOTAL 42'])
+        const marked = await page(false, (ctx) => {
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(20, 20, 60, 30)
+            ctx.fillRect(140, 20, 40, 30)
+        })
+        const stage = new PaddleRecognizer({ boxLevel: 'region', padding: 0 })
+
+        const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 50 })], marked)
+
+        // One inference for the whole line, and the detector's box comes back.
+        expect(calls[0]?.slots).toHaveLength(1)
+        expect(document_.bboxes).toHaveLength(1)
+        expect(document_.bboxes[0]).toMatchObject({ text: 'TOTAL 42', x: 10, y: 10, width: 200, height: 50 })
+    })
+
+    it('carries the line skew onto each word it cuts out', async () => {
+        stubPaddle(['ONE TWO'])
+        const marked = await page(false, (ctx) => {
+            ctx.save()
+            ctx.translate(150, 100)
+            ctx.rotate((20 * Math.PI) / 180)
+            ctx.fillStyle = '#000000'
+            ctx.fillRect(-80, -15, 60, 30)
+            ctx.fillRect(20, -15, 60, 30)
+            ctx.restore()
+        })
+        const stage = new PaddleRecognizer({ padding: 0 })
+
+        const document_ = await run(
+            stage,
+            [createBox({ x: 60, y: 75, width: 180, height: 50, angle: 20 })],
+            marked
+        )
+
+        expect(document_.bboxes).toHaveLength(2)
+        // Each word inherits the line's angle rather than coming back upright,
+        // which is what an axis-aligned split of the envelope would have given.
+        for (const box of document_.bboxes) expect(Math.abs(box.angle - 20)).toBeLessThan(3)
+        // And they sit apart along the line, not on top of each other.
+        const [first, second] = document_.bboxes
+        expect((second?.x ?? 0) - (first?.x ?? 0)).toBeGreaterThan(40)
+    })
+
     it('rejects a bad inputCols or an unknown preset at construction', () => {
         expect(() => new PaddleRecognizer({ inputCols: ['image'] })).toThrow(/inputCols must be/)
         expect(() => new PaddleRecognizer({ preset: 'nope' })).toThrow(/Unknown OCR preset/)
+    })
+
+    describe('presetCol', () => {
+        const boxes = [createBox({ x: 10, y: 10, width: 80, height: 30 })]
+
+        it('takes the model from the column, per row', async () => {
+            stubPaddle(['a', 'b'])
+            const stage = new PaddleRecognizer({ preset: 'v6-small', presetCol: 'script' })
+            const image = await page()
+
+            // Two pages in one run, in different scripts: the point of the
+            // feature is that a single stage reads both with the right model.
+            await new Pipeline([stage]).transform([
+                {
+                    image,
+                    boxes: createDetectorOutput({ bboxes: boxes }),
+                    script: createScriptOutput({
+                        script: 'Cyrillic',
+                        presets: ['v5-cyrillic-mobile'],
+                    }),
+                },
+                {
+                    image,
+                    boxes: createDetectorOutput({ bboxes: boxes }),
+                    script: createScriptOutput({ script: 'Greek', presets: ['v5-greek-mobile'] }),
+                },
+            ])
+
+            expect(fake.presets).toEqual(['v5-cyrillic-mobile', 'v5-greek-mobile'])
+        })
+
+        it('falls back to the configured preset when the page was not classified', async () => {
+            stubPaddle(['a'])
+            const stage = new PaddleRecognizer({ preset: 'v5-latin-mobile', presetCol: 'script' })
+
+            await new Pipeline([stage]).transform([
+                {
+                    image: await page(),
+                    boxes: createDetectorOutput({ bboxes: boxes }),
+                    script: createScriptOutput({ exception: 'OSD failed' }),
+                },
+            ])
+
+            expect(fake.presets).toEqual(['v5-latin-mobile'])
+        })
+
+        it('pins the model when no column is named', async () => {
+            stubPaddle(['a'])
+            const stage = new PaddleRecognizer({ preset: 'v5-latin-mobile' })
+
+            await run(stage, boxes, await page())
+
+            expect(fake.presets).toEqual(['v5-latin-mobile'])
+        })
     })
 })

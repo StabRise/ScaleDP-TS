@@ -60,3 +60,34 @@ export function validatePreset(value: string): void {
 export function presetsForScript(script: string): OcrPreset[] {
     return PADDLE_OCR_PRESETS.filter((p) => p.scripts.includes(script))
 }
+
+/**
+ * The preset a row asks for, or `fallback` when it does not ask.
+ *
+ * `presetCol` names a column written by an upstream stage --
+ * `TesseractScriptDetector`, whose `ScriptOutput.presets` are ordered
+ * best-first, so the head is the pick. A plain preset id is accepted too, so a
+ * UI or a hand-written column can name one directly.
+ *
+ * Everything unusable falls back rather than throwing: no column, a failed
+ * detection, a script no preset here covers. A page read by the configured
+ * model is better than a page not read at all, and the detector's own output
+ * already carries why it had no answer.
+ */
+export function presetForRow(
+    row: Record<string, unknown>,
+    presetCol: string,
+    fallback: string = DEFAULT_OCR_PRESET
+): string {
+    if (!presetCol) return fallback
+
+    const value = row[presetCol]
+    if (typeof value === 'string') return isKnownPreset(value) ? value : fallback
+    if (typeof value !== 'object' || value === null) return fallback
+
+    const { presets } = value as { presets?: unknown }
+    if (!Array.isArray(presets)) return fallback
+
+    const pick = presets.find((entry) => typeof entry === 'string' && isKnownPreset(entry))
+    return typeof pick === 'string' ? pick : fallback
+}

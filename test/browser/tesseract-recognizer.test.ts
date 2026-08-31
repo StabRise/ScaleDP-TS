@@ -120,7 +120,8 @@ describe('TesseractRecognizer', () => {
 
     it('keeps each box geometry and attaches the recognized text', async () => {
         stubTesseract(['Invoice'])
-        const stage = new TesseractRecognizer({ detectLineOrientation: false })
+        // Region level: the detector's own box comes back, angle and all.
+        const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'region' })
         const document_ = await run(
             stage,
             [createBox({ x: 25, y: 40, width: 100, height: 24, angle: 12 })],
@@ -222,8 +223,8 @@ describe('TesseractRecognizer', () => {
             rect: { left, top, right, bottom },
         })
 
-        it('defaults to one box per region', async () => {
-            stubTesseract(['one two'])
+        it('defaults to one box per word', async () => {
+            stubTesseractItems([[word('one', 5, 3, 25, 13), word('two', 40, 3, 70, 13)]])
             const stage = new TesseractRecognizer({ detectLineOrientation: false })
             const document_ = await run(
                 stage,
@@ -231,7 +232,20 @@ describe('TesseractRecognizer', () => {
                 await page()
             )
 
-            expect(stage.params.boxLevel).toBe('region')
+            expect(stage.params.boxLevel).toBe('word')
+            expect(document_.bboxes).toHaveLength(2)
+            expect(document_.bboxes.map((box) => box.text)).toEqual(['one', 'two'])
+        })
+
+        it('still gives one box per region when asked', async () => {
+            stubTesseract(['one two'])
+            const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'region' })
+            const document_ = await run(
+                stage,
+                [createBox({ x: 100, y: 50, width: 200, height: 40 })],
+                await page()
+            )
+
             expect(document_.bboxes).toHaveLength(1)
             expect(document_.bboxes[0]).toMatchObject({ x: 100, y: 50, width: 200, height: 40 })
         })

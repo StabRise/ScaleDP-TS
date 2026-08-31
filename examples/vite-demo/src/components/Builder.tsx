@@ -7,6 +7,7 @@ import { useRun } from '../store/run'
 import { useUi } from '../store/ui'
 import { Presets } from './Presets'
 import { StageCard } from './StageCard'
+import { Transfer } from './Transfer'
 
 const GROUPS = ['Read', 'Detect', 'Transform', 'Recognise', 'Understand'] as const
 
@@ -43,6 +44,7 @@ export function Builder() {
     return (
         <section className="builder" aria-label="Pipeline">
             <Presets />
+            <Transfer />
 
             {stages.length > 0 && (
                 <div className="builder__bar">

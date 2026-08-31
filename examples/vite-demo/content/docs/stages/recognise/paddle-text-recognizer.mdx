@@ -77,6 +77,62 @@ const options = await presetsForScript(script.script)
 can read it — useful for offering the user a sensible default rather than
 guessing.
 
+## `boxLevel` decides how fine the output boxes are
+
+`word` is the default, matching `TesseractOcr`, `TesseractRecognizer` and
+`PaddleRecognizer`. PP-OCR's detector is line-level and it reads a crop into one
+undivided string with no geometry inside it, so the words have to be recovered —
+**the line is read whole first, and split afterwards.**
+
+```ts
+new PaddleTextRecognizer()                       // one box per word
+new PaddleTextRecognizer({ boxLevel: 'region' }) // one box per detected line
+```
+
+The recognition is identical either way: one inference per line, at the full
+context the model was trained on. `boxLevel` chooses only how finely the result
+is cut up, so word boxes cost nothing in text quality — the words are the line's
+own reading, split on the line's own spaces and matched to the ink gaps that a
+vertical projection of the crop finds. The reconciliation is described under
+[`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer#boxlevel-decides-how-fine-the-output-boxes-are),
+which shares the machinery.
+
+Every word carries its line's `score`: the model scored the line, not its parts.
+
+`region` is what this stage returned before the option existed, and it is the
+right choice for a script that does not separate words with spaces — Han,
+Japanese, Thai — where there are no gaps to split on. `wordGapRatio` tunes how
+wide a blank run has to be, relative to the line's height, before it counts as a
+space rather than letter spacing.
+
+<Callout type="warn">
+`strategy` applies to `region` only. It groups the regions PP-OCR recognised, and
+the word path runs its own detection instead — so setting one alongside
+`boxLevel: 'word'` does nothing.
+</Callout>
+
+## Letting the page choose the model
+
+`preset` is fixed when the pipeline is built, which is a problem for a document
+whose language you do not know in advance, or one that changes language partway
+through. `presetCol` names a column to take the model from instead, per page:
+
+```ts
+new Pipeline([
+    new PdfToImage(),
+    new TesseractScriptDetector(),                     // writes `script`
+    new PaddleTextRecognizer({ presetCol: 'script' }), // reads it
+])
+```
+
+[`TesseractScriptDetector`](/docs/stages/detect/tesseract-script-detector) writes
+the presets that can read each page, best-first, and this takes the head of that
+list. `preset` remains the fallback for any page it could not classify, so no
+page goes unread. Each preset the column lands on is downloaded and kept, so a
+document that swings between scripts pays for both models.
+
+A column holding a bare preset id works too, if something else is choosing.
+
 An unknown preset throws `RangeError` from the constructor.
 
 ## Switching presets mid-session
@@ -92,8 +148,11 @@ you are debugging why a language change did nothing.
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Pick the one matching your documents. |
+| `presetCol` | `string` | `''` | Take the model from a script-detection column, per page, instead of the fixed preset above. Empty pins it to the preset. Falls back to the preset whenever the column has no usable answer. |
 | `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |
-| `strategy` | `'per-box'` \| `'per-line'` \| `'cross-line'` | `'per-box'` | How the detected regions are grouped. It cannot subdivide them: the boxes are whatever the preset’s detector found, which is line-level. |
+| `boxLevel` | `'word'` \| `'region'` | `'word'` | Word matches the other recognizers. Region is PP-OCR’s line-level output, and the only sensible choice for a script that does not separate words with spaces. |
+| `wordGapRatio` | `number` 0.02–1 | `0.15` | How wide a blank run must be, relative to line height, to be a space rather than letter spacing. Word box level only. |
+| `strategy` | `'per-box'` \| `'per-line'` \| `'cross-line'` | `'per-box'` | How the detected regions are grouped, at region box level. It cannot subdivide them — that is what word box level does, and it makes this inert. |
 | `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
 | `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
 

@@ -1,7 +1,6 @@
-import { pipelineCode } from '@stabrise/scaledp/registry'
 import { useState } from 'react'
 import { BUILTIN_PRESETS } from '../catalog/presets'
-import { toDescriptors, usePipeline } from '../store/pipeline'
+import { usePipeline } from '../store/pipeline'
 import { useRun } from '../store/run'
 
 export function Presets() {
@@ -11,19 +10,9 @@ export function Presets() {
     const savePreset = usePipeline((state) => state.savePreset)
     const deletePreset = usePipeline((state) => state.deletePreset)
     const renamePreset = usePipeline((state) => state.renamePreset)
-    const stages = usePipeline((state) => state.stages)
-    const exportJson = usePipeline((state) => state.exportJson)
-    const importJson = usePipeline((state) => state.importJson)
     const markStale = useRun((state) => state.markStale)
 
     const [name, setName] = useState('')
-    const [transfer, setTransfer] = useState<string | null>(null)
-    const [problem, setProblem] = useState('')
-    const [view, setView] = useState<'json' | 'code'>('json')
-    const [copied, setCopied] = useState(false)
-
-    // What this pipeline looks like written by hand, for pasting into a project.
-    const code = pipelineCode(toDescriptors(stages))
 
     const load = (id: string) => {
         loadPreset(id)
@@ -102,101 +91,7 @@ export function Presets() {
                 >
                     Save
                 </button>
-                <span className="spacer" />
-                <button
-                    className="ghost"
-                    type="button"
-                    onClick={() => {
-                        setProblem('')
-                        setTransfer(transfer === null ? exportJson() : null)
-                    }}
-                >
-                    {transfer === null ? 'Export / import' : 'Close'}
-                </button>
             </div>
-
-            {transfer !== null && (
-                <div className="presets__transfer">
-                    <div className="tabs" role="tablist">
-                        <button
-                            className={`tab${view === 'json' ? ' is-on' : ''}`}
-                            type="button"
-                            role="tab"
-                            onClick={() => setView('json')}
-                        >
-                            JSON
-                        </button>
-                        <button
-                            className={`tab${view === 'code' ? ' is-on' : ''}`}
-                            type="button"
-                            role="tab"
-                            onClick={() => setView('code')}
-                        >
-                            TypeScript
-                        </button>
-                    </div>
-
-                    {view === 'json' ? (
-                        <>
-                            <textarea
-                                value={transfer}
-                                spellCheck={false}
-                                onChange={(event) => setTransfer(event.target.value)}
-                            />
-                            <div className="presets__row">
-                                <button
-                                    className="ghost"
-                                    type="button"
-                                    onClick={() => {
-                                        try {
-                                            importJson(transfer)
-                                            setTransfer(null)
-                                            setProblem('')
-                                            markStale('Pipeline')
-                                        } catch (error) {
-                                            setProblem((error as Error).message)
-                                        }
-                                    }}
-                                >
-                                    Import this
-                                </button>
-                                <button
-                                    className="ghost"
-                                    type="button"
-                                    onClick={() => void navigator.clipboard.writeText(transfer)}
-                                >
-                                    Copy
-                                </button>
-                                {problem && <span className="warn">{problem}</span>}
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            {/* Read-only: the pipeline is edited above, and a
-                                round trip from source back into stages would be
-                                a parser this demo has no business carrying. */}
-                            <pre className="code">{code}</pre>
-                            <div className="presets__row">
-                                <button
-                                    className="ghost"
-                                    type="button"
-                                    onClick={async () => {
-                                        await navigator.clipboard.writeText(code)
-                                        setCopied(true)
-                                        setTimeout(() => setCopied(false), 1200)
-                                    }}
-                                >
-                                    {copied ? 'Copied' : 'Copy code'}
-                                </button>
-                                <span className="presets__note">
-                                    Add a `configure({'{ … }'})` call for asset paths and caching before
-                                    running it.
-                                </span>
-                            </div>
-                        </>
-                    )}
-                </div>
-            )}
         </div>
     )
 }

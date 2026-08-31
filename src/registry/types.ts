@@ -14,7 +14,16 @@
  */
 
 /** What a column holds, well enough to check that a stage can read it. */
-export type ColumnKind = 'bytes' | 'image' | 'boxes' | 'document' | 'ner' | 'orientations' | 'box'
+export type ColumnKind =
+    | 'bytes'
+    | 'image'
+    | 'boxes'
+    | 'document'
+    | 'ner'
+    | 'orientations'
+    | 'box'
+    /** A `ScriptOutput`: which script a page is written in, and its rotation. */
+    | 'script'
 
 /** Which widget a parameter wants. */
 export type StageParamKind =

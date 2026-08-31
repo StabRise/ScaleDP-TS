@@ -10,6 +10,10 @@
  *   span_mask       bool   [batch, spans]
  * Output:
  *   logits          float32 [batch, words, maxWidth, entityCount]
+ *
+ * A `token_level` export is the same graph without `span_idx`/`span_mask`, and
+ * its logits are [batch, words, entityCount, 3] instead. Only the inputs the
+ * export actually declares are fed, and `span_mode` picks the decoder.
  */
 
 import { NerError } from '../core/errors.js'
@@ -17,7 +21,7 @@ import type { ModelFiles } from '../core/model-cache.js'
 import { createSession } from '../ocr/ort.js'
 import type { NerBackend, NerBackendLoadOptions } from './backend.js'
 import { type PretrainedTokenizerLike, toSpanTokenizer } from './tokenizer-types.js'
-import { type DecodedSpan, decodeSpans } from './vendor/span-decoder.js'
+import { type DecodedSpan, decodeSpans, decodeTokenSpans } from './vendor/span-decoder.js'
 import { type GlinerConfig, SpanProcessor } from './vendor/span-processor.js'
 
 /** Fallback when a repo's config omits max_width. */
@@ -30,6 +34,8 @@ const CONFIG_CANDIDATES = ['gliner_config.json', 'config.json']
 const MODEL_EXTENSIONS = ['.onnx', '.model']
 
 const OUTPUT_LOGITS = 'logits'
+/** `span_mode` of the models that emit start/end/inside triples. */
+const TOKEN_LEVEL = 'token_level'
 
 function readConfig(files: ModelFiles): GlinerConfig {
     for (const name of CONFIG_CANDIDATES) {
@@ -41,6 +47,7 @@ function readConfig(files: ModelFiles): GlinerConfig {
                 maxWidth: Number(parsed.max_width) || DEFAULT_MAX_WIDTH,
                 entToken: String(parsed.ent_token ?? DEFAULT_ENT_TOKEN),
                 sepToken: String(parsed.sep_token ?? DEFAULT_SEP_TOKEN),
+                spanMode: typeof parsed.span_mode === 'string' ? parsed.span_mode : undefined,
             }
         } catch {
             // Fall through to the next candidate rather than failing outright.
@@ -125,7 +132,8 @@ export class Gliner1Backend implements NerBackend {
         const logits = (outputs[OUTPUT_LOGITS] ?? outputs[session.outputNames[0] ?? ''])?.data
         if (!logits) throw new NerError('Model produced no logits', 'Gliner1Backend')
 
-        const [spans = []] = decodeSpans(
+        const decode = config.spanMode === TOKEN_LEVEL ? decodeTokenSpans : decodeSpans
+        const [spans = []] = decode(
             logits as Float32Array,
             {
                 batchSize: 1,

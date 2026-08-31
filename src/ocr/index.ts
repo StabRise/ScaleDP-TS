@@ -6,6 +6,7 @@
  *   PaddleRecognizer                           PP-OCR reading another detector's boxes
  *   DbnetOnnxDetector                          the direct ScaleDP mirror
  *   TesseractOcr                               mirrors ScaleDP's TesseractOcr stage
+ *   TesseractScriptDetector                    which script a page is written in, via OSD
  *
  * Requires the optional peer dependency `onnxruntime-web`, plus the engine
  * package you use.
@@ -85,8 +86,19 @@ export {
     presetsForScript,
     validatePreset,
 } from './presets.js'
-export type { DetectedScript } from './script-detect.js'
-export { detectScript, disposeScriptDetection, suggestPresets } from './script-detect.js'
+export type { DetectedScript, OsdReading, OsdSource } from './script-detect.js'
+export {
+    detectOsd,
+    detectScript,
+    disposeScriptDetection,
+    loadScriptDetection,
+    suggestPresets,
+} from './script-detect.js'
+export type { TesseractScriptDetectorParams } from './script-detect-stage.js'
+export {
+    TESSERACT_SCRIPT_DETECTOR_DEFAULTS,
+    TesseractScriptDetector,
+} from './script-detect-stage.js'
 export type { TesseractOcrParams } from './tesseract.js'
 export { DEFAULT_TESSDATA_URL, disposeTesseract, TESSERACT_OCR_DEFAULTS, TesseractOcr } from './tesseract.js'
 

@@ -187,6 +187,120 @@ html[data-demo]:not(.dark) {
     font-size: 11px;
 }
 
+/* One runtime control: its name, the control, and what it resolved to. */
+.rail__group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+}
+
+.rail__key {
+    color: var(--readout);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* Visible to a screen reader, out of the way of everything else. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* Segmented control: one bordered group, hairlines between the options. */
+.seg {
+    display: inline-flex;
+    /* A fieldset carries UA margin, padding and a border of its own. */
+    margin: 0;
+    padding: 0;
+    min-inline-size: 0;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.seg__item {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-left: 1px solid var(--rule);
+    padding: 0.2rem 0.6rem;
+    font: inherit;
+    color: var(--readout);
+    cursor: pointer;
+}
+
+.seg__item:first-child {
+    border-left: 0;
+}
+
+.seg__item:hover:not(:disabled) {
+    color: var(--bright);
+}
+
+.seg__item[aria-pressed='true'] {
+    background: var(--detect);
+    color: var(--housing);
+}
+
+.seg__item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.rail__check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--readout);
+    cursor: pointer;
+}
+
+.rail__check:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.rail__select {
+    appearance: none;
+    background: none;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 0.2rem 0.5rem;
+    font: inherit;
+    color: var(--readout);
+    cursor: pointer;
+}
+
+.rail__select:hover {
+    color: var(--bright);
+}
+
+/* The popup is painted by the OS, which does not inherit the page's palette. */
+.rail__select option {
+    background: var(--panel);
+    color: var(--label);
+}
+
+.rail__reload {
+    appearance: none;
+    background: none;
+    border: 1px solid var(--detect);
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font: inherit;
+    color: var(--detect);
+    cursor: pointer;
+}
+
 .cap {
     padding: 0.2rem 0.5rem;
     border: 1px solid var(--rule);
@@ -928,45 +1042,106 @@ html[data-demo]:not(.dark) {
 
 .presets__name { flex: 0 1 14rem; }
 
-.presets__transfer .tabs {
-    margin-bottom: 0.5rem;
+/* ── The pipeline as source ──────────────────────────────────────────────
+ *
+ * Its own card, below the preset controls. The code is the thing someone
+ * takes away from a playground, so it gets the room to be read rather than a
+ * strip at the bottom of another card.
+ */
+
+.transfer {
+    display: grid;
+    gap: 0.6rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
 }
 
-/* Read-only, so it is a <pre> rather than a textarea -- the pipeline is edited
-   in the cards above, not here. */
-.code {
+.transfer__head {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.code,
+.transfer__json {
     margin: 0;
-    max-height: 11rem;
-    overflow: auto;
+    width: 100%;
     font-family: var(--mono);
-    font-size: 11.5px;
-    line-height: 1.55;
+    font-size: 12px;
+    line-height: 1.65;
     color: var(--label);
     background: var(--raised);
     border: 1px solid var(--rule);
     border-radius: 6px;
-    padding: 0.6rem 0.7rem;
+    padding: 0.8rem 0.9rem;
+}
+
+/* Grows with the pipeline rather than sitting at a fixed height -- a
+   four-stage pipeline should not be read through a slot. The cap is against
+   the viewport, so a long one never pushes the stage cards off-screen. */
+.code {
+    min-height: 8rem;
+    max-height: min(30rem, 50vh);
+    overflow: auto;
     white-space: pre;
 }
 
-.presets__note {
-    font-size: 11.5px;
+.transfer__json {
+    height: min(24rem, 42vh);
+    resize: vertical;
+}
+
+.code code {
+    font: inherit;
+    color: inherit;
+    background: none;
+    padding: 0;
+}
+
+.transfer__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.transfer__note {
+    margin: 0;
+    font-size: 12px;
     color: var(--readout);
 }
 
-.presets__transfer textarea {
-    width: 100%;
-    height: 11rem;
+.transfer__note code {
     font-family: var(--mono);
     font-size: 11.5px;
-    line-height: 1.5;
     color: var(--label);
-    background: var(--raised);
-    border: 1px solid var(--rule);
-    border-radius: 6px;
-    padding: 0.6rem;
-    resize: vertical;
 }
+
+/* Syntax colours. Types take --detect and numbers --flag, the two accents the
+   rest of the page already uses, so the code reads as part of the instrument
+   rather than as a foreign editor theme. */
+:root {
+    --tok-keyword: #c792ea;
+    --tok-string: #8bd88b;
+    --tok-literal: #ff9d76;
+    --tok-key: #9bb4d4;
+}
+
+html:not(.dark) {
+    --tok-keyword: #7b3ab8;
+    --tok-string: #1d7a3d;
+    --tok-literal: #b3441a;
+    --tok-key: #4a5a72;
+}
+
+.tok--keyword { color: var(--tok-keyword); }
+.tok--string { color: var(--tok-string); }
+.tok--literal { color: var(--tok-literal); }
+.tok--number { color: var(--flag); }
+.tok--type { color: var(--detect); }
+.tok--key { color: var(--tok-key); }
 
 
 :where(html[data-demo]) select,

@@ -4,9 +4,9 @@ import { Platen } from './components/Platen'
 import { Rail } from './components/Rail'
 import { Results } from './components/Results'
 import { Trace } from './components/Trace'
-import { setProgressSink } from './lib/configure'
+import { type RuntimeReport, setProgressSink } from './lib/configure'
 
-export function App({ caps }: { caps: { label: string; on: boolean }[] }) {
+export function App({ report, onEngineChange }: { report: RuntimeReport; onEngineChange: () => void }) {
     const [progress, setProgress] = useState('')
 
     // configure() takes one onProgress callback and is called before React
@@ -17,7 +17,7 @@ export function App({ caps }: { caps: { label: string; on: boolean }[] }) {
     return (
         <>
             <div className="grain" aria-hidden="true" />
-            <Rail caps={caps} />
+            <Rail report={report} onEngineChange={onEngineChange} />
             <div className="sheet">
                 <section className="stage">
                     <h1 className="lede">

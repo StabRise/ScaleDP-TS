@@ -30,14 +30,53 @@ for (const entity of rows[0].ner.entities) {
     { type: 'PdfToImage', options: { resolution: 300 } },
     { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
     { type: 'GlinerNer', options: { inputCol: 'text', labels: ['person', 'organization', 'email', 'phone', 'address'] } },
-    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'annotated', color: '#ff5c8a', lineWidth: 2, displayDataList: ['entity_group'] } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'annotated', lineWidth: 2, displayDataList: ['entity_group'] } },
 ]} />
 
-<Callout type="warn" title="333 MB on first run">
+<Callout type="warn" title="580 MB on first run">
 That is the default `gliner-multi-pii` model. It downloads once into IndexedDB.
 See [Models and caching](/docs/concepts/models-and-cache#ner) for the alternatives
 and their sizes.
 </Callout>
+
+## Why every model here is fp16
+
+These are DeBERTa-backed GLiNER models, and 8-bit quantization wrecks their
+score calibration rather than merely blunting it. On one sentence — *"Dear John
+Smith, your account 4111 1111 1111 1111 is due on 3 March 2025."* — the default
+model reads:
+
+| Weights | `person` | `account_number` | `date` |
+| --- | --- | --- | --- |
+| fp32, 1157 MB | 1.00 | 0.99 | 1.00 |
+| **fp16, 580 MB** | **1.00** | **0.99** | **1.00** |
+| int8, 349 MB | 0.38 | 0.37 | 0.16 |
+
+The spans are identical in all three; only the scores collapse. Every int8 score
+sits under the default `threshold` of 0.5, so the stage finds the entities and
+then filters every one of them out — an empty result rather than an error.
+`gliner_medium-v2.1` at int8 is worse: fourteen spurious spans, none above 0.05.
+
+fp16 costs roughly 1.7x the download and matches fp32 exactly, so that is what
+the catalogue serves. The exception is `gliner-pii-edge`, which is small enough
+to ship at fp32 outright.
+
+## Two decoders
+
+`span_mode` in a model's `gliner_config.json` decides how its `logits` are read,
+and the stage picks the decoder from it:
+
+- **`markerV0` / `marker`** — `[batch, words, maxWidth, labels]`, one score per
+  enumerated (start word, width, label) triple. Every model here but one.
+- **`token_level`** — `[batch, words, labels, 3]`: per word and label, a start
+  score, an end score and an "inside" score. Nothing is enumerated; a span is a
+  start paired with a later end whose whole interior also scores, and it takes
+  the weakest of the three as its own score so a confident start cannot carry an
+  unconfident end. `gliner-pii-edge` is built this way.
+
+The difference is visible in the raw scores. On *"… on 3 March 2025."* the
+token-level model spikes its start channel to 0.93 on "3", its end channel to
+0.93 on "2025", and holds its inside channel above 0.92 across all three words.
 
 ## Labels are the prompt
 
@@ -98,7 +137,7 @@ are private StabRise repos and need `configure({ auth })` — see
 
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `model` | `'gliner-multi-pii'` \| `'gliner-small'` \| `'stabrise-pii-multi'` \| `'stabrise-pii-multi-g2'` | `'gliner-multi-pii'` | Registry id. Private repos need configure(&#123; auth &#125;). |
+| `model` | `'gliner-multi-pii'` \| `'gliner-pii-edge'` \| `'gliner-small'` \| `'gliner-multi'` \| `'stabrise-pii-multi'` \| `'stabrise-pii-multi-g2'` | `'gliner-multi-pii'` | Registry id. Private repos need configure(&#123; auth &#125;). |
 | `labels` | `string[]` | `['person', 'organization', 'location', 'email', 'phone_number', 'url', 'id', 'account_number', 'zip_code', 'address', 'ip_address', 'date', 'ssn', 'driver_license', 'passport', 'age', 'credit_card', 'medical_condition']` | GLiNER scores a label by its prompt text, so other wording asks a different question. |
 | `threshold` | `number` 0–1 | `0.5` | Minimum score an entity must reach. |
 | `whiteList` | `string[]` | `[]` | Keep only these entity groups; empty keeps everything. |

@@ -2,6 +2,14 @@
 
 import type { Box } from './box.js'
 
+/**
+ * Where an entity came from.
+ *
+ * A producer that does not track provenance leaves this unset, so the field is
+ * additive -- Python's `Entity` has no such column.
+ */
+export type EntitySource = 'model' | 'propagated'
+
 export interface Entity {
     entity_group: string
     score: number
@@ -11,6 +19,8 @@ export interface Entity {
     end: number
     /** Boxes the entity's characters fall inside; empty when there is no OCR layer. */
     boxes: Box[]
+    /** Set by `NerConsistency`: whether a model found this occurrence or it was propagated onto it. */
+    source?: EntitySource
 }
 
 export interface NerOutput {

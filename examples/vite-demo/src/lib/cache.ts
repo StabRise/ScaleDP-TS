@@ -34,6 +34,26 @@ export function cacheTarget(stage: StageNode): string {
     return typeof value === 'string' ? value : ''
 }
 
+/**
+ * Which of a cache-bearing enum's values are already downloaded.
+ *
+ * The single-value probe answers for the chosen model; this answers for all of
+ * them, so the dropdown can say which ones cost nothing to pick. Probes run
+ * together, and each is only a handful of IndexedDB key lookups.
+ */
+export async function probeCachedValues(type: string, values: readonly string[]): Promise<Set<string>> {
+    const spec = getStageSpec(type)
+    if (!spec?.cache) return new Set()
+
+    const results = await Promise.all(
+        values.map(async (value) => {
+            const state = await probeCache(type, value)
+            return state?.ready ? value : null
+        })
+    )
+    return new Set(results.filter((value): value is string => value !== null))
+}
+
 export async function probeCache(type: string, value: string): Promise<CacheState | null> {
     const spec = getStageSpec(type)
     if (!spec?.cache || !value) return null

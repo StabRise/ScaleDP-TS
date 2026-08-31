@@ -54,7 +54,7 @@ export const IMAGE_DRAW_BOXES_DEFAULTS: ImageDrawBoxesParams = Object.freeze({
     filled: false,
     color: null,
     lineWidth: 1,
-    textSize: 12,
+    textSize: 24,
     displayDataList: [] as string[],
     padding: 0,
     whiteList: [] as string[],
@@ -62,14 +62,77 @@ export const IMAGE_DRAW_BOXES_DEFAULTS: ImageDrawBoxesParams = Object.freeze({
 })
 
 /**
+ * Hues for the entity groups the NER models in this library actually emit.
+ *
+ * Hashing alone is not enough. On the default PII label set it gives
+ * `phone_number` and `date` the *same* hue, and puts `person` one degree from
+ * `ip_address` -- so the per-group colouring that is supposed to tell groups
+ * apart renders them identical. Any hash over 24 labels collides like this; it
+ * is the birthday problem, not a bad multiplier. The groups worth telling apart
+ * are a known, short list, so they are assigned by hand, evenly spaced 18\u00b0
+ * apart around the wheel. Two names for one concept -- `phone` and
+ * `phone_number` -- deliberately share a hue.
+ *
+ * Related groups sit in the same region of the wheel -- the address family in
+ * the greens, the account identifiers in the reds -- so a page reads as
+ * something more than confetti.
+ */
+const GROUP_HUES: Readonly<Record<string, number>> = Object.freeze({
+    // Numbers that identify a person or an account: reds through yellows.
+    credit_card: 0,
+    account_number: 18,
+    account: 18,
+    phone_number: 36,
+    phone: 36,
+    id: 54,
+    passport: 72,
+    driver_license: 90,
+    // Where something is: greens.
+    zip_code: 108,
+    postcode: 108,
+    location: 126,
+    address: 144,
+    // How to reach someone online: cyans.
+    url: 162,
+    email: 180,
+    // People and organizations: blues and violets.
+    person_title: 198,
+    person: 216,
+    person_name: 216,
+    ip_address: 234,
+    ip: 234,
+    technology: 252,
+    organization: 270,
+    // Everything else our models emit.
+    date: 288,
+    age: 306,
+    medical_condition: 324,
+    ssn: 342,
+})
+
+/** Lowercase, with '-' and spaces folded to '_', so PERSON-NAME finds person_name. */
+function normaliseGroup(name: string): string {
+    return name.toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+/**
  * A stable colour per group name.
  *
  * Python picks a random colour per group, which changes on every run and makes
- * two renders of the same document impossible to compare. Hashing the name
- * instead keeps 'PERSON' the same colour everywhere, and the fixed saturation
- * and lightness keep every colour legible on a white page.
+ * two renders of the same document impossible to compare. A fixed hue keeps
+ * 'PERSON' the same colour everywhere -- in the drawn boxes and in
+ * `visualizeNer`'s text, which call this same function -- and the fixed
+ * saturation and lightness keep every colour legible on a white page and under
+ * the white label text drawn on top of it.
+ *
+ * A group outside the table still gets a colour, hashed from its name. That is
+ * what makes a label nobody anticipated work; it is only the *known* groups
+ * that cannot be left to chance.
  */
 export function colorForGroup(name: string): string {
+    const known = GROUP_HUES[normaliseGroup(name)]
+    if (known !== undefined) return `hsl(${known}, 70%, 45%)`
+
     let hash = 0
     for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0
     return `hsl(${Math.abs(hash) % 360}, 70%, 45%)`

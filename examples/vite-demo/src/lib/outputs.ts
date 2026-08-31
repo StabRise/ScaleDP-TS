@@ -8,10 +8,10 @@
  * apart.
  */
 
-import type { Row } from '@stabrise/scaledp'
+import type { Row, ScriptOutput } from '@stabrise/scaledp'
 import type { DetectorOutput, Document, NerOutput, ScaleDpImage } from '@stabrise/scaledp/display'
 
-export type OutputKind = 'image' | 'document' | 'detector' | 'ner' | 'orientations'
+export type OutputKind = 'image' | 'document' | 'detector' | 'ner' | 'orientations' | 'script'
 
 export interface OutputColumn {
     name: string
@@ -32,6 +32,7 @@ function classify(value: unknown): OutputKind | null {
     }
     if (!isObject(value)) return null
     if ('entities' in value) return 'ner'
+    if ('script' in value && 'orientation_degrees' in value) return 'script'
     if ('data' in value && 'width' in value) return 'image'
     if ('bboxes' in value) return 'text' in value ? 'document' : 'detector'
     return null
@@ -57,3 +58,4 @@ export const asDocument = (column: OutputColumn): Document => column.value as Do
 export const asDetector = (column: OutputColumn): DetectorOutput => column.value as DetectorOutput
 export const asNer = (column: OutputColumn): NerOutput => column.value as NerOutput
 export const asOrientations = (column: OutputColumn): string[] => column.value as string[]
+export const asScript = (column: OutputColumn): ScriptOutput => column.value as ScriptOutput

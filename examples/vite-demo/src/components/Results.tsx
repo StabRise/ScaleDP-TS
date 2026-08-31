@@ -14,6 +14,7 @@ import {
     asImage,
     asNer,
     asOrientations,
+    asScript,
     type OutputColumn,
     outputsOf,
 } from '../lib/outputs'
@@ -186,6 +187,7 @@ function Panel({ column, all }: { column: OutputColumn; all: OutputColumn[] }) {
 
     if (column.kind === 'document') return <DocumentPanel column={column} all={all} />
     if (column.kind === 'ner') return <NerPanel column={column} all={all} />
+    if (column.kind === 'script') return <ScriptPanel column={column} />
     if (column.kind === 'detector') {
         const detected = asDetector(column)
         return (
@@ -198,6 +200,42 @@ function Panel({ column, all }: { column: OutputColumn; all: OutputColumn[] }) {
         )
     }
     return <Detached className="framed" node={showImage(asImage(column))} />
+}
+
+/**
+ * What OSD found. The presets are the reason the stage exists -- the script name
+ * on its own does not tell you which recognizer can read the page.
+ */
+function ScriptPanel({ column }: { column: OutputColumn }) {
+    const osd = asScript(column)
+    if (!osd.script) {
+        return (
+            <p className="panel__note">
+                No script identified. OSD needs a reasonable amount of text on the page.
+            </p>
+        )
+    }
+    return (
+        <>
+            <p className="panel__note">
+                {osd.script} — score {osd.script_confidence.toFixed(2)} · page rotated{' '}
+                {osd.orientation_degrees}°
+            </p>
+            {osd.presets.length > 0 ? (
+                <p className="panel__note">
+                    Presets that can read it:{' '}
+                    {osd.presets.map((preset, index) => (
+                        <span key={preset}>
+                            {index > 0 && ', '}
+                            <code>{preset}</code>
+                        </span>
+                    ))}
+                </p>
+            ) : (
+                <p className="panel__note">No PaddleOCR preset here reads {osd.script}.</p>
+            )}
+        </>
+    )
 }
 
 function DocumentPanel({ column, all }: { column: OutputColumn; all: OutputColumn[] }) {

@@ -3,6 +3,7 @@
     "pages": [
         "paddle-text-detector",
         "dbnet-onnx-detector",
+        "tesseract-script-detector",
         "yolo-onnx-detector",
         "signature-detector",
         "face-detector"

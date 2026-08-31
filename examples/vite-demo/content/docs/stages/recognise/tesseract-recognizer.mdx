@@ -35,14 +35,18 @@ helpful `OcrError` in `exception` rather than an empty result.
 
 ## `boxLevel` decides how fine the output boxes are
 
-`'region'` is ScaleDP's behaviour: one box per region the detector found,
-carrying everything read inside it. Since the detectors here are line-level, so
-are those boxes.
-
-`'word'` returns Tesseract's own word boxes instead, mapped back through the crop
+`'word'` is the default: Tesseract's own word boxes, mapped back through the crop
 — padding, `scaleFactor` and the rotation included — so a word inside a skewed
 line comes back skewed the same way. Python has no equivalent; the words were
 always in the response, only their geometry was being discarded.
+
+`'region'` restores ScaleDP's behaviour: one box per region the detector found,
+carrying everything read inside it. Since the detectors here are line-level, so
+are those boxes.
+
+[`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) takes the same
+parameter with the same default, so swapping the engine does not change how
+finely the page comes back.
 
 <Callout>
 `scoreThreshold` gates the **region** in both modes, so switching `boxLevel`
@@ -93,7 +97,7 @@ the recognition confidence, as the name says.
 | --- | --- | --- | --- |
 | `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the detector output whose regions to read. |
 | `lang` | `string[]` | `['eng']` | Tesseract language codes, e.g. eng or eng, deu. Each needs its traineddata file. |
-| `boxLevel` | `'region'` \| `'word'` | `'region'` | The detectors here are line-level, so “region” gives line boxes. Pick “word” to get one box per word instead. |
+| `boxLevel` | `'word'` \| `'region'` | `'word'` | Word boxes are Tesseract’s own. Pick “region” to get one box per region the detector found instead, which is what Python ScaleDP returns. |
 | `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
 | `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
 | `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |

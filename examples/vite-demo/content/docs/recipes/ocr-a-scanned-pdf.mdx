@@ -75,6 +75,10 @@ const detected = await detectScript(canvas)
 const options = detected ? await presetsForScript(detected.script) : []
 ```
 
+Or run it as a stage —
+[`TesseractScriptDetector`](/docs/stages/detect/tesseract-script-detector) —
+which puts the same answer in a column alongside the page.
+
 **Skewed or rotated text.** PaddleOCR detects internally and does not handle
 rotation especially well. Use a real detector and
 [a separate recognizer](/docs/recipes/detect-then-recognise).

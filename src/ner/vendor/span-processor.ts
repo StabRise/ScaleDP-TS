@@ -10,6 +10,12 @@ import { type SplitWord, splitWords } from './splitter.js'
 const PAD = 0
 
 export interface GlinerConfig {
+    /**
+     * `span_mode` from the repo's gliner_config.json. Selects the decoder:
+     * 'token_level' reads start/end/inside triples, everything else reads
+     * enumerated spans.
+     */
+    spanMode?: string
     maxWidth: number
     entToken: string
     sepToken: string

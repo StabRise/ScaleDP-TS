@@ -50,11 +50,29 @@ export interface ScaleDpConfig {
         standardFontDataUrl?: string
         wasmUrl?: string
     }
-    /** Tesseract assets. */
+    /**
+     * Tesseract assets.
+     *
+     * Two engines, two schemes. Recognition runs on tesseract-wasm, which takes
+     * one worker URL and fetches `<lang>.traineddata` itself. Script detection
+     * runs on tesseract.js, which resolves a worker script, a core directory and
+     * a *directory* of models, and appends `.gz` unless told otherwise -- so its
+     * paths cannot be folded into `dataUrl` and are named separately.
+     *
+     * Leave the `osd*` keys unset to let tesseract.js use its own CDN.
+     */
     tesseract: {
         workerUrl?: string
         /** Base URL for `<lang>.traineddata` files. */
         dataUrl?: string
+        /** tesseract.js worker script, for OSD. */
+        osdWorkerPath?: string
+        /** tesseract.js-core directory, for OSD. */
+        osdCorePath?: string
+        /** Directory holding `osd.traineddata`, for OSD. */
+        osdLangPath?: string
+        /** Whether `osdLangPath` serves `.traineddata.gz`. tesseract.js defaults to true. */
+        osdGzip?: boolean
     }
     /** Hugging Face host overrides, for proxying gated repos through your origin. */
     hf: {

@@ -13,23 +13,33 @@
  */
 
 import { OcrError } from '../core/errors.js'
-import { context2d, createCanvas, cropBox, decodeImage, resize, rotate180 } from '../core/image.js'
+import { decodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
-import { type Box, isRotated } from '../schemas/box.js'
+import type { Box } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
 import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-orientation.js'
-import { getPaddleRecognizer, type PaddleRecognitionService } from './paddle-service.js'
-import { DEFAULT_OCR_PRESET, validatePreset } from './presets.js'
+import { getPaddleRecognizer } from './paddle-service.js'
+import { readRegions } from './paddle-words.js'
+import { DEFAULT_OCR_PRESET, presetForRow, validatePreset } from './presets.js'
 
 export interface PaddleRecognizerParams extends BaseStageParams {
     /** [imageColumn, boxColumn]. */
     inputCols: string[]
     /** Language/script preset. See PADDLE_OCR_PRESETS. */
     preset: string
+    /**
+     * Column naming the preset to use for *this row*, overriding `preset`.
+     *
+     * Empty by default, which pins the model to `preset`. Point it at a
+     * `TesseractScriptDetector` column and the model follows the page, which is
+     * the only way a mixed-script document gets the right recogniser on every
+     * page. Anything the column cannot answer falls back to `preset`.
+     */
+    presetCol: string
     /** Resize the page by this factor before cropping. */
     scaleFactor: number
     /** Grow each box before cropping. ScaleDP hardcodes 5. */
@@ -53,13 +63,45 @@ export interface PaddleRecognizerParams extends BaseStageParams {
     onlyRotated: boolean
     oriModel: string
     /**
-     * Recover inter-word spaces the greedy CTC decode drops. Helps Latin text
-     * where the model collapses word gaps; can add spurious ones in dense
-     * symbol runs.
+     * Insert a space wherever the space class scores above 0.001.
+     *
+     * Off, and worth leaving off. It is not what puts spaces between words:
+     * ppu already does that unconditionally from the *geometry* of the decode,
+     * spacing characters against the median inter-character gap. This is a
+     * second, far cruder pass on top, and 0.001 is a threshold nearly every
+     * timestep clears on anything but pristine input -- so a small or noisy
+     * line comes back as `s e n s i t i v e`.
+     *
+     * It can recover a genuinely collapsed word gap on clean, large text. That
+     * is the only case it is for.
      */
     spaceRecovery: boolean
     /** Crops per batched inference. 1 disables batching. */
     recBatchSize: number
+    /**
+     * Granularity of the boxes returned.
+     *
+     * 'word' is the default, so the boxes bracket words the way
+     * `TesseractRecognizer` does. PaddleOCR returns one string per crop with no
+     * geometry inside it, so the words are recovered by splitting the region's
+     * *reading* -- see `paddle-words.ts` for why that beats cutting first.
+     *
+     * 'region' keeps one box per region the detector found, carrying everything
+     * read inside it. The recognition is identical either way; this chooses only
+     * how finely the result is cut up, and 'region' is the only sensible choice
+     * for a script that does not separate words with spaces.
+     */
+    boxLevel: 'region' | 'word'
+    /**
+     * How wide a blank column run must be, relative to the crop's height, to
+     * count as a space rather than a gap between letters.
+     *
+     * Measured across 18-64px text, letter gaps stay under 0.1 of the crop's
+     * height while word spaces land at 0.20-0.23, so the two separate cleanly
+     * and 0.15 sits in the middle of the window at every size. Raise it if
+     * words are being cut in half, lower it if spaces are being missed.
+     */
+    wordGapRatio: number
 }
 
 export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze({
@@ -69,6 +111,7 @@ export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze(
     outputCol: 'text',
     keepInputData: true,
     preset: DEFAULT_OCR_PRESET,
+    presetCol: '',
     scaleFactor: 1,
     padding: 5,
     scoreThreshold: 0.5,
@@ -79,6 +122,8 @@ export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze(
     oriModel: DEFAULT_ORIENTATION_MODEL,
     spaceRecovery: false,
     recBatchSize: 6,
+    boxLevel: 'word' as 'region' | 'word',
+    wordGapRatio: 0.15,
 })
 
 /**
@@ -87,8 +132,6 @@ export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze(
  * Well under every browser's canvas ceiling, and low enough that a sheet stays
  * cheap to allocate. A single crop taller than this gets a sheet to itself.
  */
-const MAX_SHEET_HEIGHT = 8192
-
 function boxesOf(source: unknown): Box[] {
     if (typeof source !== 'object' || source === null) return []
     return (source as DetectorOutput).bboxes ?? []
@@ -98,7 +141,6 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
     readonly name = 'PaddleRecognizer'
 
     private orientation: LineOrientationClassifier | null = null
-    private recognition: PaddleRecognitionService | null = null
 
     constructor(options: Partial<PaddleRecognizerParams> = {}) {
         super(
@@ -115,7 +157,12 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
 
     override async init(): Promise<void> {
         const { preset, recBatchSize, spaceRecovery, detectLineOrientation, oriModel } = this.params
-        this.recognition ??= await getPaddleRecognizer(preset, { recBatchSize, spaceRecovery })
+        // Warms the configured preset. When `presetCol` overrides it per row,
+        // `apply` asks for that one instead. Nothing is held on the instance:
+        // paddle-service caches a session per preset, so asking again is a map
+        // lookup, and holding one here would only pin the wrong model once the
+        // column starts choosing.
+        await getPaddleRecognizer(preset, { recBatchSize, spaceRecovery })
         if (detectLineOrientation) {
             this.orientation ??= new LineOrientationClassifier(oriModel)
         }
@@ -131,6 +178,8 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
             lineTolerance,
             detectLineOrientation,
             onlyRotated,
+            boxLevel,
+            wordGapRatio,
         } = this.params
         const [imageCol, boxCol] = inputCols as [string, string]
         const image = row[imageCol] as ScaleDpImage | undefined
@@ -155,54 +204,33 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
         }
 
         await this.init()
-        const recognition = this.recognition as PaddleRecognitionService
+        const { preset, presetCol, recBatchSize, spaceRecovery } = this.params
+        const recognition = await getPaddleRecognizer(presetForRow(row, presetCol, preset), {
+            recBatchSize,
+            spaceRecovery,
+        })
         const bitmap = await decodeImage(image.data)
 
-        // ScaleDP resizes the *page* and scales each box to index into it, which
-        // is how a small line is handed to the model at a readable size. The
-        // boxes it reports back are the originals, untouched -- so nothing here
-        // has to map coordinates out again.
-        const canvas = scaleFactor === 1 ? bitmap : resize(bitmap, scaleFactor)
-
-        // Kept index-aligned: `crops[i]` is what `kept[i]` became.
-        const kept: Box[] = []
-        const crops: OffscreenCanvas[] = []
-
+        let bboxes: Box[]
         try {
-            for (const box of boxesOf(source)) {
-                ctx.signal?.throwIfAborted()
-
-                // Straightens rotated boxes rather than taking their envelope,
-                // which is what makes a skewed line readable at all -- and what
-                // ppu's own cropping, being axis-aligned, cannot do.
-                let crop = cropBox(canvas, box, { scaleFactor, padding })
-
-                let inverted = false
-                if (detectLineOrientation && this.orientation) {
-                    inverted = (await this.orientation.classify(crop)) === '180_degree'
-                    if (inverted) crop = rotate180(crop)
-                }
-
-                // ScaleDP's onlyRotated: an upright, right-way-up box was
-                // already handled by whatever pass produced it.
-                if (onlyRotated && !isRotated(box) && !inverted) continue
-
-                kept.push(box)
-                crops.push(crop)
-            }
+            bboxes = await readRegions(
+                recognition,
+                bitmap,
+                boxesOf(source),
+                {
+                    scaleFactor,
+                    padding,
+                    boxLevel,
+                    wordGapRatio,
+                    orientation: detectLineOrientation ? this.orientation : null,
+                    onlyRotated,
+                },
+                ctx
+            )
         } finally {
             bitmap.close()
         }
-
-        const read = await recognizeCrops(recognition, crops, ctx)
-
-        const bboxes: Box[] = []
-        for (const [i, box] of kept.entries()) {
-            const result = read[i]
-            if (!result?.text) continue
-            if (result.score < scoreThreshold) continue
-            bboxes.push({ ...box, text: result.text, score: result.score })
-        }
+        bboxes = bboxes.filter((box) => box.score >= scoreThreshold)
 
         return createDocument({
             path: String(row[this.params.pathCol] ?? image.path),
@@ -223,75 +251,7 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
     override async dispose(): Promise<void> {
         await this.orientation?.dispose()
         this.orientation = null
-        // The recognition session is shared per preset and owned by
-        // paddle-service; `disposePaddleServices()` is what releases it.
-        this.recognition = null
+        // The recognition sessions are shared per preset and owned by
+        // paddle-service; `disposePaddleServices()` is what releases them.
     }
-}
-
-interface ReadResult {
-    text: string
-    score: number
-}
-
-/**
- * Read every crop, batching across them.
- *
- * ppu batches `recBatchSize` crops into a single inference, but only within one
- * `run()` call, and `run()` cuts its crops out of the one canvas it is given. So
- * the crops are stacked onto sheet canvases -- each at x 0, one below the last --
- * and handed back as the boxes to read. ppu re-crops exactly those rects, so the
- * unused width beside a narrow crop is never sampled. Calling `run()` once per
- * box would instead pay one inference, and one main-thread yield, per line.
- *
- * Results come back index-aligned to `crops`; a crop ppu rejected or did not
- * return is left `undefined`. `run()` sorts what it returns into reading order,
- * so results are matched on the slot's y offset, never on array position.
- */
-async function recognizeCrops(
-    recognition: PaddleRecognitionService,
-    crops: readonly OffscreenCanvas[],
-    ctx: StageContext
-): Promise<(ReadResult | undefined)[]> {
-    const out: (ReadResult | undefined)[] = new Array(crops.length)
-
-    for (let start = 0; start < crops.length; ) {
-        ctx.signal?.throwIfAborted()
-
-        // Take as many crops as fit on one sheet, but always at least one, so a
-        // crop taller than the ceiling is still read.
-        let end = start
-        let height = 0
-        let width = 0
-        while (end < crops.length) {
-            const crop = crops[end] as OffscreenCanvas
-            if (end > start && height + crop.height > MAX_SHEET_HEIGHT) break
-            height += crop.height
-            width = Math.max(width, crop.width)
-            end++
-        }
-
-        const sheet = createCanvas(width, height)
-        const sheetCtx = context2d(sheet)
-        const slots: { x: number; y: number; width: number; height: number }[] = []
-        const atOffset = new Map<number, number>()
-        let offset = 0
-        for (let i = start; i < end; i++) {
-            const crop = crops[i] as OffscreenCanvas
-            sheetCtx.drawImage(crop, 0, offset)
-            slots.push({ x: 0, y: offset, width: crop.width, height: crop.height })
-            atOffset.set(offset, i)
-            offset += crop.height
-        }
-
-        const results = await recognition.run(sheet as never, slots, undefined, 'per-box')
-        for (const result of results) {
-            const index = atOffset.get(result.box.y)
-            if (index !== undefined) out[index] = { text: result.text.trim(), score: result.confidence }
-        }
-
-        start = end
-    }
-
-    return out
 }

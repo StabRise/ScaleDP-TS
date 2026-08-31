@@ -44,14 +44,14 @@ antialiased edges that a tight box leaves visible.
 
 ## Reviewing before redacting
 
-Redaction is not something to do on trust. Draw the entities in a visible colour
-first, with their labels, and let a human confirm:
+Redaction is not something to do on trust. Draw the entities first, with their
+labels, and let a human confirm. Leaving `color` unset gives each group its own
+colour, which is what makes "why is that box there" answerable at a glance:
 
 ```ts
 new ImageDrawBoxes({
     inputCols: ['image', 'ner'],
     outputCol: 'review',
-    color: '#ff5c8a',
     lineWidth: 2,
     displayDataList: ['entity_group', 'score'],
 })

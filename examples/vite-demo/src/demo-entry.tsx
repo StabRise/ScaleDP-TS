@@ -11,12 +11,18 @@ import { useEffect } from 'react'
 import { useSearchParams } from 'react-router'
 import { App } from './app'
 import './style.css'
-import type { Capability } from './lib/configure'
+import type { RuntimeReport } from './lib/configure'
 import { PIPELINE_PARAM, PRESET_PARAM } from './lib/deeplink'
 import { decodePipeline } from './lib/deeplink-decode'
 import { nodesFrom, usePipeline } from './store/pipeline'
 
-export default function DemoApp({ caps }: { caps: Capability[] }) {
+export default function DemoApp({
+    report,
+    onEngineChange,
+}: {
+    report: RuntimeReport
+    onEngineChange: () => void
+}) {
     const [searchParams, setSearchParams] = useSearchParams()
     const replaceStages = usePipeline((state) => state.replaceStages)
     const loadPreset = usePipeline((state) => state.loadPreset)
@@ -39,5 +45,5 @@ export default function DemoApp({ caps }: { caps: Capability[] }) {
         setSearchParams({}, { replace: true })
     }, [searchParams, setSearchParams, replaceStages, loadPreset])
 
-    return <App caps={caps} />
+    return <App report={report} onEngineChange={onEngineChange} />
 }

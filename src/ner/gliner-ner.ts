@@ -7,11 +7,11 @@
  */
 
 import { getConfig } from '../core/config.js'
+import { boxesForRange, buildCharToBoxMap } from '../core/entities.js'
 import { NerError } from '../core/errors.js'
 import { ensureModelFiles } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
-import type { Box } from '../schemas/box.js'
 import type { Document } from '../schemas/document.js'
 import { createNerOutput, type Entity, type NerOutput } from '../schemas/entity.js'
 import type { NerBackend } from './backend.js'
@@ -28,6 +28,10 @@ import { Gliner2Backend } from './gliner2-backend.js'
 import { DEFAULT_NER_MODEL_ID, DEFAULT_PII_LABELS, getNerModel } from './registry.js'
 import { loadTokenizer } from './tokenizer.js'
 import type { DecodedSpan } from './vendor/span-decoder.js'
+
+// Moved to core so the engine-free NerConsistency stage can share them; still
+// exported here, where they have always been part of the /ner surface.
+export { boxesForRange, buildCharToBoxMap }
 
 export interface GlinerNerParams extends BaseStageParams {
     /** Registry id, e.g. 'gliner-multi-pii'. */
@@ -60,42 +64,6 @@ export const GLINER_NER_DEFAULTS: GlinerNerParams = Object.freeze({
     chunkStride: DEFAULT_CHUNK_STRIDE,
     normaliseCasing: true,
 })
-
-/**
- * Map each character of the joined document text to the box it came from.
- *
- * Built from the *actual* text the OCR stage produced rather than assuming one
- * separator per box. Python derives the mapping from `len(box.text) + 1`, which
- * silently drifts whenever `keepFormatting` inserted several spaces or a
- * newline, shifting every entity's boxes after the first wide gap.
- */
-export function buildCharToBoxMap(text: string, boxes: readonly Box[]): Int32Array {
-    const mapping = new Int32Array(text.length).fill(-1)
-    let cursor = 0
-
-    for (const [index, box] of boxes.entries()) {
-        if (box.text.length === 0) continue
-        const found = text.indexOf(box.text, cursor)
-        if (found === -1) continue
-        mapping.fill(index, found, found + box.text.length)
-        cursor = found + box.text.length
-    }
-    return mapping
-}
-
-/** Boxes a character range touches, in document order and without repeats. */
-export function boxesForRange(mapping: Int32Array, boxes: readonly Box[], start: number, end: number): Box[] {
-    const seen = new Set<number>()
-    const out: Box[] = []
-    for (let i = Math.max(0, start); i < Math.min(end, mapping.length); i++) {
-        const index = mapping[i] as number
-        if (index < 0 || seen.has(index)) continue
-        seen.add(index)
-        const box = boxes[index]
-        if (box) out.push(box)
-    }
-    return out
-}
 
 export class GlinerNer extends Stage<GlinerNerParams> {
     readonly name = 'GlinerNer'

@@ -20,6 +20,7 @@
         "fumadocs-core": "^16.15.4",
         "fumadocs-mdx": "^15.4.0",
         "fumadocs-ui": "^16.15.4",
+        "isbot": "^5",
         "lucide-react": "^1.35.0",
         "onnxruntime-web": "^1.29.0",
         "pdfjs-dist": "^6.2.108",
@@ -28,8 +29,8 @@
         "react-dom": "^19.2.8",
         "react-router": "^8.3.1",
         "tesseract-wasm": "^0.11.0",
-        "zustand": "^5.0.15",
-        "isbot": "^5"
+        "tesseract.js": "^7.0.0",
+        "zustand": "^5.0.15"
     },
     "devDependencies": {
         "@react-router/dev": "^8.3.1",

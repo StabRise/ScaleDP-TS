@@ -1,11 +1,14 @@
 import { getStageSpec } from '@stabrise/scaledp/registry'
 import { useEffect, useState } from 'react'
-import { type CacheState, cacheTarget, probeCache } from '../lib/cache'
+import { type CacheState, cacheTarget, probeCache, probeCachedValues } from '../lib/cache'
 import { type Column, writes } from '../lib/columns'
 import { type StageNode, usePipeline } from '../store/pipeline'
 import { useRun } from '../store/run'
 import { useUi } from '../store/ui'
 import { ParamField } from './ParamField'
+
+/** Stable identity, so the initial state does not re-trigger the effect. */
+const EMPTY: ReadonlySet<string> = new Set()
 
 interface Props {
     stage: StageNode
@@ -48,6 +51,27 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
             live = false
         }
     }, [stage.type, target, runStatus])
+
+    // The same question asked of every option, so the dropdown can mark the
+    // ones already downloaded. Keyed on the stage type rather than the chosen
+    // value: the option list does not change when the choice does, and the set
+    // is refreshed after a run, when one more of them has become cached.
+    const [cachedValues, setCachedValues] = useState<ReadonlySet<string>>(EMPTY)
+    const cacheParam = spec?.cache?.param
+    const cacheOptions = spec?.params.find((param) => param.key === cacheParam)?.options
+    useEffect(() => {
+        if (runStatus === 'running' || !cacheOptions) return
+        let live = true
+        void probeCachedValues(
+            stage.type,
+            cacheOptions.map((option) => option.value)
+        ).then((values) => {
+            if (live) setCachedValues(values)
+        })
+        return () => {
+            live = false
+        }
+    }, [stage.type, cacheOptions, runStatus])
 
     if (!spec) {
         return (
@@ -176,6 +200,7 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
                                 defaults={spec.defaults}
                                 onChange={change}
                                 onReset={reset}
+                                cached={param.key === cacheParam ? cachedValues : undefined}
                             />
                         ))}
                     </div>
@@ -192,6 +217,7 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
                                     defaults={spec.defaults}
                                     onChange={change}
                                     onReset={reset}
+                                    cached={param.key === cacheParam ? cachedValues : undefined}
                                 />
                             ))}
                         </div>

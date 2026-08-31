@@ -30,6 +30,7 @@ transcription of it.
 | [YoloOnnxDetector](/docs/stages/detect/yolo-onnx-detector) | image | boxes | `onnxruntime-web` |
 | [SignatureDetector](/docs/stages/detect/signature-detector) | image | boxes | `onnxruntime-web` |
 | [FaceDetector](/docs/stages/detect/face-detector) | image | boxes | `onnxruntime-web` |
+| [TesseractScriptDetector](/docs/stages/detect/tesseract-script-detector) | image | script | `tesseract.js` |
 
 ### Recognise
 
@@ -53,6 +54,7 @@ transcription of it.
 | Stage | Reads | Writes | Needs |
 | --- | --- | --- | --- |
 | [GlinerNer](/docs/stages/understand/gliner-ner) | document | ner | `@huggingface/transformers` |
+| [NerConsistency](/docs/stages/understand/ner-consistency) | ner, document | ner | — |
 
 {/* /generated:catalogue */}
 

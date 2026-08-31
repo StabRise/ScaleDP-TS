@@ -13,6 +13,13 @@
 
 export type { ModelProgress, ScaleDpConfig } from './core/config.js'
 export { configure, defaultNumThreads, getConfig, resetConfig, resolveNumThreads } from './core/config.js'
+export type { FoldedSpan, FoldedText } from './core/entities.js'
+export {
+    boxesForRange,
+    buildCharToBoxMap,
+    findWholeWordOccurrences,
+    foldForMatching,
+} from './core/entities.js'
 export {
     ConfigError,
     DetectionError,
@@ -31,6 +38,7 @@ export {
     evict,
     fileUrl,
     isCached,
+    requestPersistentStorage,
 } from './core/model-cache.js'
 export type { BaseStageParams, Validator } from './core/params.js'
 export {
@@ -57,3 +65,16 @@ export type { ImageCropBoxesParams } from './stages/image-crop-boxes.js'
 export { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from './stages/image-crop-boxes.js'
 export type { ImageDrawBoxesParams } from './stages/image-draw-boxes.js'
 export { colorForGroup, IMAGE_DRAW_BOXES_DEFAULTS, ImageDrawBoxes } from './stages/image-draw-boxes.js'
+export type {
+    ConsistencyScope,
+    NerConsistencyParams,
+    Vocabulary,
+    VocabularyEntry,
+} from './stages/ner-consistency.js'
+export {
+    applyVocabulary,
+    buildVocabulary,
+    CONSISTENCY_SCOPES,
+    NER_CONSISTENCY_DEFAULTS,
+    NerConsistency,
+} from './stages/ner-consistency.js'

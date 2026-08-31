@@ -1,0 +1,148 @@
+---
+title: TesseractScriptDetector
+description: Identifies a page's writing script and rotation with Tesseract's OSD model, and names the OCR presets that can read it.
+---
+
+<StageMeta type="TesseractScriptDetector" />
+
+Picking the wrong recognition model does not produce slightly worse text — it
+produces noise. A Cyrillic page read by a Latin model comes back as plausible
+Latin nonsense, and nothing downstream can tell. This stage answers "what is
+this page written in?" *before* that decision, and names the
+[PaddleOCR presets](/docs/stages/recognise/paddle-text-recognizer) that can read
+the answer.
+
+It runs Tesseract's OSD (orientation and script detection) model, which needs the
+`tesseract.js` peer dependency. First use downloads the model (about 4 MB
+compressed) plus Tesseract's legacy WASM core; the browser caches both, and the
+model is kept in IndexedDB by tesseract.js itself.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer, TesseractScriptDetector } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage(),
+    new TesseractScriptDetector(),
+    new PaddleTextRecognizer({ preset: 'v6-small' }),
+]).transform(file)
+
+rows[0].script
+// { script: 'Cyrillic', script_confidence: 4.5, orientation_degrees: 0,
+//   presets: ['v5-eslav-mobile', 'v5-cyrillic-mobile'], ... }
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: {} },
+    { type: 'TesseractScriptDetector', options: {} },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+]} />
+
+## Letting the model follow the page
+
+`presets` is not just a report. Point a PaddleOCR stage's `presetCol` at this
+column and it takes its model from the page, per page:
+
+```ts
+new Pipeline([
+    new PdfToImage(),
+    new TesseractScriptDetector(),                    // writes `script`
+    new PaddleTextRecognizer({ presetCol: 'script' }), // reads it
+])
+```
+
+That is the only way a document whose language you do not know in advance — or
+one that changes language partway through — gets the right recogniser on every
+page. A fixed `preset` cannot: it is chosen before the first page is read.
+
+`preset` stays as the fallback for pages OSD could not classify, so the stage
+never leaves a page unread. Each preset the column lands on is downloaded and
+kept, so a document that swings between scripts pays for both models.
+
+Without `presetCol` the stage simply reports, which is useful on its own: run it
+over a sample of a corpus to find out which preset that corpus wants.
+`suggestPresets()` is the same answer as a plain function call, for when a
+pipeline is more machinery than the question needs.
+
+## Why OSD rather than the recognised text
+
+Script detection deliberately does not read the page. If it inferred the script
+from recognised text, it would be wrong in exactly the case it matters — the
+wrong model garbles the text, and a script guessed from garbled text is garbage
+too. OSD classifies the glyph shapes directly, so its answer is independent of
+whichever engine did, or failed to do, the recognition.
+
+That independence has a cost: OSD uses Tesseract's legacy engine, which is the
+only one carrying OSD data, so it needs a worker and a model of its own rather
+than sharing the one [`TesseractOcr`](/docs/stages/recognise/tesseract-ocr)
+already loaded.
+
+## The confidence is not a probability
+
+<Callout type="warn">
+`script_confidence` is Tesseract's own OSD score. It is **unbounded** — typically
+somewhere between 1 and 20 — and not a 0–1 confidence like every other
+`scoreThreshold` in this library. A value of `4.5` is a perfectly ordinary
+result, not 450%.
+</Callout>
+
+`scoreThreshold` defaults to `0`, which accepts whatever OSD reports. Raise it
+to a few points if you would rather have "unknown" than a weak guess.
+
+## An unknown script is a result, not a failure
+
+OSD needs a reasonable amount of text. On a blank page, a photograph, or a page
+of pure tables it returns nothing, and the stage writes `script: ''` with an
+empty `presets` and — importantly — an **empty `exception`**. Nothing failed.
+Check `script`, not `exception`, to find out whether you got an answer.
+
+`orientation_degrees` comes from the same pass at no extra cost: `0`, `90`, `180`
+or `270`, telling you a scan went through the feeder sideways. The stage reports
+it without rotating anything — to correct inverted *lines* rather than a whole
+page, see
+[`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector).
+
+## Self-hosting the model
+
+By default tesseract.js fetches its worker, its core and `osd.traineddata.gz`
+from its own CDN. Point them at an origin you control through `configure()`:
+
+```ts
+configure({
+    tesseract: {
+        osdWorkerPath: '/tesseract/worker.min.js',
+        osdCorePath: '/tesseract/core',
+        osdLangPath: '/tessdata',
+        osdGzip: false, // serving plain .traineddata, not .traineddata.gz
+    },
+})
+```
+
+Changing any of them rebuilds the worker on the next detection, so this can be
+set after the library has already run.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `scoreThreshold` | `number` | `0` | Tesseract’s OSD score is unbounded — typically 1-20, not a 0-1 confidence. Below this the script is reported as unknown. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | The page image to classify. |
+| `outputCol` | `string` | `'script'` | The detected script, the page rotation, and the presets able to read it. |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

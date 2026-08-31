@@ -44,20 +44,89 @@ each file once.
 The preset is still what picks the script: the same list, and the same choice as
 everywhere else in the library.
 
-## One box in, one box out
+## `boxLevel` decides how fine the output boxes are
 
+`'word'` is the default, matching
+[`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer), so swapping
+the engine does not change how finely the page comes back.
+
+Getting there takes more work than it does with Tesseract, which reports word
+rects of its own. PaddleOCR reads a crop into **one undivided string** with no
+geometry inside it, so the words have to be recovered — but the line is read
+first, whole, and only then split.
+
+<Callout type="warn">
+The order is load-bearing. Cutting the crop first and reading each word on its
+own gives markedly worse text: PP-OCR's recogniser is a CTC model trained on full
+text lines, and a three-character crop stretched to its fixed input height is
+nothing like what it saw in training. It also throws away the line's context,
+which is where the model's accuracy comes from. Reading whole and splitting
+afterwards is both better and cheaper — one inference per line instead of one per
+word.
+</Callout>
+
+Splitting reconciles two independent readings of the same line: the words the
+model reported, and the ink gaps a vertical projection of the crop finds — any
+blank column run at least `wordGapRatio` of the crop's height wide. The text says
+*what* the words are; the spans say *where*. When the counts agree, which is the
+ordinary case, they zip together and every box is measured geometry.
+
+When they disagree, the ink decides **how many** boxes there are and the text
+decides what is **in** them. No box is ever invented:
+
+- **More spans than words** — the ink gapped where the model read no space.
+  Adjacent spans merge, smallest gap first, until the counts meet.
+- **More words than spans** — the model read a space the ink does not show. The
+  extra words are joined back onto the spans they fall on, so one block of ink
+  gives one box carrying all of its words.
+
+<Callout type="warn">
+The second case is not an edge case: on a signature or a scribble the model
+routinely emits a scatter of single letters for one continuous stroke. Cutting a
+span up to match would hand back a row of boxes with identical widths and
+heights — the character count drawn as a rectangle rather than anything measured,
+which reads as per-symbol noise. Joining keeps every box a span the projection
+actually found.
+</Callout>
+
+Spans are mapped back through the crop's own transform, rotation included, so a
+word inside a skewed line comes back skewed the same way. Every word carries its
+line's `score`, because that is the only score computed — the model scored the
+line, not its parts.
+
+`'region'` keeps one box per region the detector found, carrying everything read
+inside it. The recognition is identical either way, so this changes only how the
+result is cut up; it is the right choice for a script that does not separate
+words with spaces — Chinese, Japanese and Thai have no gaps to cut on, and word
+mode will return one box per line there anyway.
+
+<Callout type="warn">
+`spaceRecovery` is **off**, and word splitting does not need it. The spaces
+between words come from ppu's own decode, which places them from the geometry of
+the recognised characters — their spacing against the median inter-character gap.
+`spaceRecovery` is a separate, cruder pass that inserts a space wherever the space
+class scores above `0.001`, a threshold nearly every timestep clears on small or
+noisy text. Turned on there, a line comes back as `s e n s i t i v e`. It is only
+for recovering a genuinely collapsed word gap on clean, large text.
+</Callout>
+
+<Callout>
 There is no `strategy` parameter, unlike `PaddleTextRecognizer`. PaddleOCR's
 `'per-line'` and `'cross-line'` strategies merge boxes together before reading
-them; the contract here is one result per box you hand in, which only
-`'per-box'` can honour. The box that comes back is the detector's own — angle
-included — carrying the recognised `text` and its `score`.
+them; the contract here is one result per crop, which only `'per-box'` can
+honour.
+</Callout>
 
 <Callout title="Why the crops are stacked">
 PaddleOCR batches several crops into one inference, but only within a single
-call, and it cuts those crops out of one canvas. So the straightened crops are
-stacked onto a sheet canvas and read together: a forty-line page costs a handful
-of inferences rather than forty. The blank width beside a narrow crop is never
-sampled, because each crop is re-cut from its own slot.
+call, and it cuts those crops out of one canvas. So the crops are stacked onto a
+sheet canvas and read together: a forty-line page costs a handful of inferences
+rather than forty. The blank width beside a narrow crop is never sampled,
+because each crop is re-cut from its own slot.
+
+This is what makes word level affordable. Cutting a page into words produces
+several times as many crops, but they are batched the same way, so the extra
+cost is far below one inference per word.
 
 `recBatchSize` controls how many crops share an inference. Lower it to `1` on a
 memory-constrained device.
@@ -84,6 +153,16 @@ Turn it on for scans that come in upside down. It uses the same model as
 [`LineOrientationDetector`](/docs/stages/transform/line-orientation-detector),
 so putting that stage in front as well would run it twice.
 
+## Letting the page choose the model
+
+`presetCol` takes the recognition model from a column, per page, instead of the
+fixed `preset` — put a
+[`TesseractScriptDetector`](/docs/stages/detect/tesseract-script-detector) in
+front and the model follows the script it found. `preset` stays as the fallback
+for pages it could not classify. See
+[PaddleTextRecognizer](/docs/stages/recognise/paddle-text-recognizer#letting-the-page-choose-the-model)
+for the full shape.
+
 {/* generated:params */}
 
 ## Parameters
@@ -92,6 +171,7 @@ so putting that stage in front as well would run it twice.
 | --- | --- | --- | --- |
 | `inputCols` | `string[]` (2) | `['image', 'boxes']` | The page image, then the detector output whose regions to read. |
 | `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Only the recognition half is downloaded here. |
+| `presetCol` | `string` | `''` | Take the model from a script-detection column, per page, instead of the fixed preset above. Empty pins it to the preset. Falls back to the preset whenever the column has no usable answer. |
 | `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
 | `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
 | `scoreThreshold` | `number` 0–1 | `0.5` | Drop regions below this confidence. |
@@ -99,6 +179,7 @@ so putting that stage in front as well would run it twice.
 | `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
 | `detectLineOrientation` | `boolean` | `false` | Classify each crop 0°/180° and turn the inverted ones. Off by default: PaddleOCR turns tall crops itself, and only the 180° case needs this extra model. |
 | `onlyRotated` | `boolean` | `false` | Read only rotated or inverted boxes. On, an ordinary page returns nothing. |
+| `boxLevel` | `'word'` \| `'region'` | `'word'` | The line is read whole either way; word splits the reading on its own spaces, matched to the crop’s ink gaps. Pick “region” for a script that does not separate words with spaces. |
 
 <Accordions>
 <Accordion title="Column wiring and error handling">
@@ -112,8 +193,9 @@ so putting that stage in front as well would run it twice.
 | `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
 | `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
 | `oriModel` | `string` | `'StabRise/line_orientation_detection_v0.1'` | Hugging Face repo id. Defaults to StabRise/line_orientation_detection_v0.1. |
-| `spaceRecovery` | `boolean` | `false` | Recover inter-word spaces the greedy CTC decode drops. Helps Latin text; can add spurious spaces in dense symbol runs. |
+| `spaceRecovery` | `boolean` | `false` | Insert a space wherever the space class scores above 0.001. Not what separates words — ppu already does that from the decode’s geometry. Shreds small or noisy text into “s e n s i t i v e”; only for a collapsed word gap on clean, large text. |
 | `recBatchSize` | `number` | `6` | Crops per batched inference. 1 disables batching. |
+| `wordGapRatio` | `number` 0.05–2 | `0.15` | How wide a blank run must be, relative to the crop’s height, to count as a space rather than letter spacing. |
 
 </Accordion>
 </Accordions>

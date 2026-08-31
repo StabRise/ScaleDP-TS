@@ -82,30 +82,77 @@ export const GLINER2_PII_LABELS: readonly string[] = Object.freeze([
     'technology',
 ])
 
+/**
+ * The catalogue.
+ *
+ * Every entry is fp16, and deliberately so. These are all DeBERTa-based GLiNER
+ * models, and 8-bit quantization wrecks their score calibration: on the same
+ * sentence the fp16 multilingual PII model scores "John Smith" as a person at
+ * 1.00, a card number at 0.99 and a date at 1.00, while its int8 build of the
+ * same weights gives 0.38, 0.37 and 0.16 -- every one of them under the default
+ * 0.5 threshold, so the stage returns nothing at all. The int8 build of
+ * `gliner_medium-v2.1` is worse still: fourteen junk spans, none above 0.05.
+ * The spans themselves decode correctly in every case; it is only the scores
+ * that collapse. fp16 costs roughly 1.7x the download and matches fp32 exactly.
+ */
 export const NER_MODELS: readonly NerModel[] = Object.freeze([
     {
         id: 'gliner-multi-pii',
-        name: 'GLiNER multilingual PII, int8 (~333 MB)',
+        name: 'GLiNER multilingual PII, fp16 (~580 MB)',
         arch: 'gliner1',
         repo: 'onnx-community/gliner_multi_pii-v1',
         files: [
-            { path: 'gliner_config.json', approxBytes: 800 },
-            { path: 'onnx/model_int8.onnx', approxBytes: 349_000_000 },
+            { path: 'gliner_config.json', approxBytes: 732 },
+            { path: 'onnx/model_fp16.onnx', approxBytes: 579_717_643 },
+        ],
+        labels: DEFAULT_PII_LABELS,
+        languages: ['multi'],
+    },
+    {
+        // Token-level rather than span-enumeration: it emits a start, an end and
+        // an "inside" score per word per label instead of one score per
+        // enumerated span, so it decodes through `decodeTokenSpans`.
+        //
+        // Served at full precision because it is small enough to afford it --
+        // 181 MB, half the fp16 default -- which sidesteps the quantization
+        // question entirely. On a 32M-parameter encoder it is the cheapest PII
+        // model here by a wide margin, at some cost in recall: it is sharp on
+        // card numbers and dates but weaker on names than the multilingual PII
+        // model, more so the more labels compete for the same span.
+        id: 'gliner-pii-edge',
+        name: 'GLiNER PII edge, fp32 (~181 MB)',
+        arch: 'gliner1',
+        repo: 'knowledgator/gliner-pii-edge-v1.0',
+        files: [
+            { path: 'gliner_config.json', approxBytes: 2_000 },
+            { path: 'onnx/model.onnx', approxBytes: 181_000_000 },
         ],
         labels: DEFAULT_PII_LABELS,
         languages: ['multi'],
     },
     {
         id: 'gliner-small',
-        name: 'GLiNER small English, int8 (~183 MB)',
+        name: 'GLiNER small English, fp16 (~306 MB)',
         arch: 'gliner1',
         repo: 'onnx-community/gliner_small-v2.1',
         files: [
             { path: 'gliner_config.json', approxBytes: 731 },
-            { path: 'onnx/model_quantized.onnx', approxBytes: 183_403_734 },
+            { path: 'onnx/model_fp16.onnx', approxBytes: 306_253_040 },
         ],
         labels: DEFAULT_PII_LABELS,
         languages: ['en'],
+    },
+    {
+        id: 'gliner-multi',
+        name: 'GLiNER multilingual, fp16 (~580 MB)',
+        arch: 'gliner1',
+        repo: 'onnx-community/gliner_multi-v2.1',
+        files: [
+            { path: 'gliner_config.json', approxBytes: 731 },
+            { path: 'onnx/model_fp16.onnx', approxBytes: 579_717_643 },
+        ],
+        labels: DEFAULT_PII_LABELS,
+        languages: ['multi'],
     },
     {
         // Same GLiNER1 span-enumeration architecture and ONNX I/O as the models

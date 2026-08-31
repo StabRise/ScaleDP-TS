@@ -33,13 +33,16 @@ import {
     PaddleTextRecognizer,
     TESSERACT_OCR_DEFAULTS,
     TESSERACT_RECOGNIZER_DEFAULTS,
+    TESSERACT_SCRIPT_DETECTOR_DEFAULTS,
     TesseractOcr,
     TesseractRecognizer,
+    TesseractScriptDetector,
 } from '../ocr/index.js'
 import { PDF_TO_DOCUMENT_DEFAULTS, PDF_TO_IMAGE_DEFAULTS, PdfToDocument, PdfToImage } from '../pdf/index.js'
 import { DATA_TO_IMAGE_DEFAULTS, DataToImage } from '../stages/data-to-image.js'
 import { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from '../stages/image-crop-boxes.js'
 import { IMAGE_DRAW_BOXES_DEFAULTS, ImageDrawBoxes } from '../stages/image-draw-boxes.js'
+import { NER_CONSISTENCY_DEFAULTS, NerConsistency } from '../stages/ner-consistency.js'
 import type { ColumnKind, StageParamOption, StageParamSpec, StageSpec } from './types.js'
 
 /**
@@ -80,10 +83,16 @@ const LABEL_FIELDS: readonly StageParamOption[] = Object.freeze([
     { value: 'angle', label: 'angle', title: 'Box: degrees about its centre' },
     { value: 'entity_group', label: 'entity_group', title: 'Entity: the label it matched' },
     { value: 'word', label: 'word', title: 'Entity: the matched text' },
+    { value: 'source', label: 'source', title: 'Entity: model or propagated (NerConsistency)' },
     { value: 'x', label: 'x', title: 'Box: top-left x' },
     { value: 'y', label: 'y', title: 'Box: top-left y' },
     { value: 'width', label: 'width', title: 'Box: the longer side' },
     { value: 'height', label: 'height', title: 'Box: the shorter side' },
+])
+
+const CONSISTENCY_SCOPE_OPTIONS: readonly StageParamOption[] = Object.freeze([
+    { value: 'document', label: 'Document', title: 'Pool entities across every page' },
+    { value: 'row', label: 'Page', title: 'Keep each page independent' },
 ])
 
 const OCR_PRESETS: readonly StageParamOption[] = Object.freeze(
@@ -188,6 +197,21 @@ const scoreThreshold = (help: string): StageParamSpec => ({
     step: 0.05,
     help,
 })
+
+/**
+ * Point a Paddle stage's model at a column instead of pinning it.
+ *
+ * The only way a mixed-script document gets the right recogniser on every page:
+ * `TesseractScriptDetector` names the presets that can read each page, and this
+ * says to follow them.
+ */
+const presetCol: StageParamSpec = {
+    key: 'presetCol',
+    kind: 'column',
+    label: 'Preset from column',
+    accepts: ['script'],
+    help: 'Take the model from a script-detection column, per page, instead of the fixed preset above. Empty pins it to the preset. Falls back to the preset whenever the column has no usable answer.',
+}
 
 const lang: StageParamSpec = {
     key: 'lang',
@@ -380,6 +404,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 options: OCR_PRESETS,
                 help: 'Language/script pairing. Detection and recognition share the download.',
             },
+            presetCol,
             scoreThreshold('Drop regions below this confidence. 0 keeps everything.'),
         ],
     },
@@ -486,6 +511,36 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         params: yoloParams,
     },
     {
+        type: 'TesseractScriptDetector',
+        label: 'Script (OSD)',
+        group: 'Detect',
+        subpath: '@stabrise/scaledp/ocr',
+        summary:
+            'Identify a page’s writing script and rotation with Tesseract’s OSD model, and name the OCR presets that can read it.',
+        consumes: ['image'],
+        produces: 'script',
+        peer: 'tesseract.js',
+        defaults: asRecord(TESSERACT_SCRIPT_DETECTOR_DEFAULTS),
+        params: [
+            ...baseParams({
+                input: { accepts: ['image'], help: 'The page image to classify.' },
+                output: {
+                    help: 'The detected script, the page rotation, and the presets able to read it.',
+                },
+            }),
+            {
+                key: 'scoreThreshold',
+                kind: 'number',
+                label: 'Score threshold',
+                min: 0,
+                step: 0.5,
+                // Deliberately not the shared scoreThreshold helper, which pins
+                // max: 1. Tesseract's OSD score is not a 0-1 confidence.
+                help: 'Tesseract’s OSD score is unbounded — typically 1-20, not a 0-1 confidence. Below this the script is reported as unknown.',
+            },
+        ],
+    },
+    {
         type: 'LineOrientationDetector',
         label: 'Line orientation',
         group: 'Transform',
@@ -548,7 +603,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         label: 'PaddleOCR',
         group: 'Recognise',
         subpath: '@stabrise/scaledp/ocr',
-        summary: 'Detect and read a page in one pass. Ignores any separate detector’s boxes.',
+        summary: 'Detect and read a page with PP-OCR’s own detector. Ignores any separate detector’s boxes.',
         consumes: ['image'],
         produces: 'document',
         peer: 'ppu-paddle-ocr',
@@ -563,12 +618,40 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 options: OCR_PRESETS,
                 help: 'Language/script pairing. Pick the one matching your documents.',
             },
+            presetCol,
             scoreThreshold('Drop words below this confidence.'),
+            {
+                key: 'boxLevel',
+                kind: 'enum',
+                label: 'Box level',
+                options: [
+                    {
+                        value: 'word',
+                        label: 'One box per word',
+                        title: 'The line is read whole, then its reading is split into words',
+                    },
+                    {
+                        value: 'region',
+                        label: 'One box per line',
+                        title: 'PP-OCR’s own line boxes, carrying everything read inside them',
+                    },
+                ],
+                help: 'Word matches the other recognizers. Region is PP-OCR’s line-level output, and the only sensible choice for a script that does not separate words with spaces.',
+            },
+            {
+                key: 'wordGapRatio',
+                kind: 'number',
+                label: 'Word gap ratio',
+                min: 0.02,
+                max: 1,
+                step: 0.01,
+                help: 'How wide a blank run must be, relative to line height, to be a space rather than letter spacing. Word box level only.',
+            },
             {
                 key: 'strategy',
                 kind: 'enum',
                 label: 'Strategy',
-                help: 'How the detected regions are grouped. It cannot subdivide them: the boxes are whatever the preset’s detector found, which is line-level.',
+                help: 'How the detected regions are grouped, at region box level. It cannot subdivide them — that is what word box level does, and it makes this inert.',
                 options: STRATEGIES,
             },
             keepFormatting,
@@ -604,6 +687,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 options: OCR_PRESETS,
                 help: 'Language/script pairing. Only the recognition half is downloaded here.',
             },
+            presetCol,
             {
                 key: 'scaleFactor',
                 kind: 'number',
@@ -648,7 +732,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 kind: 'boolean',
                 label: 'Space recovery',
                 advanced: true,
-                help: 'Recover inter-word spaces the greedy CTC decode drops. Helps Latin text; can add spurious spaces in dense symbol runs.',
+                help: 'Insert a space wherever the space class scores above 0.001. Not what separates words — ppu already does that from the decode’s geometry. Shreds small or noisy text into “s e n s i t i v e”; only for a collapsed word gap on clean, large text.',
             },
             {
                 key: 'recBatchSize',
@@ -658,6 +742,34 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 step: 1,
                 advanced: true,
                 help: 'Crops per batched inference. 1 disables batching.',
+            },
+            {
+                key: 'boxLevel',
+                kind: 'enum',
+                label: 'Box level',
+                options: [
+                    {
+                        value: 'word',
+                        label: 'One box per word',
+                        title: 'The region is read whole, then its reading is split into words',
+                    },
+                    {
+                        value: 'region',
+                        label: 'One box per region',
+                        title: 'One box per region, carrying everything read inside it',
+                    },
+                ],
+                help: 'The line is read whole either way; word splits the reading on its own spaces, matched to the crop’s ink gaps. Pick “region” for a script that does not separate words with spaces.',
+            },
+            {
+                key: 'wordGapRatio',
+                kind: 'number',
+                label: 'Word gap ratio',
+                min: 0.05,
+                max: 2,
+                step: 0.05,
+                advanced: true,
+                help: 'How wide a blank run must be, relative to the crop’s height, to count as a space rather than letter spacing.',
             },
         ],
     },
@@ -709,17 +821,17 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 label: 'Box level',
                 options: [
                     {
-                        value: 'region',
-                        label: 'One box per region',
-                        title: 'ScaleDP’s behaviour: each detected region keeps its own box, carrying everything read inside it',
-                    },
-                    {
                         value: 'word',
                         label: 'One box per word',
                         title: 'Tesseract’s own word boxes, mapped back into page coordinates',
                     },
+                    {
+                        value: 'region',
+                        label: 'One box per region',
+                        title: 'ScaleDP’s behaviour: each detected region keeps its own box, carrying everything read inside it',
+                    },
                 ],
-                help: 'The detectors here are line-level, so “region” gives line boxes. Pick “word” to get one box per word instead.',
+                help: 'Word boxes are Tesseract’s own. Pick “region” to get one box per region the detector found instead, which is what Python ScaleDP returns.',
             },
             {
                 key: 'scaleFactor',
@@ -827,6 +939,63 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 kind: 'boolean',
                 label: 'Normalise casing',
                 help: 'Title-case runs of capitals first. GLiNER1 models are cased; scans are often all caps.',
+            },
+        ],
+    },
+    {
+        type: 'NerConsistency',
+        label: 'Consistent entities',
+        group: 'Understand',
+        subpath: '@stabrise/scaledp',
+        summary: 'Tag every occurrence of an entity found anywhere in the document.',
+        consumes: ['ner', 'document'],
+        produces: 'ner',
+        defaults: asRecord(NER_CONSISTENCY_DEFAULTS),
+        params: [
+            ...baseParams({ input: 'unused' }),
+            {
+                key: 'inputCols',
+                kind: 'columns',
+                label: 'Input columns',
+                arity: 2,
+                accepts: ['ner', 'document'],
+                help: 'The NER output first, then the Document its offsets point into — usually text, or document after PdfToDocument.',
+            },
+            {
+                key: 'scope',
+                kind: 'enum',
+                label: 'Scope',
+                options: CONSISTENCY_SCOPE_OPTIONS,
+                help: 'Document pools entities across every page, so a name found on page 1 is tagged on page 7.',
+            },
+            {
+                key: 'minLength',
+                kind: 'number',
+                label: 'Minimum length',
+                min: 1,
+                step: 1,
+                help: 'Shortest entity string allowed to propagate. Short strings match far too much.',
+            },
+            {
+                key: 'minScore',
+                kind: 'number',
+                label: 'Minimum score',
+                min: 0,
+                max: 1,
+                step: 0.05,
+                help: 'Only entities at or above this score propagate to other occurrences.',
+            },
+            {
+                key: 'resolveConflicts',
+                kind: 'boolean',
+                label: 'Resolve conflicts',
+                help: 'A string tagged two ways takes its best-scoring label everywhere, instead of keeping both.',
+            },
+            {
+                key: 'overrideModelLabels',
+                kind: 'boolean',
+                label: 'Override model labels',
+                help: 'Let a propagated label replace the model’s own where the model tagged that exact span. Off treats the model’s judgement as final, so the pass only ever adds occurrences.',
             },
         ],
     },
@@ -958,6 +1127,7 @@ export const STAGE_CLASSES = Object.freeze({
     ImageCropBoxes,
     ImageDrawBoxes,
     LineOrientationDetector,
+    NerConsistency,
     PaddleRecognizer,
     PaddleTextDetector,
     PaddleTextRecognizer,
@@ -966,5 +1136,6 @@ export const STAGE_CLASSES = Object.freeze({
     SignatureDetector,
     TesseractOcr,
     TesseractRecognizer,
+    TesseractScriptDetector,
     YoloOnnxDetector,
 }) as Readonly<Record<string, new (options?: never) => import('../core/pipeline.js').Stage>>

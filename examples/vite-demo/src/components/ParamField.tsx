@@ -19,6 +19,11 @@ interface Props {
     defaults: Readonly<Record<string, unknown>>
     onChange: (key: string, value: unknown) => void
     onReset: (key: string) => void
+    /**
+     * For the param that decides which weights a stage downloads: the values
+     * already in this browser, so the dropdown shows which choices are free.
+     */
+    cached?: ReadonlySet<string>
 }
 
 const asList = (value: unknown): string => (Array.isArray(value) ? value.join(', ') : '')
@@ -77,7 +82,7 @@ function ListInput({
     )
 }
 
-export function ParamField({ stage, param, columns, defaults, onChange, onReset }: Props) {
+export function ParamField({ stage, param, columns, defaults, onChange, onReset, cached }: Props) {
     const value = effective(stage, param.key)
     const changed = !same(value, defaults[param.key])
     const id = `${stage.id}-${param.key}`
@@ -193,6 +198,7 @@ export function ParamField({ stage, param, columns, defaults, onChange, onReset 
                     value={String(value ?? '')}
                     options={param.options ?? []}
                     allowCustom={param.allowCustom === true}
+                    cached={cached}
                     onChange={(next) => onChange(param.key, next)}
                 />
             )}
@@ -316,12 +322,15 @@ function ColumnOrEnum({
     value,
     options,
     allowCustom,
+    cached,
     onChange,
 }: {
     id: string
     value: string
     options: readonly { value: string; label: string; title?: string; disabled?: boolean }[]
     allowCustom: boolean
+    /** Values already in this browser, marked so the choice carries its cost. */
+    cached?: ReadonlySet<string>
     onChange: (value: string) => void
 }) {
     const known = options.some((option) => option.value === value)
@@ -342,7 +351,7 @@ function ColumnOrEnum({
                         title={option.title}
                         disabled={option.disabled}
                     >
-                        {option.label}
+                        {cached?.has(option.value) ? `\u2713 ${option.label}` : option.label}
                     </option>
                 ))}
                 {allowCustom && <option value="__custom">Custom…</option>}

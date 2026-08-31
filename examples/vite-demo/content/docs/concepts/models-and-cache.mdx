@@ -31,12 +31,33 @@ before starting one on a metered connection.
 
 | id | Arch | Repo | Size | Access |
 | --- | --- | --- | --- | --- |
-| `gliner-multi-pii` *(default)* | GLiNER1 | `onnx-community/gliner_multi_pii-v1` | ~333 MB | public |
-| `gliner-small` | GLiNER1 | `onnx-community/gliner_small-v2.1` | ~183 MB | public |
+| `gliner-multi-pii` *(default)* | GLiNER1 | `onnx-community/gliner_multi_pii-v1` | ~580 MB | public |
+| `gliner-pii-edge` | GLiNER1 | `knowledgator/gliner-pii-edge-v1.0` | ~181 MB | public |
+| `gliner-small` | GLiNER1 | `onnx-community/gliner_small-v2.1` | ~306 MB | public |
+| `gliner-medium` | GLiNER1 | `onnx-community/gliner_medium-v2.1` | ~392 MB | public |
+| `gliner-medium-news` | GLiNER1 | `onnx-community/gliner_medium_news-v2.1` | ~392 MB | public |
+| `gliner-multi` | GLiNER1 | `onnx-community/gliner_multi-v2.1` | ~580 MB | public |
 | `stabrise-pii-multi` | GLiNER1 | `StabRise/pii-detection-en-fr-ge-it-es` | ~404 MB | private |
 | `stabrise-pii-multi-g2` | GLiNER2 | `StabRise/pii-multi-g2-v1-onnx` | ~1.2 GB | private |
 
 The default is public so `npm install` works with no configuration.
+`gliner-multi-pii` and `gliner-pii-edge` are PII-tuned; the rest are general
+NER, which GLiNER's zero-shot labelling still lets you point at the PII label
+set, a little less sharply on the money-shaped fields.
+
+`gliner-pii-edge` is by far the smallest, and the only one served at full
+precision — 181 MB of fp32 on a 32M-parameter encoder, so no quantization
+question arises. It decodes differently from the rest (see below) and trades
+recall for size: sharp on card numbers and dates, weaker on names, more so the
+more labels compete for the same span.
+
+<Callout type="warn" title="All fp16, on purpose">
+8-bit builds of these DeBERTa-backed models decode the right spans but score
+them far below the default 0.5 threshold, so the stage finds every entity and
+then filters all of them out. See
+[GlinerNer](/docs/stages/understand/gliner-ner#why-every-model-here-is-fp16) for
+the measurements.
+</Callout>
 
 <Callout type="warn" title="GLiNER2 is registered but not recommended for the open web">
 Its published weights are fp32 and total about 1.2 GB, with no int8 or q4
@@ -68,7 +89,7 @@ import { isPresetCached, loadPreset, removePreset } from '@stabrise/scaledp/ocr'
 
 const model = getNerModel('gliner-multi-pii')
 if (model && !(await isCached({ repo: model.repo, files: model.files }))) {
-    warnAbout(modelSizeBytes(model))     // before a 333 MB download
+    warnAbout(modelSizeBytes(model))     // before a 580 MB download
 }
 
 await loadPreset('v6-small')     // pre-warm, so the first OCR is instant
@@ -156,7 +177,7 @@ Point `modelHost` at your own origin and mirror the repo-relative layout:
 
 ```
 /models/onnx-community/gliner_multi_pii-v1/gliner_config.json
-/models/onnx-community/gliner_multi_pii-v1/onnx/model_int8.onnx
+/models/onnx-community/gliner_multi_pii-v1/onnx/model_fp16.onnx
 ```
 
 ```ts

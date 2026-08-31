@@ -14,8 +14,8 @@
  */
 
 import { HomeLayout } from 'fumadocs-ui/layouts/home'
-import { lazy, Suspense, useEffect, useState } from 'react'
-import type { Capability } from '../lib/configure'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import type { RuntimeReport } from '../lib/configure'
 import { baseOptions } from '../lib/layout.shared'
 import { SITE_NAME } from '../lib/site'
 
@@ -57,7 +57,7 @@ function Booting({ note }: { note: string }) {
 }
 
 export default function DemoRoute() {
-    const [caps, setCaps] = useState<Capability[] | null>(null)
+    const [report, setReport] = useState<RuntimeReport | null>(null)
 
     useEffect(() => {
         let live = true
@@ -65,12 +65,20 @@ export default function DemoRoute() {
         // pulls in the library.
         void import('../lib/configure').then(({ setup }) =>
             setup().then((next) => {
-                if (live) setCaps(next)
+                if (live) setReport(next)
             })
         )
         return () => {
             live = false
         }
+    }, [])
+
+    // Re-reads the stored choice, drops the engines cached against the old one
+    // and reports what the new one resolves to.
+    const onEngineChange = useCallback(() => {
+        void import('../lib/configure').then(({ applyRuntime }) =>
+            applyRuntime().then((next) => setReport(next))
+        )
     }, [])
 
     // `style.css` scopes its bare element rules to this attribute, so the
@@ -83,7 +91,7 @@ export default function DemoRoute() {
         }
     }, [])
 
-    if (!caps)
+    if (!report)
         return (
             <Shell>
                 <Booting note="starting the runtime…" />
@@ -93,7 +101,7 @@ export default function DemoRoute() {
     return (
         <Shell>
             <Suspense fallback={<Booting note="loading the builder…" />}>
-                <DemoApp caps={caps} />
+                <DemoApp report={report} onEngineChange={onEngineChange} />
             </Suspense>
         </Shell>
     )

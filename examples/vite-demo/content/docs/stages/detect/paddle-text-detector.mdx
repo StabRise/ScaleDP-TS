@@ -49,6 +49,7 @@ unknown `preset` throws `RangeError` from the constructor; see
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `preset` | `'v6-small'` \| `'v6-medium'` \| `'v6-tiny'` \| `'v5-latin-mobile'` \| … (14 total) | `'v6-small'` | Language/script pairing. Detection and recognition share the download. |
+| `presetCol` | `string` | `''` | Take the model from a script-detection column, per page, instead of the fixed preset above. Empty pins it to the preset. Falls back to the preset whenever the column has no usable answer. |
 | `scoreThreshold` | `number` 0–1 | `0` | Drop regions below this confidence. 0 keeps everything. |
 
 <Accordions>

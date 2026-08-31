@@ -36,13 +36,14 @@ export interface TesseractRecognizerParams extends BaseStageParams {
     /**
      * Granularity of the boxes returned.
      *
-     * 'region' keeps ScaleDP's behaviour: one box per region the detector
+     * 'word' is the default: the boxes tesseract reports for each word, mapped
+     * back through the crop -- rotation included -- into page coordinates. Not
+     * in Python ScaleDP, which always returns one box per region; the words
+     * were always in the response, only their geometry was being discarded.
+     *
+     * 'region' restores ScaleDP's behaviour: one box per region the detector
      * found, carrying everything read inside it. Since the detectors here are
      * line-level, so are those boxes.
-     *
-     * 'word' returns instead the boxes tesseract reports for each word, mapped
-     * back through the crop -- rotation included -- into page coordinates. Not
-     * in Python ScaleDP, which always returns one box per region.
      */
     boxLevel: 'region' | 'word'
     /** Classify each crop 0/180 degrees and turn the inverted ones. */
@@ -71,7 +72,7 @@ export const TESSERACT_RECOGNIZER_DEFAULTS: TesseractRecognizerParams = Object.f
     scoreThreshold: 0.5,
     keepFormatting: false,
     lineTolerance: 0,
-    boxLevel: 'region' as 'region' | 'word',
+    boxLevel: 'word' as 'region' | 'word',
     detectLineOrientation: true,
     onlyRotated: false,
     oriModel: DEFAULT_ORIENTATION_MODEL,

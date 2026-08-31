@@ -45,9 +45,9 @@ at your own copy.
 | | Box level | Weights | WebGPU |
 | --- | --- | --- | --- |
 | `TesseractOcr` | **word** | ~15 MB per language | no |
-| `PaddleTextRecognizer` | line | ~6 MB | yes |
-| `PaddleRecognizer` | whatever the detector found | ~4 MB (recognition only) | yes |
-| `TesseractRecognizer` | line, or word with `boxLevel` | ~15 MB per language | no |
+| `PaddleTextRecognizer` | **word**, or line with `boxLevel` | ~6 MB | yes |
+| `PaddleRecognizer` | **word**, or region with `boxLevel` | ~4 MB (recognition only) | yes |
+| `TesseractRecognizer` | **word**, or region with `boxLevel` | ~15 MB per language | no |
 
 No ONNX is involved, so execution providers and thread settings do not apply to
 it. It is a good fallback where WebGPU is absent and the document is clean, and a

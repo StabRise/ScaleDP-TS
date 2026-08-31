@@ -1,0 +1,161 @@
+---
+title: NerConsistency
+description: Tag every occurrence of an entity the model found anywhere in the document, so a name caught once is caught everywhere.
+---
+
+<StageMeta type="NerConsistency" />
+
+A model scores each mention on its own, so the same name is tagged in the body
+and missed in a heading set in caps, missed again in a dense table, missed a
+third time because OCR broke it across a line. For redaction that is a
+correctness problem, not a cosmetic one: the occurrence you missed leaks the
+thing the others hid.
+
+This stage takes the entities already found, pools them into a vocabulary of
+strings, and re-tags every occurrence of those strings in the document.
+
+```ts
+import { Pipeline, NerConsistency } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+import { GlinerNer } from '@stabrise/scaledp/ner'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new GlinerNer({ inputCol: 'text', labels: ['person', 'organization'] }),
+    new NerConsistency(),
+]).transform(file)
+
+for (const entity of rows[0].ner.entities) {
+    console.log(entity.entity_group, entity.word, entity.source)
+}
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'GlinerNer', options: { inputCol: 'text', labels: ['person', 'organization', 'email', 'phone', 'address'] } },
+    { type: 'NerConsistency', options: {} },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'annotated', lineWidth: 2, displayDataList: ['entity_group', 'source'] } },
+]} />
+
+It reads two columns — the NER output and the `Document` its offsets point into
+— and writes to `ner` by default, replacing the column in place. Insert it after
+the NER stage and nothing downstream needs rewiring.
+
+The document column defaults to `text`, which is where every recognizer puts its
+`Document` and what `GlinerNer` reads. `PdfToDocument` is the one stage that
+writes `document` instead, so a pipeline reading a PDF's own text layer needs
+`inputCols: ['ner', 'document']`.
+
+## It reaches across pages
+
+`PdfToImage` emits one row per page, so by default a page's entities are only
+that page's. `scope: 'document'` (the default) pools every row's entities before
+rewriting any of them, so a name found on page 1 is tagged on page 7 too.
+`scope: 'row'` keeps each page independent.
+
+## What counts as the same text
+
+Matching folds case and collapses every run of whitespace, then requires word
+boundaries:
+
+| Found | Also tagged | Not tagged |
+| --- | --- | --- |
+| `John Smith` | `JOHN SMITH`, `john  smith`, `John`⏎`Smith` | `John Smithson` |
+
+The whitespace fold is what catches a name split by an OCR line break. The word
+boundary is what stops `Ann` matching inside `Announcement`.
+
+Where two vocabulary phrases overlap the longer one wins, so `John Smith` is
+tagged as one entity rather than `John` and then `Smith`.
+
+## Where each tag came from
+
+Every entity carries a `source`:
+
+- `model` — this exact span is what the NER stage reported.
+- `propagated` — the string was found elsewhere and matched here.
+
+`ImageDrawBoxes` renders it like any other field: pass
+`displayDataList: ['entity_group', 'source']` to see which highlights the model
+earned and which this stage added.
+
+It only ever adds. A span the model reported that is not a whole word — `Smith`
+inside `Smithson` — matches nothing on the way back, and is kept as it was
+rather than filtered out.
+
+## Two guards worth setting
+
+Propagation is a recall trade: it will tag things the model deliberately did not.
+
+- `minLength` (default `3`) is the shortest string allowed to propagate. A
+  two-character initial matches half the page.
+- `minScore` (default `0`) restricts which entities seed the vocabulary. Raising
+  it to, say, `0.8` propagates only from confident finds, which is the setting to
+  reach for when the output looks over-eager.
+
+## Conflicting labels
+
+When the same string is tagged `ORG` in one place and `PERSON` in another, the
+label with the higher score wins everywhere — the whole document ends up
+consistent, not merely more complete. Set `resolveConflicts: false` to keep both
+labels on every occurrence instead.
+
+That resolution is written over the model's own tag, including at the occurrence
+the model read differently. Usually that is the point: the outlier is normally
+the mistake, and leaving it is how one page ends up disagreeing with the next.
+
+`overrideModelLabels: false` treats the model's judgement as final wherever it
+made one. Propagation then only fills spans the model left untagged, so the stage
+**only ever adds occurrences and never changes one**:
+
+```ts
+new NerConsistency({ overrideModelLabels: false })
+```
+
+| | `Smith` the model read as `PERSON` | `Smith` it read as `LOCATION` | `Smith` it missed |
+| --- | --- | --- | --- |
+| default | `PERSON` · `model` | `PERSON` · `propagated` | `PERSON` · `propagated` |
+| `overrideModelLabels: false` | `PERSON` · `model` | `LOCATION` · `model` | `PERSON` · `propagated` |
+
+Reach for it when the model is trusted and the same string genuinely means
+different things in different places — a surname that is also a city. Leave it on
+when consistency is the goal, which for redaction it usually is: a single
+occurrence tagged something harmless is a single occurrence that does not get
+covered up.
+
+The comparison is on the exact span. A model entity that merely *overlaps* a
+longer propagated phrase — `John` inside `John Smith` — is decided by the
+longest-match rule instead, whichever way this is set.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['ner', 'text']` | The NER output first, then the Document its offsets point into — usually text, or document after PdfToDocument. |
+| `scope` | `'document'` \| `'row'` | `'document'` | Document pools entities across every page, so a name found on page 1 is tagged on page 7. |
+| `minLength` | `number` | `3` | Shortest entity string allowed to propagate. Short strings match far too much. |
+| `minScore` | `number` 0–1 | `0` | Only entities at or above this score propagate to other occurrences. |
+| `resolveConflicts` | `boolean` | `true` | A string tagged two ways takes its best-scoring label everywhere, instead of keeping both. |
+| `overrideModelLabels` | `boolean` | `true` | Let a propagated label replace the model’s own where the model tagged that exact span. Off treats the model’s judgement as final, so the pass only ever adds occurrences. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'ner'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'ner'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

@@ -11,7 +11,7 @@ import { boxesForRange, buildCharToBoxMap } from '../../src/ner/gliner-ner.js'
 import { DEFAULT_NER_MODEL_ID, getNerModel, NER_MODELS } from '../../src/ner/registry.js'
 import { generateSpans } from '../../src/ner/vendor/gliner2-decoder.js'
 import { sigmoid } from '../../src/ner/vendor/math.js'
-import { decodeSpans } from '../../src/ner/vendor/span-decoder.js'
+import { decodeSpans, decodeTokenSpans } from '../../src/ner/vendor/span-decoder.js'
 import { RICH_WORD_PATTERN, splitWords } from '../../src/ner/vendor/splitter.js'
 import { type Box, createBox } from '../../src/schemas/box.js'
 
@@ -132,6 +132,33 @@ describe('buildCharToBoxMap', () => {
         ]
         const mapping = buildCharToBoxMap('the cat the', repeated)
         expect(boxesForRange(mapping, repeated, 8, 11).map((b) => b.x)).toEqual([80])
+    })
+
+    it('maps a box whose text sits before the ones already matched', () => {
+        // `boxesToFormattedText` emits boxes in reading order -- clustered by y,
+        // then sorted by x -- while `bboxes` keeps the detector's order. A
+        // forward-only cursor drops every box the detector found out of order,
+        // and the entity comes back with no boxes at all: present in the text,
+        // invisible on the page.
+        const outOfOrder: Box[] = [
+            createBox({ text: 'footer', x: 0, y: 200, width: 60, height: 12 }),
+            createBox({ text: 'header', x: 0, y: 0, width: 60, height: 12 }),
+        ]
+        const mapping = buildCharToBoxMap('header\nfooter', outOfOrder)
+        expect(boxesForRange(mapping, outOfOrder, 0, 6).map((b) => b.text)).toEqual(['header'])
+        expect(boxesForRange(mapping, outOfOrder, 7, 13).map((b) => b.text)).toEqual(['footer'])
+    })
+
+    it('still gives each repeat its own box when the order is scrambled', () => {
+        // Searching backwards must not let one box steal a span another already
+        // claimed, or two mentions of the same word collapse onto one box.
+        const repeats: Box[] = [
+            createBox({ text: 'info@x.com', x: 0, y: 200, width: 90, height: 12 }),
+            createBox({ text: 'info@x.com', x: 0, y: 0, width: 90, height: 12 }),
+        ]
+        const mapping = buildCharToBoxMap('info@x.com\ninfo@x.com', repeats)
+        expect(boxesForRange(mapping, repeats, 0, 10).map((b) => b.y)).toEqual([200])
+        expect(boxesForRange(mapping, repeats, 11, 21).map((b) => b.y)).toEqual([0])
     })
 })
 
@@ -270,7 +297,108 @@ describe('NER model registry', () => {
         expect(getNerModel('stabrise-pii-multi-g2')?.executionProviders).toEqual(['wasm'])
     })
 
+    /**
+     * The bug this guards against returned an empty result rather than an
+     * error. 8-bit quantization leaves these models decoding the right spans
+     * but scoring them far below the default 0.5 threshold -- the int8 build of
+     * the default model scored a plain "John Smith" as a person at 0.38 -- so
+     * every entity was filtered out and PII detection silently found nothing.
+     */
+    it('serves no 8-bit public weights, whose scores fall under the default threshold', () => {
+        const eightBit = /int8|uint8|quantized|_q4|bnb4/
+        // Only the public DeBERTa-backed catalogue: those are the ones measured.
+        // The private StabRise entries are a different backbone and cannot be
+        // fetched here, so they are not covered either way.
+        const offenders = NER_MODELS.filter((model) => !model.private).flatMap((model) =>
+            model.files.filter((file) => eightBit.test(file.path)).map((file) => `${model.id}: ${file.path}`)
+        )
+        expect(offenders).toEqual([])
+    })
+
     it('has unique ids', () => {
         expect(new Set(NER_MODELS.map((m) => m.id)).size).toBe(NER_MODELS.length)
+    })
+})
+
+describe('decodeTokenSpans', () => {
+    /**
+     * Token-level GLiNER emits [batch, words, classes, 3] -- a start, an end
+     * and an "inside" score per word per class -- rather than one score per
+     * enumerated span. A span is a start paired with a later end whose whole
+     * interior also scores.
+     */
+    const WORDS = [
+        ['John', 0, 4],
+        ['Smith', 5, 10],
+        ['called', 11, 17],
+    ] as [string, number, number][]
+
+    /** Build [1, words, classes, 3] logits from per-word triples. */
+    function logitsOf(triples: [number, number, number][][]): Float32Array {
+        return Float32Array.from(triples.flat(2))
+    }
+
+    const big = 4 // sigmoid(4) ~ 0.98
+    const small = -4 // sigmoid(-4) ~ 0.018
+
+    it('pairs a start with a later end and reads the span between them', () => {
+        // One class. John starts it, Smith ends it, both are inside it.
+        const logits = logitsOf([[[big, small, big]], [[small, big, big]], [[small, small, small]]])
+        const [spans = []] = decodeTokenSpans(
+            logits,
+            {
+                batchSize: 1,
+                inputLength: 3,
+                maxWidth: 12,
+                entityCount: 1,
+                texts: ['John Smith called'],
+                batchWords: [WORDS],
+                idToClass: { 1: 'person' },
+            },
+            { threshold: 0.5 }
+        )
+
+        expect(spans).toHaveLength(1)
+        expect(spans[0]).toMatchObject({ text: 'John Smith', label: 'person', start: 0, end: 10 })
+        expect(spans[0]?.score ?? 0).toBeGreaterThan(0.9)
+    })
+
+    it('scores a span by its weakest of start, end and interior', () => {
+        // A confident start must not carry an unconfident end.
+        const weakEnd = 0.9 // sigmoid(0.9) ~ 0.71
+        const logits = logitsOf([[[big, small, big]], [[small, weakEnd, big]], [[small, small, small]]])
+        const [spans = []] = decodeTokenSpans(
+            logits,
+            {
+                batchSize: 1,
+                inputLength: 3,
+                maxWidth: 12,
+                entityCount: 1,
+                texts: ['John Smith called'],
+                batchWords: [WORDS],
+                idToClass: { 1: 'person' },
+            },
+            { threshold: 0.5 }
+        )
+        expect(spans[0]?.score ?? 0).toBeCloseTo(1 / (1 + Math.exp(-weakEnd)), 5)
+    })
+
+    it('will not span across a word whose interior score drops out', () => {
+        // Smith ends it, but the word between is not inside the entity.
+        const logits = logitsOf([[[big, small, big]], [[small, small, small]], [[small, big, big]]])
+        const [spans = []] = decodeTokenSpans(
+            logits,
+            {
+                batchSize: 1,
+                inputLength: 3,
+                maxWidth: 12,
+                entityCount: 1,
+                texts: ['John Smith called'],
+                batchWords: [WORDS],
+                idToClass: { 1: 'person' },
+            },
+            { threshold: 0.5 }
+        )
+        expect(spans).toEqual([])
     })
 })
