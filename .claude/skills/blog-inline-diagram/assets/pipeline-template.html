@@ -1,0 +1,84 @@
+<!-- A pipeline as a flat ordered row. Render at 1200x360 (grow height for a
+     caption or a second row). Stages are mono because they are symbols you
+     type; prose is Space Grotesk.
+
+     Deliberately a ROW, not a node graph: the pipeline really is a flat
+     ordered array, and a canvas of connected nodes implies a branching it does
+     not have. See references in the blog-header-image skill's palette.md. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+    *{ box-sizing:border-box; margin:0; padding:0 }
+    :root{
+        --housing:#0c0f14; --panel:#141922; --rule:#262e3a; --rule-strong:#3a4453;
+        --readout:#78849a; --label:#ced7e4; --bright:#f2f6fc;
+        --detect:#3fc9f5; --entity:#ff5c8a; --flag:#f0a94c;
+        --display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+        --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    }
+    body{
+        width:1200px; height:360px; background:var(--housing); color:var(--label);
+        font-family:var(--display); display:flex; flex-direction:column;
+        justify-content:center; padding:44px 56px; gap:26px;
+    }
+    .title{ font-size:22px; font-weight:600; color:var(--bright) }
+    .row{ display:flex; align-items:stretch; gap:0 }
+
+    /* Fixed width per stage. A "roughly sized" flex box is how a label
+       overflows the frame in the final screenshot. */
+    .stage{
+        width:232px; flex:none; border:1px solid var(--rule-strong); border-radius:10px;
+        background:var(--panel); padding:16px 14px; display:flex; flex-direction:column;
+        gap:8px; align-items:center; justify-content:center;
+    }
+    .stage .name{ font-family:var(--mono); font-size:15px; white-space:nowrap; color:var(--label) }
+    .stage .col { font-family:var(--mono); font-size:12px; white-space:nowrap; color:var(--readout) }
+
+    .found     { border-color:rgba(63,201,245,.45); background:rgba(63,201,245,.08) }
+    .found .name{ color:var(--detect) }
+    .understood{ border-color:rgba(255,92,138,.45); background:rgba(255,92,138,.08) }
+    .understood .name{ color:var(--entity) }
+    .flag      { border-color:rgba(240,169,76,.45); background:rgba(240,169,76,.08) }
+    .flag .name{ color:var(--flag) }
+    .inert     { border-color:rgba(120,132,154,.28); background:rgba(120,132,154,.05) }
+    .inert .name{ color:var(--readout) }
+
+    /* The arrow carries the column name -- that is the actual wiring, and it is
+       the thing readers get wrong about this pipeline model. */
+    .arrow{
+        width:104px; flex:none; display:flex; flex-direction:column;
+        align-items:center; justify-content:center; gap:6px; color:var(--readout);
+    }
+    .arrow .line{ width:100%; height:1px; background:var(--rule-strong); position:relative }
+    .arrow .line::after{
+        content:""; position:absolute; right:0; top:-3px;
+        border-left:7px solid var(--rule-strong); border-top:3.5px solid transparent;
+        border-bottom:3.5px solid transparent;
+    }
+    .arrow .label{ font-family:var(--mono); font-size:12px; white-space:nowrap }
+
+    .caption{ font-size:15px; line-height:1.5; color:var(--readout); max-width:1000px }
+    .caption code{ font-family:var(--mono); font-size:14px; color:var(--label) }
+</style>
+
+<div class="title">Detect, then recognise</div>
+
+<div class="row">
+    <div class="stage found">
+        <div class="name">PdfToImage</div>
+        <div class="col">writes image</div>
+    </div>
+    <div class="arrow"><div class="label">image</div><div class="line"></div></div>
+    <div class="stage found">
+        <div class="name">DbnetOnnxDetector</div>
+        <div class="col">writes boxes</div>
+    </div>
+    <div class="arrow"><div class="label">boxes</div><div class="line"></div></div>
+    <div class="stage understood">
+        <div class="name">PaddleRecognizer</div>
+        <div class="col">writes text</div>
+    </div>
+</div>
+
+<div class="caption">
+    Stages compose by agreeing on a column name — there is no <code>pipe()</code> and no interface.
+</div>

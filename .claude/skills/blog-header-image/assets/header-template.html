@@ -1,0 +1,78 @@
+<!-- ScaleDP-TS post header. Render at 1000x420.
+     Replace EYEBROW / HEADLINE / KICKER / the three chips. Delete the chip row
+     if the post has no natural three-beat summary -- an empty row is worse than
+     no row. Chip classes: .found (cyan) .understood (magenta) .flag (amber)
+     .inert (slate). Pick by meaning, see references/palette.md. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+    *{ box-sizing: border-box; margin: 0; padding: 0 }
+    :root{
+        --housing:#0c0f14; --panel:#141922; --raised:#1b212c;
+        --rule:#262e3a; --rule-strong:#3a4453;
+        --readout:#78849a; --label:#ced7e4; --bright:#f2f6fc;
+        --detect:#3fc9f5; --entity:#ff5c8a; --flag:#f0a94c;
+        --display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+        --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    }
+    body{
+        width:1000px; height:420px; background:var(--housing); color:var(--label);
+        font-family:var(--display); display:flex; flex-direction:column;
+        justify-content:center; padding:0 64px; position:relative; overflow:hidden;
+    }
+    /* Soft wash keeps a flat dark panel from reading as a slide. */
+    body::before{
+        content:""; position:absolute; inset:0;
+        background:radial-gradient(900px 380px at 88% -18%, rgba(63,201,245,.14), transparent 65%);
+    }
+    .rule{ position:absolute; left:0; top:0; width:6px; height:100%; background:var(--detect) }
+    .wrap{ position:relative; z-index:1 }
+
+    .eyebrow{
+        font-family:var(--mono); font-size:15px; letter-spacing:.16em;
+        text-transform:uppercase; color:var(--detect); margin-bottom:20px; white-space:nowrap;
+    }
+    h1{ font-size:48px; line-height:1.16; font-weight:700; letter-spacing:-.021em; color:var(--bright) }
+    h1 em{ font-style:italic; color:var(--detect) }
+    h1 code{ font-family:var(--mono); font-size:.86em; font-weight:500 }
+
+    .kicker{ margin-top:18px; font-size:20px; line-height:1.45; color:var(--readout) }
+    .kicker code{ font-family:var(--mono); font-size:18px; color:var(--label) }
+
+    .chips{ display:flex; gap:14px; align-items:center; margin-top:34px }
+    /* Fixed width, never min-width: a "roughly sized" flex box is exactly how
+       a label overflows the frame in the final screenshot. */
+    .chip{
+        /* Defaults to inert, so a chip that forgets its accent class degrades to
+           slate rather than to a stark white box. */
+        width:236px; height:44px; border-radius:10px;
+        color:var(--readout); background:rgba(120,132,154,.08);
+        border:1px solid rgba(120,132,154,.28);
+        display:flex; align-items:center; justify-content:center;
+        font-family:var(--mono); font-size:15px; white-space:nowrap; flex:none;
+    }
+    /* 46px fits exactly ONE glyph -- an arrow. A word in a .narrow chip clips,
+       and the clipping is invisible until you look at the PNG. */
+    .chip.narrow{ width:46px }
+    .found     { color:var(--detect); background:rgba(63,201,245,.10); border-color:rgba(63,201,245,.35) }
+    .understood{ color:var(--entity); background:rgba(255,92,138,.10); border-color:rgba(255,92,138,.35) }
+    .flag      { color:var(--flag);   background:rgba(240,169,76,.10); border-color:rgba(240,169,76,.35) }
+    .inert     { color:var(--readout);background:rgba(120,132,154,.08);border-color:rgba(120,132,154,.28) }
+
+    .foot{
+        position:absolute; right:64px; bottom:34px; z-index:1;
+        font-family:var(--mono); font-size:14px; color:#475569; white-space:nowrap;
+    }
+</style>
+
+<div class="rule"></div>
+<div class="wrap">
+    <div class="eyebrow">EYEBROW</div>
+    <h1>Headline, up to two lines<br>at 48px</h1>
+    <div class="kicker">One line that says what the reader gets.</div>
+    <div class="chips">
+        <div class="chip found">first beat</div>
+        <div class="chip narrow inert">→</div>
+        <div class="chip understood">second beat</div>
+    </div>
+</div>
+<div class="foot">scaledp-ts.stabrise.com</div>

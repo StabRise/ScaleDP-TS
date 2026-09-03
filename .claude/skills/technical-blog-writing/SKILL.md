@@ -1,7 +1,7 @@
 ---
 name: technical-blog-writing
-description: "Technical blog post writing with structure, code examples, and developer audience conventions. Covers post types, code formatting, explanation depth, and developer-specific engagement patterns. Use for: engineering blogs, dev tutorials, technical writing, developer content, documentation posts. Triggers: technical blog, dev blog, engineering blog, technical writing, developer tutorial, tech post, code tutorial, programming blog, developer content, technical article, engineering post, coding tutorial, technical content"
-allowed-tools: Bash(belt *), Bash(mkdir -p examples/images/blog), Bash(cp *), Bash(mv *), Bash(node *), Bash(rm *shot.mjs), Bash(git remote get-url *)
+description: "Technical blog post writing with structure, code examples, and developer audience conventions. Covers post types, code formatting, explanation depth, and developer-specific engagement patterns. Use for: engineering blogs, dev tutorials, technical writing, developer content, documentation posts. Drives the blog-header-image and blog-inline-diagram skills for all artwork, and requires every post to carry a header plus two to four in-body figures. Triggers: technical blog, dev blog, engineering blog, technical writing, developer tutorial, tech post, code tutorial, programming blog, developer content, technical article, engineering post, coding tutorial, technical content"
+allowed-tools: Skill, Read, Write, Edit, Bash(belt *), Bash(ls *), Bash(git remote get-url *)
 ---
 
 > **Install the belt CLI skill:** `npx skills add belt-sh/cli`
@@ -23,8 +23,9 @@ belt app run exa/search --input '{
 }'
 ```
 
-For header images and diagrams, render HTML with Playwright — see
-[Blog Images](#blog-images-header--diagrams) below, not `belt`/`infsh/html-to-image`.
+`belt` is for **research only** here. All artwork goes through the
+`blog-header-image` and `blog-inline-diagram` skills — see [Illustrations](#illustrations)
+below — never `belt`/`infsh/html-to-image`, which does not know the project palette.
 
 
 ## Post Types
@@ -185,21 +186,24 @@ If you're new to containers, start with [our intro post]."
 ```markdown
 # Title (contains primary keyword, states outcome)
 
-[Hero image or diagram]
+[Header image -- blog-header-image skill]
 
 **TL;DR:** [2-3 sentence summary with key takeaway]
 
 ## The Problem / Why This Matters
 [Set up why the reader should care — specific, not generic]
+[FIGURE 1: the mechanism as it is, or the failure -- blog-inline-diagram]
 
 ## The Solution / How We Did It
 [Core content — code, architecture, explanation]
+[FIGURE 2: the mechanism as it becomes. Before/after if you have numbers.]
 
 ### Step 1: [First thing]
 [Explanation + code + output]
 
 ### Step 2: [Second thing]
 [Explanation + code + output]
+[FIGURE 3 if a step is spatial or has a surprising proportion]
 
 ## Results
 [Numbers, benchmarks, outcomes — be specific]
@@ -224,111 +228,76 @@ If you're new to containers, start with [our intro post]."
 | Architecture post | 2,000-3,500 | Diagrams carry some load |
 | Benchmark | 1,500-2,500 | Data and charts do heavy lifting |
 
-## Diagrams and Visuals
+## Illustrations
 
-### When to Use Diagrams
+**Do not hand-roll images for these posts, and do not use `belt` /
+`infsh/html-to-image` for them.** Two skills own this and carry the ScaleDP-TS
+palette, type and — the part that matters — the *meaning* of the accent colours
+(cyan is what the machine found, magenta is what it understood, amber is a
+flag). Invoke them rather than reproducing their recipes:
 
-| Scenario | Diagram Type |
-|----------|-------------|
-| Request flow | Sequence diagram |
-| System architecture | Box-and-arrow diagram |
-| Decision logic | Flowchart |
-| Data model | ER diagram |
-| Performance comparison | Bar/line chart |
-| Before/after | Side-by-side |
+- **`blog-header-image`** — the cover. One per post.
+- **`blog-inline-diagram`** — figures in the body. Several per post.
 
-See [Blog Images](#blog-images-header--diagrams) for how architecture/box-and-arrow
-diagrams get made (HTML mockup + Playwright screenshot, saved to the post's
-`images/` folder).
+They own sizes, the render script, naming, alt text and the raw-URL rule, so
+none of that is repeated here.
 
-```bash
-# Generate benchmark chart
-belt app run infsh/python-executor --input '{
-  "code": "import matplotlib.pyplot as plt\nimport matplotlib\nmatplotlib.use(\"Agg\")\n\nfig, ax = plt.subplots(figsize=(12, 6))\nfig.patch.set_facecolor(\"#0f172a\")\nax.set_facecolor(\"#0f172a\")\n\ntools = [\"Express\", \"Fastify\", \"Hono\", \"Elysia\"]\nrps = [15000, 45000, 62000, 78000]\ncolors = [\"#64748b\", \"#64748b\", \"#3b82f6\", \"#64748b\"]\n\nax.barh(tools, rps, color=colors, height=0.5)\nfor i, v in enumerate(rps):\n    ax.text(v + 1000, i, f\"{v:,} req/s\", va=\"center\", color=\"white\", fontsize=14)\n\nax.set_xlabel(\"Requests per second\", color=\"white\", fontsize=14)\nax.set_title(\"HTTP Framework Benchmark (Hello World)\", color=\"white\", fontsize=18, fontweight=\"bold\")\nax.tick_params(colors=\"white\", labelsize=12)\nax.spines[\"top\"].set_visible(False)\nax.spines[\"right\"].set_visible(False)\nax.spines[\"bottom\"].set_color(\"#334155\")\nax.spines[\"left\"].set_color(\"#334155\")\nplt.tight_layout()\nplt.savefig(\"benchmark.png\", dpi=150, facecolor=\"#0f172a\")\nprint(\"Saved\")"
-}'
-```
+### Every post gets a header *and* body figures
 
-## Blog Images (header & diagrams)
+A wall of prose describing a mechanism is the most common failure of these
+posts, and the one readers bounce on. Budget figures **before drafting**, not
+after:
 
-Do **not** use `belt`/`infsh/html-to-image` for this repo's posts. Instead build
-the graphic as a plain HTML file and render it with **Playwright** (already a
-devDependency of this repo — `node_modules/playwright`, no install needed), then
-save the PNG into the repo's shared blog-images folder (shared across channels/posts,
-not nested under each post):
+| Post type | Header | Body figures |
+|---|---|---|
+| Quick tip | 1 | 0–1 |
+| Tutorial | 1 | 2–3 |
+| Deep dive / explainer | 1 | 2–4 |
+| Architecture / system design | 1 | 3–4 |
+| Benchmark / comparison | 1 | 2–3, at least one chart |
+| Postmortem | 1 | 2–3, including a before/after |
 
-```
-examples/images/blog/<post-slug>-<name>.png
-# e.g. examples/images/blog/decoupling-detection-header.png
-```
+**Treat the body-figure minimum as a real constraint.** If you finish a deep
+dive and cannot find two mechanisms worth drawing, that is nearly always a
+signal that the post is thin — restating an API rather than explaining a
+mechanism — rather than a signal that the rule does not apply here. Go back and
+find the part where the reader has to build a mental model.
 
-Workflow:
+The per-figure bar still applies: `blog-inline-diagram` will tell you when a
+*particular* figure is not worth making, because a code block is often the
+better figure. The budget decides how many mechanisms in this post deserve a
+picture; the skill decides whether this specific picture earns its place. When
+the two conflict, draw a different thing — do not drop to zero.
 
-1. **Write the graphic as a local HTML file** (scratchpad is fine), sized to the
-   final CSS-pixel dimensions you want on the `body` — e.g. `width:1000px;height:420px`
-   for a Dev.to cover image, `1200x640` for an inline architecture diagram. Use the
-   same dark, monospace/system-ui, code-editor aesthetic as the earlier
-   `infsh/html-to-image` examples (`#0f172a`/`#1e293b` background, `#38bdf8` accent,
-   `#3b82f6` for a highlighted/current stage, `#f59e0b` for a "before/limitation"
-   stage) — no external assets, everything inline. **Give every box a fixed width**
-   (not `min-width`) and put `white-space:nowrap` on label text — flex boxes that
-   are only "roughly" sized are exactly how content overflows the frame edge in the
-   final screenshot.
-2. **Render it** with a small Playwright script run via `node` from the repo root
-   (so it resolves `node_modules/playwright`) — viewport set to the exact HTML
-   dimensions, `deviceScaleFactor: 2` for a crisp/retina PNG at 2x pixel size:
+### What to draw
 
-   ```js
-   // shot.mjs
-   import { chromium } from 'playwright'
-   import path from 'node:path'
+| The post is explaining | Figure | Where it goes |
+|---|---|---|
+| A sequence of stages and their wiring | Pipeline chain | Right after you first name the stages |
+| Why a new approach beats the old one | Before/after, with numbers in both panels | In the section making the argument |
+| A spatial fact — rotation, crops, padding, coordinate spaces | Geometry figure (inline SVG) | Before the code that implements it |
+| Where the time or the bytes actually go | Timing / proportion bars | In Results or Trade-offs |
+| A failure mode | Before/after, amber for the broken state | Where you diagnose it |
 
-   const [, , file, outPath, width, height] = process.argv
-   const browser = await chromium.launch()
-   const page = await browser.newPage({
-     viewport: { width: Number(width), height: Number(height) },
-     deviceScaleFactor: 2,
-   })
-   await page.goto('file://' + path.resolve(file))
-   await page.screenshot({ path: outPath })
-   await browser.close()
-   ```
+Place each figure **immediately after the paragraph it illustrates and before
+the code block that follows.** Below its explanation a figure reads as a
+summary; above it, as a promise.
 
-   ```bash
-   mkdir -p examples/images/blog
-   node shot.mjs /path/to/header.html examples/images/blog/<post-slug>-<name>.png 1000 420
-   rm shot.mjs
-   ```
+Charts are figures too — build them with `blog-inline-diagram`'s timing-bars
+type rather than matplotlib, so they match the rest of the post. A chart in a
+different palette reads as borrowed from somewhere else.
 
-   The viewport size is exact CSS pixels — no window-chrome/DPI mismatch to correct
-   for, unlike a real browser window, so no cropping step is needed.
-3. **Look at the result** (Read the PNG) before moving on — check text isn't
-   clipped at the right/bottom edge, especially on a multi-box diagram row. If
-   something overflows, fix the HTML's fixed widths/gaps and re-render; don't
-   just crop the overflow away.
-4. **Reference the image with its GitHub raw URL**, not a relative path — Dev.to
-   (and most other platforms these posts cross-post to) fetch the image from
-   wherever the markdown points, they don't resolve repo-relative paths, but they
-   do happily hotlink `raw.githubusercontent.com`:
+### Before you ship
 
-   ```
-   https://raw.githubusercontent.com/<org>/<repo>/main/examples/images/blog/<post-slug>-<name>.png
-   ```
-
-   Get `<org>/<repo>` from `git remote get-url origin` rather than assuming —
-   e.g. `git@github.com:StabRise/ScaleDP-TS.git` → `StabRise/ScaleDP-TS`. This
-   only resolves once the PNG is committed **and pushed to `main`** (or whatever
-   branch the URL names) — a raw URL for a file that only exists locally is a
-   broken image. If the post is going out before that push lands, say so when
-   handing it off rather than leaving a silently-broken link.
-
-For a diagram made of boxes and arrows (architecture, request flow), build it as
-a flex layout with explicit widths per box and a fixed `gap`, the same way — this
-is the same graphic the `infsh/html-to-image` box-and-arrow example above shows,
-just rendered locally with Playwright instead of sent to `belt`.
-
-Ask before generating an image if the post's topic or visual direction isn't
-already clear from the conversation — a wrong header is wasted work, not just a
-wrong API call.
+- Header present, and **every** figure rendered and actually looked at. Both
+  skills require reading the PNG, because a clipped label is invisible until you
+  do and survives to publication otherwise.
+- Alt text states the claim, not the picture: "Detection and recognition as two
+  separate stages", not "diagram with three boxes".
+- Every image referenced by its `raw.githubusercontent.com` URL, never a
+  repo-relative path — Dev.to does not resolve repo paths.
+- The PNGs are committed and pushed to `main`, or you have said so on handoff.
+  A raw URL for a file that exists only locally is a broken image.
 
 ## Distribution
 
@@ -359,7 +328,7 @@ belt app run x/post-create --input '{
 | Broken code examples | Destroys all credibility | Test every code block before publishing |
 | No version pinning | Code breaks in 6 months | "Works with Node 20, React 18.2" |
 | "Simply do X" | Dismissive, condescending | Remove "simply", "just", "easily" |
-| No diagrams for architecture | Walls of text describing systems | One diagram > 500 words of description |
+| Header image only, no body figures | The mechanism stays a wall of prose, and readers bounce | Budget 2-4 body figures before drafting; see Illustrations |
 | Marketing tone | Developers instantly disengage | Direct, technical, honest |
 | No trade-offs section | Reads as biased marketing | Always discuss downsides |
 | Giant introduction before content | Readers bounce | Get to the point in 2-3 paragraphs |

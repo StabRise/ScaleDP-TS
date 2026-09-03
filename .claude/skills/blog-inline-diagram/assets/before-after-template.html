@@ -1,0 +1,56 @@
+<!-- Before/after. Render at 1200x360. Amber is the state being argued against;
+     cyan is the state being argued for. Never the reverse -- amber means "look
+     at this problem", and using it for the fix inverts the reader's learned
+     reading of the demo's own overlays. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+    *{ box-sizing:border-box; margin:0; padding:0 }
+    :root{
+        --housing:#0c0f14; --panel:#141922; --rule:#262e3a; --rule-strong:#3a4453;
+        --readout:#78849a; --label:#ced7e4; --bright:#f2f6fc;
+        --detect:#3fc9f5; --entity:#ff5c8a; --flag:#f0a94c;
+        --display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+        --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    }
+    body{
+        width:1200px; height:360px; background:var(--housing); color:var(--label);
+        font-family:var(--display); padding:44px 56px; display:flex;
+        flex-direction:column; gap:24px;
+    }
+    .title{ font-size:22px; font-weight:600; color:var(--bright) }
+    .cols{ display:flex; gap:28px }
+    .panel{
+        width:544px; flex:none; border:1px solid; border-radius:10px;
+        background:var(--panel); padding:22px; display:flex; flex-direction:column; gap:14px;
+    }
+    .panel.before{ border-color:rgba(240,169,76,.45) }
+    .panel.after { border-color:rgba(63,201,245,.45) }
+    .tag{ font-family:var(--mono); font-size:13px; letter-spacing:.14em; text-transform:uppercase; white-space:nowrap }
+    .before .tag{ color:var(--flag) }
+    .after  .tag{ color:var(--detect) }
+    .lead{ font-size:17px; line-height:1.4; color:var(--label) }
+    pre{
+        font-family:var(--mono); font-size:14px; line-height:1.6; color:var(--readout);
+        background:#0f141c; border:1px solid var(--rule); border-radius:8px;
+        padding:14px; overflow:hidden; white-space:pre;
+    }
+    .num{ font-family:var(--mono); font-size:26px; margin-top:4px }
+    .before .num{ color:var(--flag) }
+    .after  .num{ color:var(--detect) }
+</style>
+
+<div class="title">Read the line whole, then split the words</div>
+<div class="cols">
+    <div class="panel before">
+        <div class="tag">before — cut, then read</div>
+        <div class="lead">Each word crop recognised on its own.</div>
+        <pre>https:/stabrise.com/scaledp/</pre>
+        <div class="num">63 boxes</div>
+    </div>
+    <div class="panel after">
+        <div class="tag">after — read, then cut</div>
+        <div class="lead">One inference per line; words cut from the result.</div>
+        <pre>https://stabrise.com/scaledp/</pre>
+        <div class="num">53 boxes</div>
+    </div>
+</div>
