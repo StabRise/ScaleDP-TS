@@ -77,3 +77,5 @@ yarn.lock
 # React Router build output and generated route types
 /examples/*/build/
 /examples/*/.react-router/
+docs/marketing/
+.serena/

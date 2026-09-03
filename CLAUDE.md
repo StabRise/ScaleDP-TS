@@ -124,3 +124,7 @@ npm run typecheck      # includes docs:check and react-router typegen
 
 `@stabrise` on npm, via GitHub Actions OIDC trusted publishing. npm CLI ≥ 11.5.1
 and `permissions: { id-token: write }`; `--provenance` is no longer needed.
+
+## Git & Commit Rules
+- Always use the system default git config for commit author.
+- Ensure commits use the configured user.email (`git config user.email`).
