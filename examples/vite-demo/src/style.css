@@ -1455,6 +1455,30 @@ html:not(.dark) {
     }
 }
 
+/*
+ * Side by side, the reading is exactly as tall as the page beside it.
+ *
+ * The height comes from `--page-height`, which Results measures off the page
+ * frame -- a page's height is its own aspect ratio times whatever width the
+ * column happens to get, so nothing in CSS knows it. Stretching the panel to
+ * fill the grid row instead would leave it short by the tabs and the toolbar
+ * above it, which the page column does not have.
+ *
+ * Only a *direct* child: a gathered list's panels are nested inside their items
+ * and keep their own cap, or every picture in the list would be page-tall.
+ *
+ * Stacked, there is no page beside it to match, so this stays out of the
+ * single-column layout entirely.
+ */
+@media (min-width: 901px) {
+    .col--read > .scroll {
+        height: var(--page-height, 30rem);
+        /* A banner-shaped page is barely taller than its own caption. */
+        min-height: 12rem;
+        max-height: none;
+    }
+}
+
 /* Pages of a PDF, or crops -- whatever the run produced more than one of. */
 .pager {
     display: flex;
@@ -1580,8 +1604,61 @@ html:not(.dark) {
     border-radius: var(--radius);
 }
 
-.scroll[data-wrap] pre {
-    white-space: pre-wrap;
+/*
+ * The page and the outline over it, stretched to one frame.
+ *
+ * The overlay is an SVG in the image's own pixel coordinates, so it only lands
+ * on the right pixels if both fill exactly the same box -- hence the grid, which
+ * makes the image define the size and the overlay follow it.
+ */
+.page-frame {
+    position: relative;
+    display: grid;
+}
+
+.page-frame > * {
+    grid-area: 1 / 1;
+}
+
+.page-frame__overlay {
+    pointer-events: none;
+    display: grid;
+}
+
+.page-frame__overlay svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* A boxes table whose rows can be picked says so by the cursor. */
+.scroll--pickable tr[data-box-index] {
+    cursor: pointer;
+}
+
+.scroll--pickable tr[data-box-index]:hover td {
+    background: var(--hover, rgba(63, 201, 245, 0.12));
+}
+
+.scroll--pickable tr.is-picked td {
+    background: rgba(255, 45, 85, 0.16);
+    font-weight: 600;
+}
+
+/*
+ * The pictures a reduced row was built from, stacked so each keeps its own
+ * scale -- a 1000px logo beside a 345px one says something a uniform grid of
+ * thumbnails would hide.
+ */
+.strip__item {
+    margin: 0 0 0.85rem;
+}
+
+.strip__item:last-child {
+    margin-bottom: 0;
+}
+
+.strip__item figcaption {
+    margin-top: 0.35rem;
 }
 
 /* The library's display helpers emit unstyled DOM; theme it from here so the

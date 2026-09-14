@@ -16,6 +16,23 @@ import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
 /** PDF user space is defined in points; 72 of them make an inch. */
 export const POINTS_PER_INCH = 72
 
+/**
+ * Which pages a PDF stage should read for one input row.
+ *
+ * A row that already names a page gets that page and no other. Two expanding
+ * PDF stages over one file would otherwise square the row count -- a five-page
+ * file through `PdfToDocument` then `PdfEmbeddedImages` becoming twenty-five
+ * rows -- because each would explode the whole document again. Only a PDF stage
+ * ever writes `pageCol`, so honouring it is the behaviour a chain implies.
+ */
+export function pageIndexes(page: unknown, numPages: number, pageLimit: number): number[] {
+    if (typeof page === 'number' && Number.isInteger(page) && page >= 0) {
+        return page < numPages ? [page] : []
+    }
+    const count = pageLimit > 0 ? Math.min(pageLimit, numPages) : numPages
+    return Array.from({ length: count }, (_, i) => i)
+}
+
 export interface PdfToImageParams extends BaseStageParams {
     /** Render DPI. 300 matches ScaleDP's default and suits OCR. */
     resolution: number
@@ -72,10 +89,9 @@ export class PdfToImage extends Stage<PdfToImageParams> {
             // page access rather than from task.promise. Wrap the whole
             // operation so the failure is described wherever it lands.
             const document = await task.promise
-            const pageCount = pageLimit > 0 ? Math.min(pageLimit, document.numPages) : document.numPages
             const rows: Row[] = []
 
-            for (let index = 0; index < pageCount; index++) {
+            for (const index of pageIndexes(row[pageCol], document.numPages, pageLimit)) {
                 ctx.signal?.throwIfAborted()
                 const image = await renderPage(document, index + 1, {
                     resolution,

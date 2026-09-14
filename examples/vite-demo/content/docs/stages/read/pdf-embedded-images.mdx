@@ -1,0 +1,117 @@
+---
+title: PdfEmbeddedImages
+description: Pull the raster images out of a PDF at their own pixel size, one row each, so a recognizer can read what the text layer cannot see.
+---
+
+<StageMeta type="PdfEmbeddedImages" />
+
+A PDF's text layer covers its *vector* text and nothing else. Anything scanned,
+photographed or pasted in as a bitmap — an invoice table, an ID page, a receipt —
+is invisible to [`PdfToDocument`](/docs/stages/read/pdf-to-document). This stage
+finds those bitmaps and emits one row per image, so any OCR stage can read them
+like any other picture.
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfEmbeddedImages, PdfToDocument, PdfMergeImageText } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToDocument({ resolution: 300 }),
+    new PdfEmbeddedImages({ resolution: 300 }),
+    new PaddleTextRecognizer({ inputCol: 'image', outputCol: 'image_text' }),
+    new PdfMergeImageText(),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToDocument', options: { resolution: 300 } },
+    { type: 'PdfEmbeddedImages', options: { resolution: 300 } },
+]} label="Look at the images in a PDF" />
+
+See [A PDF's text layer and its scanned images](/docs/recipes/text-layer-and-scanned-images)
+for the whole pipeline.
+
+## The pixels are the PDF's own
+
+The alternative — render the page and crop the image's rectangle out of it —
+resamples twice and is capped by the render DPI. This stage takes the image
+object itself, so the pixels reach the recognizer exactly as the PDF stored them.
+
+That is not the same as *more* pixels, and the distinction matters. In
+`SampleWithFaceImage.pdf` the embedded scan is 1524px wide and is placed across
+1981px of a page rendered at 300 DPI — an effective 231 DPI. Rendering the page at
+600 would not recover detail the scan never had; it would only interpolate.
+
+`placement.effectiveResolution` reports that number, and `image.resolution`
+carries it onto the emitted image. `minEffectiveResolution` upscales anything
+below it before the recognizer sees it, which is worth doing: most recognizers
+are trained around 300 DPI and read a 90 DPI thumbnail badly.
+
+## It reads one page, not the whole file again
+
+Two expanding PDF stages over one file used to square the row count — a five-page
+document through `PdfToDocument` and then another reader became twenty-five rows.
+Every PDF stage now honours a page index the row already carries, so a chain
+reads each page once. Only a PDF stage ever writes that column.
+
+## What it skips, and why
+
+- **Images smaller than `minPixels`.** A bullet, a rule and a gradient swatch are
+  all images, and each one would otherwise cost a recognizer pass.
+- **Stencil masks.** A 1-bit `/ImageMask` tints a shape; it carries no readable
+  pixels.
+- **Images already covered by the text layer.** A *searchable scan* — a photograph
+  with an invisible OCR layer laid over it — has hundreds of text-layer boxes
+  inside the image's placement. Re-reading it costs seconds to arrive at a worse
+  answer than the layer already holds. `minCoveringBoxes` is that test; set it to
+  `0` to read every image regardless.
+
+<Callout title="Match the resolution">
+`resolution` here is the pixel space the *placement* boxes are expressed in, not
+the size of the extracted image. Set it to the same number as your
+`PdfToDocument` or the two will not line up.
+</Callout>
+
+## A page with no images
+
+`returnEmpty` (on by default) emits the page carrying an `Image` whose
+`exception` says there was nothing to read. A downstream recognizer reports that
+faithfully and [`PdfMergeImageText`](/docs/stages/transform/pdf-merge-image-text)
+recognises it as the expected case, so the page keeps its text layer instead of
+disappearing from the results.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `resolution` | `number` 36–600 | `300` | Pixel space the placement boxes are expressed in. Match PdfToDocument. |
+| `pageLimit` | `number` | `0` | 0 reads every page. Ignored when the row already names a page. |
+| `imageType` | `'png'` \| `'webp'` \| `'jpeg'` | `'png'` | Image format |
+| `placementCol` | `string` | `'placement'` | Where the image sits on the page. PdfMergeImageText needs it to map boxes back. |
+| `minPixels` | `number` | `4096` | Ignore images with fewer native pixels than this, so bullets and rules cost nothing. |
+| `imageLimit` | `number` | `0` | Most images per page, largest placement first; 0 takes all of them. |
+| `minEffectiveResolution` | `number` 0–600 | `150` | Upscale an image placed below this DPI before it is read. 0 never upscales. |
+| `textLayerCol` | `string` | `'document'` | A text-layer Document used to skip images that are already readable. Empty disables the check. |
+| `minCoveringBoxes` | `number` | `8` | Text-layer boxes inside an image that mark it already read — a searchable scan has hundreds. 0 never skips. |
+| `returnEmpty` | `boolean` | `true` | Emit the page with an errored image when it has none, so its text layer is not lost. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'content'` | Raw PDF bytes, normally the content column. |
+| `outputCol` | `string` | `'image'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `objectTimeoutMs` | `number` | `10000` | How long to wait for pdf.js to decode one image object before skipping it. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

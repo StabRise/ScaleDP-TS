@@ -145,8 +145,13 @@ export function reads(node: StageNode): { name: string; kind?: ColumnKind }[] {
  * each. Two of them in a row is fine when the second reads what the first
  * produced: it subdivides those rows. It is *not* fine when the second reads a
  * column that already existed before the first ran, because then every row the
- * first made gets expanded again: a `PdfToImage` and a `PdfToDocument` both
- * reading `content` turn a five-page file into twenty-five rows.
+ * first made gets expanded again: an `ImageCropBoxes` reading `content` after a
+ * page explosion would crop the whole document once per page.
+ *
+ * `pageScoped` is the other way out. Every PDF reader expands per page *and*
+ * honours a page index the row already carries, so a chain of them reads each
+ * page once. That is a property of the stage, not something a column graph can
+ * be read off, which is why the catalogue states it.
  */
 export function multipliesRows(stages: readonly StageNode[], index: number): string | null {
     const node = stages[index]
@@ -157,6 +162,8 @@ export function multipliesRows(stages: readonly StageNode[], index: number): str
         (candidate, i) => i < index && getStageSpec(candidate.type)?.expands === true
     )
     if (earlier === -1) return null
+
+    if (spec.pageScoped && getStageSpec(stages[earlier]?.type ?? '')?.pageScoped) return null
 
     const available = columnsBefore(stages, index)
     const readsFresh = reads(node).some((input) => {

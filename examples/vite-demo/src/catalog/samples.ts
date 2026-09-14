@@ -39,7 +39,7 @@ export const SAMPLES: readonly Sample[] = [
     {
         file: 'SampleWithFaceImage.pdf',
         label: 'Face, scanned',
-        wants: 'The same, as a scan — no text layer, so everything comes from OCR',
+        wants: 'A scan pasted onto a typed footer — what the hybrid PDF preset is for',
     },
     {
         file: 'SampleWithFaceRussianImage.pdf',

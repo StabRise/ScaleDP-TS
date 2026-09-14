@@ -1,0 +1,72 @@
+---
+title: A PDF's text layer and its scanned images
+description: Most PDFs are neither pure text nor pure scan. Read both, in one pipeline, into one Document per page.
+---
+
+A PDF's text layer covers its *vector* text. The scanned table pasted into the
+middle of the page is a bitmap, and `getTextContent` cannot see a word of it.
+
+The usual advice — decide per page whether to trust the text layer or OCR the
+whole raster — gets the hybrid page wrong both ways. The text layer misses the
+scan; whole-page OCR re-reads clean vector text worse than the PDF already
+states it.
+
+## Read both
+
+```ts
+import { Pipeline } from '@stabrise/scaledp'
+import { PdfToDocument, PdfEmbeddedImages, PdfMergeImageText } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const pipeline = new Pipeline([
+    new PdfToDocument({ resolution: 300 }),
+    new PdfEmbeddedImages({ resolution: 300 }),
+    new PaddleTextRecognizer({ inputCol: 'image', outputCol: 'image_text' }),
+    new PdfMergeImageText(),
+])
+
+const pages = await pipeline.transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToDocument', options: { resolution: 300 } },
+    { type: 'PdfEmbeddedImages', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { inputCol: 'image', outputCol: 'image_text' } },
+    { type: 'PdfMergeImageText', options: {} },
+]} label="Run the hybrid reader" />
+
+One row per page comes out, and `document.bboxes` holds the text-layer words and
+the words read out of the page's images together, in one coordinate space, in
+reading order.
+
+## What each stage does
+
+1. **[`PdfToDocument`](/docs/stages/read/pdf-to-document)** reads the text layer
+   into word boxes and sets the page index on the row.
+2. **[`PdfEmbeddedImages`](/docs/stages/read/pdf-embedded-images)** extracts that
+   page's raster images at their own pixel size — not a crop of the rendered page,
+   so nothing is resampled — and emits a row each, with a `placement` saying where
+   the image sits.
+3. **Any recognizer** reads them. They are ordinary images; nothing about this
+   step is PDF-specific.
+4. **[`PdfMergeImageText`](/docs/stages/transform/pdf-merge-image-text)** maps each
+   image's boxes back onto the page through its placement, merges them with the
+   text layer, and reduces the page's rows back to one.
+
+The row count goes 1 → *pages* → *images* → *pages*. Every PDF stage honours a
+page index the row already carries, so the two readers do not multiply.
+
+## Overlapping readings
+
+A *searchable scan* — a photograph with an invisible OCR layer over it — describes
+the same words twice. Two things handle it:
+
+- `PdfEmbeddedImages` skips an image that already has `minCoveringBoxes`
+  text-layer boxes inside it, so the wasted recognizer pass never happens.
+- `PdfMergeImageText`'s `strategy` decides the rest. `text-layer-wins` is the
+  default; `ocr-wins` is for corpora whose text layer extracts as mojibake.
+
+## When you only want the cheap answer
+
+If your corpus really is either-or, the two-pass split is still cheaper — see
+[Skip OCR when the PDF already has text](/docs/recipes/skip-ocr-when-there-is-a-text-layer).

@@ -72,6 +72,69 @@ const drawEntities = () => ({
 const pdfToImage = () => ({ type: 'PdfToImage', options: { resolution: 200 } })
 
 /**
+ * The resolution every stage of a hybrid preset has to agree on.
+ *
+ * It is not a render DPI for `PdfToDocument` and `PdfEmbeddedImages` -- it is the
+ * pixel space they express their boxes in. Set one of the three differently and
+ * the boxes land somewhere else on the page, silently.
+ */
+const HYBRID_DPI = 200
+
+/**
+ * The three readers a hybrid preset starts with.
+ *
+ * `PdfToDocument` goes first and not only for the text: it keeps `content` and
+ * stamps the page index, and every PDF stage after it then reads just that page.
+ * Two readers that each exploded the document again would square the row count.
+ *
+ * `PdfToImage` is here only so there is a page to draw on at the end, and it
+ * needs `keepInputData` because it drops `content` by default -- which the stage
+ * after it still has to read.
+ */
+const hybridRead = () => [
+    { type: 'PdfToDocument', options: { resolution: HYBRID_DPI } },
+    { type: 'PdfToImage', options: { resolution: HYBRID_DPI, keepInputData: true } },
+    {
+        type: 'PdfEmbeddedImages',
+        options: {
+            resolution: HYBRID_DPI,
+            // Not `image`: that is the page, and the drawing stage at the end
+            // needs it. Writing the crops there would leave the boxes drawn over
+            // the last embedded picture instead.
+            outputCol: 'embedded',
+            // placementCol is left at its default, which is the one
+            // PdfMergeImageText reads by default too.
+        },
+    },
+]
+
+/**
+ * ...and the two stages every one of them ends with.
+ *
+ * The merge maps each picture's boxes back onto the page through its placement
+ * and folds the rows back to one per page. `text-layer-wins` is its default:
+ * where a page carries an invisible OCR layer over a scan, the PDF's own words
+ * are the exact ones.
+ */
+const hybridMerge = () => [
+    // `collect` is on by default, so the pictures the page was cut into, the
+    // regions found in each and what was read all survive the reduction --
+    // which is the first thing to check when a reading comes back short.
+    { type: 'PdfMergeImageText', options: { keepFormatting: true } },
+    {
+        type: 'ImageDrawBoxes',
+        options: {
+            // The merged document, so typed words and scanned words are outlined
+            // together -- which is the point of a hybrid preset.
+            inputCols: ['image', 'document'],
+            outputCol: 'annotated',
+            color: BOX_COLOR,
+            lineWidth: 2,
+        },
+    },
+]
+
+/**
  * OSD, writing the `script` column the script-aware preset reads its model from.
  *
  * Tesseract takes a `lang`, so its presets already state what they expect to
@@ -119,6 +182,49 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
                 },
             },
             drawText(),
+        ],
+    },
+    {
+        id: 'builtin:pdf-hybrid',
+        name: 'PDF text layer + scanned images',
+        summary:
+            'Lifts the PDF’s own words and OCRs only the pictures embedded beside them, into one result per page. The pipeline for a page that is part typed and part scanned — a letterhead around a photographed table.',
+        stages: [
+            ...hybridRead(),
+            // An ordinary recognizer on ordinary images -- nothing about this
+            // step knows it is looking at the inside of a PDF.
+            {
+                type: 'PaddleTextRecognizer',
+                options: { inputCol: 'embedded', outputCol: 'image_text' },
+            },
+            ...hybridMerge(),
+        ],
+    },
+    {
+        id: 'builtin:pdf-hybrid-detect',
+        name: 'PDF text layer + scanned images with Text Detection',
+        summary:
+            'The same, with DBNet finding the regions inside each embedded picture and PP-OCR reading exactly those. What a scan pasted in askew needs, since the recognizer can turn each region the right way up.',
+        stages: [
+            ...hybridRead(),
+            // Pointed at the extracted picture, not at `image`: the page is only
+            // there to be drawn on, and detecting over it again would find the
+            // typed text the layer has already read exactly.
+            { type: 'DbnetOnnxDetector', options: { inputCol: 'embedded', outputCol: 'detected' } },
+            {
+                type: 'PaddleRecognizer',
+                options: {
+                    inputCols: ['embedded', 'detected'],
+                    outputCol: 'image_text',
+                    // On here, though the stage defaults it off, for the same
+                    // reason as the other detection presets: PaddleOCR turns a
+                    // crop taller than it is wide by itself but never a line that
+                    // is merely upside down, and a pasted-in scan is exactly
+                    // where that happens.
+                    detectLineOrientation: true,
+                },
+            },
+            ...hybridMerge(),
         ],
     },
     {

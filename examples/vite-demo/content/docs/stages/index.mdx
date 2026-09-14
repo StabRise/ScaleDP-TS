@@ -20,6 +20,7 @@ transcription of it.
 | [DataToImage](/docs/stages/read/data-to-image) | bytes | image | — |
 | [PdfToImage](/docs/stages/read/pdf-to-image) | bytes | image | `pdfjs-dist` |
 | [PdfToDocument](/docs/stages/read/pdf-to-document) | bytes | document | `pdfjs-dist` |
+| [PdfEmbeddedImages](/docs/stages/read/pdf-embedded-images) | bytes | image | `pdfjs-dist` |
 
 ### Detect
 
@@ -45,6 +46,7 @@ transcription of it.
 
 | Stage | Reads | Writes | Needs |
 | --- | --- | --- | --- |
+| [PdfMergeImageText](/docs/stages/transform/pdf-merge-image-text) | document, document | document | — |
 | [LineOrientationDetector](/docs/stages/transform/line-orientation-detector) | image, boxes | image | `onnxruntime-web` |
 | [ImageDrawBoxes](/docs/stages/transform/image-draw-boxes) | image, boxes | image | — |
 | [ImageCropBoxes](/docs/stages/transform/image-crop-boxes) | image, boxes | image | — |

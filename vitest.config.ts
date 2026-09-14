@@ -25,6 +25,11 @@ export default defineConfig({
                         instances: [{ browser: 'chromium' }],
                     },
                 },
+                // pdf.js is large enough that Vite discovers and pre-bundles it
+                // mid-run, which reloads the page under the running test.
+                optimizeDeps: {
+                    include: ['pdfjs-dist'],
+                },
             },
         ],
         coverage: {

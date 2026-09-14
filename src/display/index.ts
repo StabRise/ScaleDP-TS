@@ -76,18 +76,87 @@ export function showImage(image: ScaleDpImage, options: ShowImageOptions = {}): 
     return img
 }
 
+export interface BoxOverlayOptions {
+    color?: string
+    /** Stroke width in *image* pixels, so it scales with the overlay. */
+    lineWidth?: number
+    /** Fill colour. Omitted leaves the outline hollow. */
+    fill?: string
+}
+
+/**
+ * An SVG that outlines boxes over an image, without touching its pixels.
+ *
+ * The complement to `ImageDrawBoxes`, which burns the outlines in: this one
+ * draws them above an existing `<img>`, so what is highlighted can change as
+ * often as a reader clicks without re-encoding anything.
+ *
+ * Scaling is the `viewBox`'s job, not JavaScript's. The overlay is authored in
+ * the image's own pixel coordinates and stretched by CSS, so it stays aligned
+ * through any layout change -- a resized window, a zoom, a flexbox reflow --
+ * with nothing to recompute and no resize listener to leak.
+ *
+ * Position it yourself: give the container `position: relative` and this element
+ * `position: absolute; inset: 0`, over an image sized to the same box.
+ */
+export function boxOverlay(
+    boxes: readonly Box[],
+    size: { width: number; height: number },
+    options: BoxOverlayOptions = {}
+): SVGSVGElement {
+    const NS = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(NS, 'svg')
+    svg.setAttribute('viewBox', `0 0 ${size.width} ${size.height}`)
+    svg.setAttribute('preserveAspectRatio', 'none')
+    svg.setAttribute('width', '100%')
+    svg.setAttribute('height', '100%')
+
+    const color = options.color ?? '#ff2d55'
+    const lineWidth = options.lineWidth ?? Math.max(2, Math.round(size.width / 400))
+
+    for (const box of boxes) {
+        const rect = document.createElementNS(NS, 'rect')
+        rect.setAttribute('x', String(box.x))
+        rect.setAttribute('y', String(box.y))
+        rect.setAttribute('width', String(Math.max(1, box.width)))
+        rect.setAttribute('height', String(Math.max(1, box.height)))
+        rect.setAttribute('fill', options.fill ?? 'none')
+        rect.setAttribute('stroke', color)
+        rect.setAttribute('stroke-width', String(lineWidth))
+
+        // A Box's angle turns it about its own centre, which is the centre of
+        // the axis-aligned rect just written -- not about its top-left corner.
+        if (box.angle !== 0) {
+            const cx = box.x + box.width / 2
+            const cy = box.y + box.height / 2
+            rect.setAttribute('transform', `rotate(${box.angle} ${cx} ${cy})`)
+        }
+        svg.append(rect)
+    }
+    return svg
+}
+
 export interface ShowTextOptions {
     /**
      * Preserve the document's own layout. Correct when the OCR stage ran with
      * `keepFormatting`, which encodes the layout in spaces and blank lines.
      */
     preserveLayout?: boolean
+    /**
+     * Height cap, with its own scrollbar. `'none'` hands both back to the
+     * caller: a host that has already put this inside its own scrolling panel
+     * would otherwise get two nested scrollbars capped at the same height, and
+     * a horizontal bar stranded below the visible area.
+     */
     maxHeight?: string
 }
 
 /** A `<pre>` of the recognized text. Mirrors `show_text`. */
 export function showText(document_: Document, options: ShowTextOptions = {}): HTMLElement {
     if (document_.exception) return errorBlock(document_.exception)
+
+    const maxHeight = options.maxHeight ?? '30rem'
+    const owned = maxHeight !== 'none'
 
     return element('pre', {
         text: document_.text,
@@ -96,8 +165,11 @@ export function showText(document_: Document, options: ShowTextOptions = {}): HT
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
             fontSize: '12px',
             whiteSpace: options.preserveLayout === false ? 'pre-wrap' : 'pre',
-            overflowX: 'auto',
-            maxHeight: options.maxHeight ?? '30rem',
+            // No cap means nothing here to scroll, so the overflow is the
+            // caller's too -- claiming it would put the horizontal scrollbar at
+            // the foot of the full text rather than of what is on screen.
+            overflowX: owned ? 'auto' : 'visible',
+            maxHeight: owned ? maxHeight : '',
             margin: '0',
         },
     })
@@ -271,8 +343,12 @@ export function showBoxes(output: DetectorOutput | Document, limit = 20): HTMLEl
         header.append(th)
     }
 
-    for (const box of limit > 0 ? boxes.slice(0, limit) : boxes) {
+    const shown = limit > 0 ? boxes.slice(0, limit) : boxes
+    for (const [index, box] of shown.entries()) {
         const tr = table.insertRow()
+        // The row's identity, so a host can map a click back to a box without
+        // parsing the cells or keeping a parallel copy of the list.
+        tr.dataset.boxIndex = String(index)
         for (const value of [
             box.text,
             box.score.toFixed(3),
@@ -308,4 +384,4 @@ function errorBlock(message: string): HTMLElement {
     })
 }
 
-export type { DetectorOutput, Document, Entity, NerOutput, ScaleDpImage }
+export type { Box, DetectorOutput, Document, Entity, NerOutput, ScaleDpImage }

@@ -17,7 +17,7 @@ import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import { toBytes } from '../stages/data-to-image.js'
 import { extractTextBoxes } from './extract-text.js'
-import { POINTS_PER_INCH } from './pdf-to-image.js'
+import { POINTS_PER_INCH, pageIndexes } from './pdf-to-image.js'
 import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
 import { splitRunsIntoWords } from './split-words.js'
 
@@ -57,10 +57,9 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
             // pdf.js defers worker setup, so a missing worker surfaces on first
             // page access rather than from task.promise.
             const pdf = await task.promise
-            const pageCount = pageLimit > 0 ? Math.min(pageLimit, pdf.numPages) : pdf.numPages
             const rows: Row[] = []
 
-            for (let index = 0; index < pageCount; index++) {
+            for (const index of pageIndexes(row[pageCol], pdf.numPages, pageLimit)) {
                 ctx.signal?.throwIfAborted()
                 const page = await pdf.getPage(index + 1)
                 try {

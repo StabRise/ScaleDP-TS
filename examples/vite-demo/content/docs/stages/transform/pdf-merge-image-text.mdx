@@ -1,0 +1,102 @@
+---
+title: PdfMergeImageText
+description: Fold each embedded image's reading back into its page's text layer — many rows in, one row per page out.
+---
+
+<StageMeta type="PdfMergeImageText" />
+
+[`PdfEmbeddedImages`](/docs/stages/read/pdf-embedded-images) leaves a page spread
+across several rows, each holding one image's `Document` in that image's own
+pixels. This stage maps those boxes onto the page through the placement each row
+carries, merges them with the text layer, and emits the page once.
+
+```ts
+import { PdfMergeImageText } from '@stabrise/scaledp/pdf'
+
+new PdfMergeImageText({ strategy: 'text-layer-wins' })
+```
+
+It is the one stage in the library that *reduces* the row count.
+
+## The searchable-scan problem
+
+A page can describe the same words twice: a photograph of a document with an
+invisible OCR text layer laid over it. Concatenating both sources says everything
+twice, so one has to win.
+
+- **`text-layer-wins`** (the default) keeps the PDF's own words and drops any OCR
+  box the text layer already covers. The text layer is exact where it exists, so
+  this is right for almost every corpus.
+- **`ocr-wins`** is the mirror. Worth reaching for when a corpus extracts as
+  mojibake — mis-encoded CID fonts are the usual cause — so the "exact" text
+  layer is exactly wrong.
+- **`union`** keeps both, for comparing the two readings.
+
+The test is *coverage*, not IoU: a word read by OCR sits wholly inside the
+line-level box a text layer reports for the same words, and their IoU is small.
+An IoU test would keep both and the text would come out doubled.
+`coverageThreshold` is how much of a box the winner must cover before the loser
+is dropped.
+
+## Reading order, across both sources
+
+`text` and `bboxes` come out of a single line grouping over the *merged* set, so
+the two agree — the boxes are in the order the text was built from, which is what
+lets NER character offsets map back to boxes.
+
+Grouping the merged set rather than each source is the point. A vector-text
+header above an OCR'd table reads header-first; concatenating by source would put
+the header after the table whenever the image happens to sit at the top of the
+page.
+
+`Document.type` is `'pdf+ocr'` when an image contributed, `'pdf'` when the text
+layer answered alone.
+
+<Callout title="`text` is rebuilt, not joined">
+`PdfToDocument` joins the pdf.js *runs* with newlines and keeps that as its
+`text`. Here `text` is rebuilt from the merged boxes instead — it has to be, since
+the two sources interleave. The old stage's contract is unchanged.
+</Callout>
+
+## A failed image does not fail the page
+
+One image's recognizer failure is recorded and dropped: the page keeps its text
+layer and every other image's reading, and `exception` stays empty. It is set
+only when nothing at all could be read, because `hasUsableTextLayer` and every
+downstream stage treat a non-empty `exception` as "upstream failed" — so
+poisoning the page over one bad picture would throw away the good text with it.
+
+The limitation is the schema's: `Document` has one error slot, so a partial
+failure is not visible in the output.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['document', 'image_text']` | The text-layer column, then the column an OCR stage wrote for each image. |
+| `placementCol` | `string` | `'placement'` | Written by PdfEmbeddedImages. Without it an image’s boxes cannot be put on the page. |
+| `groupByCols` | `string[]` | `['path', 'page']` | Row fields that together identify one page. |
+| `strategy` | `'text-layer-wins'` \| `'ocr-wins'` \| `'union'` | `'text-layer-wins'` | Which source to believe where both describe the same words. |
+| `coverageThreshold` | `number` 0–1 | `0.5` | How much of a box the winning source must cover before the losing one is dropped. |
+| `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
+| `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
+| `collect` | `boolean` | `true` | Gather the columns that differ across a page’s rows into arrays, so the pictures it was cut into, the regions found and what was read all survive the reduction. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'document'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'document'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

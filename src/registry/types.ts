@@ -24,6 +24,8 @@ export type ColumnKind =
     | 'box'
     /** A `ScriptOutput`: which script a page is written in, and its rotation. */
     | 'script'
+    /** An `ImagePlacement`: where an image extracted from a PDF sits on its page. */
+    | 'placement'
 
 /** Which widget a parameter wants. */
 export type StageParamKind =
@@ -116,6 +118,16 @@ export interface StageSpec {
     cache?: StageCacheSpec
     /** One row per input row, or several? PDF page explosion and box cropping. */
     expands?: boolean
+    /**
+     * The expansion is one row per *page*, and a row that already names a page
+     * gets that page alone.
+     *
+     * Two such stages in a chain subdivide rather than multiply: the first
+     * explodes the document into pages, the second reads only the page it was
+     * handed. Without this a builder cannot tell them from two stages that each
+     * explode the whole document again.
+     */
+    pageScoped?: boolean
     /**
      * The output is for looking at, not for feeding onward.
      *

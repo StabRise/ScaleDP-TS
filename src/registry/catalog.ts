@@ -38,7 +38,16 @@ import {
     TesseractRecognizer,
     TesseractScriptDetector,
 } from '../ocr/index.js'
-import { PDF_TO_DOCUMENT_DEFAULTS, PDF_TO_IMAGE_DEFAULTS, PdfToDocument, PdfToImage } from '../pdf/index.js'
+import {
+    PDF_EMBEDDED_IMAGES_DEFAULTS,
+    PDF_MERGE_IMAGE_TEXT_DEFAULTS,
+    PDF_TO_DOCUMENT_DEFAULTS,
+    PDF_TO_IMAGE_DEFAULTS,
+    PdfEmbeddedImages,
+    PdfMergeImageText,
+    PdfToDocument,
+    PdfToImage,
+} from '../pdf/index.js'
 import { DATA_TO_IMAGE_DEFAULTS, DataToImage } from '../stages/data-to-image.js'
 import { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from '../stages/image-crop-boxes.js'
 import { IMAGE_DRAW_BOXES_DEFAULTS, ImageDrawBoxes } from '../stages/image-draw-boxes.js'
@@ -77,6 +86,20 @@ const STRATEGIES: readonly StageParamOption[] = Object.freeze([
  * are the schema's own field names -- `Box` for a detector or OCR result,
  * `Entity` for NER output. Numbers are formatted to two decimals.
  */
+const MERGE_STRATEGY_OPTIONS: readonly StageParamOption[] = Object.freeze([
+    {
+        value: 'text-layer-wins',
+        label: 'Text layer wins',
+        title: 'Keep the PDF’s own words and drop the OCR reading of the same place',
+    },
+    {
+        value: 'ocr-wins',
+        label: 'OCR wins',
+        title: 'For PDFs whose text layer extracts as mojibake',
+    },
+    { value: 'union', label: 'Union', title: 'Keep both readings, for comparing them' },
+])
+
 const LABEL_FIELDS: readonly StageParamOption[] = Object.freeze([
     { value: 'text', label: 'text', title: 'Box: the recognised text' },
     { value: 'score', label: 'score', title: 'Box or entity: confidence, 0-1' },
@@ -323,6 +346,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         produces: 'image',
         peer: 'pdfjs-dist',
         expands: true,
+        pageScoped: true,
         defaults: asRecord(PDF_TO_IMAGE_DEFAULTS),
         params: [
             ...baseParams({ input: { help: 'Raw PDF bytes, normally the content column.' } }),
@@ -356,6 +380,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         produces: 'document',
         peer: 'pdfjs-dist',
         expands: true,
+        pageScoped: true,
         defaults: asRecord(PDF_TO_DOCUMENT_DEFAULTS),
         params: [
             ...baseParams({ input: { help: 'Raw PDF bytes, normally the content column.' } }),
@@ -381,6 +406,151 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 kind: 'boolean',
                 label: 'Split words',
                 help: 'Split pdf.js line runs into word boxes. Off yields run-level boxes.',
+            },
+        ],
+    },
+    {
+        type: 'PdfEmbeddedImages',
+        label: 'PDF embedded images',
+        group: 'Read',
+        subpath: '@stabrise/scaledp/pdf',
+        summary: 'Pull the raster images out of a PDF at their own pixel size, one row each, for OCR.',
+        consumes: ['bytes'],
+        produces: 'image',
+        alsoProduces: [{ param: 'placementCol', kind: 'placement' }],
+        peer: 'pdfjs-dist',
+        expands: true,
+        pageScoped: true,
+        defaults: asRecord(PDF_EMBEDDED_IMAGES_DEFAULTS),
+        params: [
+            ...baseParams({ input: { help: 'Raw PDF bytes, normally the content column.' } }),
+            {
+                key: 'resolution',
+                kind: 'number',
+                label: 'Resolution (DPI)',
+                min: 36,
+                max: 600,
+                step: 1,
+                help: 'Pixel space the placement boxes are expressed in. Match PdfToDocument.',
+            },
+            {
+                key: 'pageLimit',
+                kind: 'number',
+                label: 'Page limit',
+                min: 0,
+                step: 1,
+                help: '0 reads every page. Ignored when the row already names a page.',
+            },
+            imageType,
+            column('placementCol', 'Placement column', {
+                help: 'Where the image sits on the page. PdfMergeImageText needs it to map boxes back.',
+            }),
+            {
+                key: 'minPixels',
+                kind: 'number',
+                label: 'Minimum pixels',
+                min: 0,
+                step: 1024,
+                help: 'Ignore images with fewer native pixels than this, so bullets and rules cost nothing.',
+            },
+            {
+                key: 'imageLimit',
+                kind: 'number',
+                label: 'Image limit',
+                min: 0,
+                step: 1,
+                help: 'Most images per page, largest placement first; 0 takes all of them.',
+            },
+            {
+                key: 'minEffectiveResolution',
+                kind: 'number',
+                label: 'Minimum DPI',
+                min: 0,
+                max: 600,
+                step: 1,
+                help: 'Upscale an image placed below this DPI before it is read. 0 never upscales.',
+            },
+            {
+                key: 'objectTimeoutMs',
+                kind: 'number',
+                label: 'Decode timeout (ms)',
+                min: 0,
+                step: 500,
+                advanced: true,
+                help: 'How long to wait for pdf.js to decode one image object before skipping it.',
+            },
+            column('textLayerCol', 'Text layer column', {
+                accepts: ['document'],
+                help: 'A text-layer Document used to skip images that are already readable. Empty disables the check.',
+            }),
+            {
+                key: 'minCoveringBoxes',
+                kind: 'number',
+                label: 'Already-read threshold',
+                min: 0,
+                step: 1,
+                help: 'Text-layer boxes inside an image that mark it already read — a searchable scan has hundreds. 0 never skips.',
+            },
+            {
+                key: 'returnEmpty',
+                kind: 'boolean',
+                label: 'Keep empty pages',
+                help: 'Emit the page with an errored image when it has none, so its text layer is not lost.',
+            },
+        ],
+    },
+    {
+        type: 'PdfMergeImageText',
+        label: 'PDF merge image text',
+        group: 'Transform',
+        subpath: '@stabrise/scaledp/pdf',
+        summary: 'Fold each image’s reading back into its page’s text layer. Many rows in, one per page out.',
+        consumes: ['document', 'document'],
+        produces: 'document',
+        defaults: asRecord(PDF_MERGE_IMAGE_TEXT_DEFAULTS),
+        params: [
+            ...baseParams({ input: 'unused' }),
+            {
+                key: 'inputCols',
+                kind: 'columns',
+                label: 'Input columns',
+                arity: 2,
+                accepts: ['document'],
+                help: 'The text-layer column, then the column an OCR stage wrote for each image.',
+            },
+            column('placementCol', 'Placement column', {
+                accepts: ['placement'],
+                help: 'Written by PdfEmbeddedImages. Without it an image’s boxes cannot be put on the page.',
+            }),
+            {
+                key: 'groupByCols',
+                kind: 'stringList',
+                label: 'Group by',
+                help: 'Row fields that together identify one page.',
+            },
+            {
+                key: 'strategy',
+                kind: 'enum',
+                label: 'Overlap strategy',
+                options: MERGE_STRATEGY_OPTIONS,
+                help: 'Which source to believe where both describe the same words.',
+            },
+            {
+                key: 'coverageThreshold',
+                kind: 'number',
+                label: 'Coverage threshold',
+                min: 0,
+                max: 1,
+                step: 0.05,
+                help: 'How much of a box the winning source must cover before the losing one is dropped.',
+            },
+            keepFormatting,
+            lineTolerance,
+            {
+                key: 'collect',
+                kind: 'boolean',
+                label: 'Keep every image’s evidence',
+                help: 'Gather the columns that differ across a page’s rows into arrays, so the pictures it was cut into, the regions found and what was read all survive the reduction.',
             },
         ],
     },
@@ -1131,6 +1301,8 @@ export const STAGE_CLASSES = Object.freeze({
     PaddleRecognizer,
     PaddleTextDetector,
     PaddleTextRecognizer,
+    PdfEmbeddedImages,
+    PdfMergeImageText,
     PdfToDocument,
     PdfToImage,
     SignatureDetector,

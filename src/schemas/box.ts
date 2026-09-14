@@ -154,6 +154,27 @@ export function boxIou(a: Box, b: Box): number {
     return union <= 0 ? 0 : intersection / union
 }
 
+/**
+ * How much of `inner` lies inside `outer`, from 0 to 1.
+ *
+ * The asymmetric companion to `boxIou`, and the right question when comparing
+ * boxes from two different producers. A word read by OCR sits entirely inside
+ * the line-level box a PDF's text layer reports for the same words, but their
+ * IoU is small — so an IoU test would keep both and the text would come out
+ * doubled. Axis-aligned, like `boxIou`.
+ */
+export function boxCoverage(inner: Box, outer: Box): number {
+    const [ix0, iy0, ix1, iy1] = bbox(inner)
+    const [ox0, oy0, ox1, oy1] = bbox(outer)
+
+    const w = Math.min(ix1, ox1) - Math.max(ix0, ox0)
+    const h = Math.min(iy1, oy1) - Math.max(iy0, oy0)
+    if (w <= 0 || h <= 0) return 0
+
+    const area = inner.width * inner.height
+    return area <= 0 ? 0 : (w * h) / area
+}
+
 /** Union of two boxes. Merging discards rotation — Python resets `angle` to 0. */
 export function mergeBoxes(a: Box, b: Box): Box {
     const [ax0, ay0, ax1, ay1] = bbox(a)

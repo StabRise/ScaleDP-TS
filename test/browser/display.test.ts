@@ -47,6 +47,21 @@ describe('showText', () => {
         expect(node.style.whiteSpace).toBe('pre')
     })
 
+    it('caps its height and scrolls itself when standing alone', () => {
+        const node = showText(createDocument({ text: 'x' }))
+        expect(node.style.maxHeight).toBe('30rem')
+        expect(node.style.overflowX).toBe('auto')
+    })
+
+    it('gives the whole box back when the caller says maxHeight none', () => {
+        // A host that has already put this inside its own scrolling panel would
+        // otherwise get two scrollbars capped at the same height, and a
+        // horizontal one stranded below the visible area.
+        const node = showText(createDocument({ text: 'x' }), { maxHeight: 'none' })
+        expect(node.style.maxHeight).toBe('')
+        expect(node.style.overflowX).toBe('visible')
+    })
+
     it('never interprets document text as markup', () => {
         const node = showText(createDocument({ text: '<img src=x onerror=alert(1)>' }))
         expect(node.querySelector('img')).toBeNull()

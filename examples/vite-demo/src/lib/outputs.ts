@@ -11,7 +11,15 @@
 import type { Row, ScriptOutput } from '@stabrise/scaledp'
 import type { DetectorOutput, Document, NerOutput, ScaleDpImage } from '@stabrise/scaledp/display'
 
-export type OutputKind = 'image' | 'document' | 'detector' | 'ner' | 'orientations' | 'script'
+export type OutputKind =
+    | 'image'
+    | 'document'
+    | 'detector'
+    | 'ner'
+    | 'orientations'
+    | 'script'
+    /** Several of any of the above, from a stage that folded rows together. */
+    | 'list'
 
 export interface OutputColumn {
     name: string
@@ -26,10 +34,18 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 function classify(value: unknown): OutputKind | null {
     if (Array.isArray(value)) {
-        return value.every((item) => item === '0_degree' || item === '180_degree') && value.length > 0
-            ? 'orientations'
-            : null
+        if (value.length === 0) return null
+        if (value.every((item) => item === '0_degree' || item === '180_degree')) return 'orientations'
+        // A stage that folds several rows into one gathers what each carried, so
+        // the evidence survives the reduction -- PdfMergeImageText does, and
+        // without it a page's pictures and their readings become unviewable.
+        return value.every((item) => classifyOne(item) !== null) ? 'list' : null
     }
+    return classifyOne(value)
+}
+
+/** One value's kind. Arrays are the caller's business; this never sees one. */
+function classifyOne(value: unknown): OutputKind | null {
     if (!isObject(value)) return null
     if ('entities' in value) return 'ner'
     if ('script' in value && 'orientation_degrees' in value) return 'script'
@@ -54,6 +70,22 @@ export function outputsOf(row: Row | null): OutputColumn[] {
 }
 
 export const asImage = (column: OutputColumn): ScaleDpImage => column.value as ScaleDpImage
+
+/**
+ * The items of a gathered column, each as a column in its own right.
+ *
+ * Rebuilding them as `OutputColumn`s is what lets one list render pictures,
+ * detections and readings without a branch per kind -- every panel already
+ * knows how to draw one of anything.
+ */
+export function asList(column: OutputColumn): OutputColumn[] {
+    return (column.value as unknown[]).map((value, index) => ({
+        name: `${column.name}[${index}]`,
+        kind: classifyOne(value) ?? 'image',
+        value,
+        exception: isObject(value) && typeof value.exception === 'string' ? value.exception : '',
+    }))
+}
 export const asDocument = (column: OutputColumn): Document => column.value as Document
 export const asDetector = (column: OutputColumn): DetectorOutput => column.value as DetectorOutput
 export const asNer = (column: OutputColumn): NerOutput => column.value as NerOutput
