@@ -79,3 +79,6 @@ yarn.lock
 /examples/*/.react-router/
 docs/marketing/
 .serena/
+.claude/skills/linkedin-article-post/
+.claude/skills/linkedin-post/
+.claude/skills/reddit-post/

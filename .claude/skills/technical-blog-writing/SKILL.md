@@ -455,6 +455,7 @@ the plan's own rule is that every claim has a number or a file behind it.
 | Reddit (r/programming, r/webdev, etc.) | Link or discussion | Follow subreddit rules |
 | Twitter/X | Thread summary + link | See twitter-thread-creation skill |
 | LinkedIn | Adapted version + link | See linkedin-content skill |
+| LinkedIn Article | Adapted version + link | See linkedin-content skill |
 
 ```bash
 # Cross-post thread to X
@@ -490,4 +491,3 @@ npx skills add inference-sh/skills@og-image-design
 ```
 
 Browse all apps: `belt app store`
-
