@@ -12,6 +12,8 @@
         "---Guides---",
         "recipes",
         "guides",
-        "porting-from-python"
+        "porting-from-python",
+        "---Project---",
+        "release-notes"
     ]
 }

@@ -1,8 +1,89 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 15.09.2026
 
 ### 🚀 Features
+
+- **`PdfEmbeddedImages`**, a new Read stage that pulls the raster images out of a
+  PDF rather than rendering the page around them. A PDF's text layer covers its
+  *vector* text and nothing else, so the scanned table pasted into the middle of
+  a typed page is invisible to `PdfToDocument` — while whole-page OCR reads the
+  clean vector text back worse than the PDF already states it. This stage emits
+  one row per image, in the PDF's own stored pixels, for any OCR stage to read
+  like any other picture.
+
+  The pixels come from the image object itself, not from cropping a render, so
+  nothing is resampled twice or capped by the render DPI. That is not the same as
+  *more* pixels, and the distinction matters: in `SampleWithFaceImage.pdf` the
+  embedded scan is 1524px wide placed across 1981px of a page rendered at 300
+  DPI — an effective 231 DPI — and rendering at 600 would interpolate rather than
+  recover detail the scan never had. `placement.effectiveResolution` reports that
+  number, `image.resolution` carries it onto the emitted image, and
+  `minEffectiveResolution` (150) upscales anything below it before a recognizer
+  trained around 300 DPI is handed a thumbnail.
+
+  It skips what would cost a recognizer pass for nothing: images under
+  `minPixels`, 1-bit stencil masks, which tint a shape and carry no readable
+  pixels, and — via `minCoveringBoxes` — an image the text layer already covers,
+  which is what a searchable scan is. A page with no images still comes through,
+  carrying an `Image` whose `exception` says there was nothing to read, so its
+  text layer is not lost downstream.
+
+- **`PdfMergeImageText`**, the stage that puts the page back together, and the
+  one stage in the library that *reduces* the row count. It maps each image's
+  boxes onto the page through the placement its row carries, merges them with the
+  text layer, and emits the page once.
+
+  Where both sources describe the same words one has to win, or the page says
+  everything twice. `strategy` settles it: `text-layer-wins` (the default) keeps
+  the PDF's own words, `ocr-wins` is the mirror worth reaching for when a corpus
+  extracts as mojibake from mis-encoded CID fonts, and `union` keeps both for
+  comparing the two readings. The test is *coverage*, not IoU — a word read by
+  OCR sits wholly inside the line-level box a text layer reports for the same
+  words, and their IoU is small enough that an IoU test would keep both and
+  double the text.
+
+  `text` and `bboxes` come out of a single line grouping over the *merged* set,
+  so the two agree and NER character offsets still map back to boxes. Grouping
+  the merged set rather than each source is the point: concatenating by source
+  would put a vector-text header after the OCR'd table whenever the image happens
+  to sit at the top of the page. `Document.type` is `'pdf+ocr'` when an image
+  contributed, `'pdf'` when the text layer answered alone.
+
+  One image's recognizer failure is recorded and dropped rather than poisoning
+  the page. `exception` is set only when nothing at all could be read, because
+  `hasUsableTextLayer` and every downstream stage treat a non-empty `exception`
+  as "upstream failed" — so failing the page over one bad picture would throw
+  away the good text with it.
+
+- **Every PDF stage now honours the page its row already names.** Two expanding
+  PDF stages over one file used to square the row count — a five-page document
+  through `PdfToDocument` and then another reader became twenty-five rows —
+  because each exploded the whole document again. `pageIndexes()` hands a row
+  that names a page that page and no other, so a chain reads each page once; only
+  a PDF stage ever writes `pageCol`, which is what makes that the behaviour a
+  chain already implied. `StageSpec.pageScoped` lets a builder tell the two kinds
+  of expansion apart.
+
+- `boxCoverage(inner, outer)`, the asymmetric companion to `boxIou`: how much of
+  one box lies inside another. It is the right question whenever two producers
+  describe the same words at different granularities, which is exactly when IoU
+  answers the wrong one.
+
+- **`boxOverlay()`**, an SVG that outlines boxes *over* an image rather than
+  burning them into it as `ImageDrawBoxes` does, so what is highlighted can
+  change as often as a reader clicks without re-encoding anything. It is authored
+  in the image's own pixel coordinates and stretched by its `viewBox`, so it
+  stays aligned through a resize, a zoom or a reflow with nothing to recompute
+  and no listener to leak. `showBoxes` now tags each row with its box index, so a
+  host can map a click back to a box without parsing cells, and `showText` takes
+  `maxHeight: 'none'` to hand the cap and its scrollbars back to a caller that
+  already has its own scrolling panel.
+
+- Two more demo pipelines: **PDF text layer + scanned images**, and the same
+  again behind DBNet text detection. They are the hybrid reader end to end —
+  text layer, embedded images, recognizer, merge — on a page that is neither pure
+  text nor pure scan.
 
 - **`TesseractScriptDetector`**, a new stage answering "what is this page written
   in?" before you commit to a recognition model. Reading a Cyrillic page with a
@@ -243,6 +324,17 @@
 
 ### 📚 Documentation
 
+- Stage pages for `PdfEmbeddedImages` and `PdfMergeImageText`, and a recipe — *A
+  PDF's text layer and its scanned images* — for the page that is neither pure
+  text nor pure scan, which is most of them. The usual advice, deciding per page
+  whether to trust the text layer or to OCR the whole raster, gets that page
+  wrong both ways.
+- The demo's boxes table is clickable: picking a row outlines that box on the
+  page beside it, drawn over the image rather than into it, so the picture stays
+  whatever the pipeline produced. Picking is offered only where the boxes are in
+  the page's own coordinates — a gathered list's items belong to the picture
+  their row was cut from, and outlining those on the page would point confidently
+  at the wrong place.
 - The demo's runtime strip is now a pair of controls. The execution provider can
   be set to auto, WebGPU or WASM, and switching it drops the engines cached
   against the old one so the next run rebuilds on the new one — no reload.

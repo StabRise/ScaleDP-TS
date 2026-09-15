@@ -1,0 +1,168 @@
+---
+title: Release notes
+description: What changed in each version of @stabrise/scaledp, and what it means for a pipeline you have already written.
+---
+
+What shipped, newest first. The full record — including the reasoning behind
+each change — is [`CHANGELOG.md`](https://github.com/StabRise/ScaleDP-TS/blob/main/CHANGELOG.md)
+in the repository.
+
+The package is pre-1.0. Defaults still move when a better default is found, and
+every such move is called out below rather than left to be discovered on a
+Monday morning.
+
+## 0.2.0 — 15 September 2026
+
+<Callout title="Defaults that changed">
+Three, all of them in output you may already be parsing:
+
+- `PaddleTextRecognizer`'s `boxLevel` now defaults to `'word'`, not `'region'`.
+  Set `boxLevel: 'region'` to keep the previous output.
+- `TesseractRecognizer`'s `boxLevel` moved the same way.
+- `ImageDrawBoxes` now draws labels at `textSize: 24`, up from 12.
+- Every NER model in the catalogue is now served at fp16 rather than 8-bit —
+  roughly 1.7× the download, and the reason entities are found at all.
+</Callout>
+
+### A PDF's text layer and its scanned images
+
+A PDF's text layer covers its *vector* text and nothing else, so a scanned table
+pasted into a typed page is invisible to
+[`PdfToDocument`](/docs/stages/read/pdf-to-document) — and OCR'ing the whole
+raster reads the typed half back worse than the PDF already states it. Two new
+stages read both and emit one `Document` per page.
+
+- **[`PdfEmbeddedImages`](/docs/stages/read/pdf-embedded-images)** pulls the
+  raster images out of the PDF, one row each, in the pixels the PDF stored
+  rather than a crop of a render. `placement.effectiveResolution` reports the
+  DPI an image is actually placed at, and `minEffectiveResolution` upscales
+  anything below it before a recognizer sees a thumbnail. Bullets, rules,
+  stencil masks and images the text layer already covers are skipped.
+- **[`PdfMergeImageText`](/docs/stages/transform/pdf-merge-image-text)** folds
+  each image's reading back onto the page and reduces the rows to one per page.
+  `strategy` decides who wins where both sources describe the same words —
+  `text-layer-wins` by default, `ocr-wins` for a corpus that extracts as
+  mojibake, `union` for comparing the two.
+- The whole pipeline is in the recipe
+  [A PDF's text layer and its scanned images](/docs/recipes/text-layer-and-scanned-images),
+  and in the demo as **PDF text layer + scanned images**.
+- **Every PDF stage now honours the page its row already names.** Two expanding
+  PDF stages over one file used to square the row count — five pages became
+  twenty-five. A chain now reads each page once.
+
+### OCR and recognition
+
+- **Paddle word boxes cost nothing in text quality.** The line is read whole, at
+  full context, and the words are split out of what came back — the reverse of
+  the old order, which recognised each word crop on its own and dropped
+  characters doing it. One inference per line instead of one per word.
+- **[`PaddleTextRecognizer`](/docs/stages/recognise/paddle-text-recognizer)
+  returns word boxes**, like every other recognizer here, via `boxLevel` and
+  `wordGapRatio`.
+- [`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) and
+  [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer) both
+  return one box per word by default. Word boxes are measured from the ink, not
+  estimated from the character count.
+- `spaceRecovery` stays off, and its help text now says why: it inserts a space
+  wherever the space class clears `0.001`, which turns small or noisy text into
+  `s e n s i t i v e`.
+
+### Multi-script documents
+
+- **[`TesseractScriptDetector`](/docs/stages/detect/tesseract-script-detector)**,
+  a new stage answering "what is this page written in?" before you commit to a
+  recognition model. It writes the script, Tesseract's OSD score and the page
+  rotation, and `presetsForScript()` names the PaddleOCR presets that can read
+  the result. An unidentified script is an empty `script` with an **empty**
+  `exception` — a blank page is an answer, not a failure.
+- **`presetCol` lets the model follow the page.** `preset` is fixed when the
+  pipeline is built, which is wrong for a document whose language you do not
+  know in advance or that changes partway through. Point `presetCol` at a script
+  column and each page is read by a model that can read it; `preset` stays as the
+  fallback.
+- **The tesseract.js asset paths are configurable.** `osdWorkerPath`,
+  `osdCorePath`, `osdLangPath` and `osdGzip` under `tesseract` in
+  [`configure()`](/docs/guides/self-hosting-models) — OSD was the one place in
+  the library still pulling assets from a public CDN. `detectOsd()` is exported
+  for the raw reading.
+
+### NER and PII
+
+- **[`NerConsistency`](/docs/stages/understand/ner-consistency)**, a new
+  engine-free stage that re-tags every occurrence of an entity the model found
+  somewhere. A model scores each mention on its own, so the same name is tagged
+  in the body and missed in a heading set in caps — and for redaction the
+  occurrence you missed leaks what the others hid. `scope`, `minLength`,
+  `minScore`, `resolveConflicts` and `overrideModelLabels` bound what propagates;
+  `Entity.source` records which is which.
+- Four more GLiNER models: `gliner-pii-edge` (~181 MB, the smallest in the
+  catalogue), `gliner-medium`, `gliner-medium-news` and `gliner-multi`.
+- **One colour per entity group, and colours that are actually different.**
+  Hashing a label into a hue gave `phone_number` and `date` the same colour;
+  every group the catalogue's models emit now has a hue assigned by hand, 18°
+  from its neighbours. `visualizeNer` and `ImageDrawBoxes` agree.
+
+### Looking at results
+
+- **`boxOverlay()`** draws box outlines *over* an image instead of burning them
+  in, so a highlight can change as often as a reader clicks with nothing
+  re-encoded. `showBoxes` tags each row with its box index; `showText` takes
+  `maxHeight: 'none'` for a host with its own scrolling panel.
+- `boxCoverage(inner, outer)` joins `boxIou` — how much of one box lies inside
+  another, which is the right question when two producers describe the same
+  words at different granularities.
+- The demo's boxes table is clickable, its runtime strip exposes the execution
+  provider and thread count, and its model menus mark what is already cached in
+  this browser.
+
+### Fixes
+
+- **Entities found in the text but drawn nowhere on the page.** The character-to-box
+  map walked boxes in detection order with a forward-only cursor, while the text
+  was laid out in *reading* order — so any box found out of order was skipped and
+  its entity came back with no geometry.
+- **`GlinerNer` found nothing at all.** 8-bit quantization wrecks these
+  DeBERTa-backed models' score calibration rather than merely blunting it: spans
+  decoded correctly and then scored below the default threshold. The catalogue
+  is fp16 throughout, and a unit test keeps 8-bit weights out of it.
+- **A failing model cache no longer takes the model down with it.** Every
+  IndexedDB read and write is best-effort; a refused write warns once and the
+  run continues with the bytes in hand. See
+  [Models and cache](/docs/concepts/models-and-cache).
+- **A downloaded model is cached as a Blob, not an ArrayBuffer**, which avoided
+  a second full copy of the weights in the renderer at commit time — enough to
+  lose the tab on a several-hundred-megabyte model.
+
+## 0.1.1 — 29 August 2026
+
+### Added
+
+- [`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer): PP-OCR
+  recognition over the boxes a *separate* detector found, the PaddleOCR
+  counterpart to `TesseractRecognizer`. Crops are straightened before reading
+  and batched onto one sheet canvas, so a forty-line page costs a handful of
+  inferences rather than forty. Only the recognition half of the preset is
+  downloaded, and its cache keys are shared with the other Paddle stages.
+- `getPaddleRecognizer()` from `@stabrise/scaledp/ocr`, for a recognition-only
+  service without the pipeline.
+- `createSession()` gained an opt-in `fallbackToWasm` — WebGPU fails at *session
+  creation* on a graph it has no kernel for, PP-OCR's recognition model among
+  them. Off by default, so a genuinely misconfigured provider still fails loudly.
+- `validatePreset()` and `isKnownPreset()` are exported from the `ocr` subpath;
+  `rotate180()` from the core image helpers.
+
+### Breaking
+
+- The two PaddleOCR defaults constants were renamed to match their stage
+  classes: `PADDLE_DETECTOR_DEFAULTS` → `PADDLE_TEXT_DETECTOR_DEFAULTS`, and
+  `PADDLE_RECOGNIZER_DEFAULTS` → `PADDLE_TEXT_RECOGNIZER_DEFAULTS`.
+  `PADDLE_RECOGNIZER_DEFAULTS` still exists but now belongs to the new
+  `PaddleRecognizer` and has a different shape, so the old import fails to
+  type-check rather than misbehaving quietly. No stage `type` string changed —
+  saved pipeline descriptors are unaffected.
+
+## 0.1.0 — 29 August 2026
+
+Initial release: the pipeline, schemas and geometry, PDF reading via pdf.js,
+PaddleOCR and Tesseract, DBNet and YOLO detection, GLiNER entity recognition,
+and the worker host.
