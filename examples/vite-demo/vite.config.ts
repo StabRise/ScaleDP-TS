@@ -61,6 +61,14 @@ export default defineConfig({
             { find: '@stabrise/scaledp/ner', replacement: dist('ner/index.js') },
             { find: '@stabrise/scaledp', replacement: dist('index.js') },
         ],
+        // The aliased build lives under the repository root, so its bare engine
+        // imports would otherwise resolve from the root's node_modules -- the
+        // library's devDependencies -- not this app's. For pdf.js that is fatal:
+        // copy-assets.mjs serves the worker from *this* app's pdfjs-dist, and
+        // pdf.js refuses a worker whose version differs from the API by a
+        // single patch. Dedupe makes every engine resolve from here, so the
+        // loaded code and the assets copied into public/ are the same install.
+        dedupe: ['pdfjs-dist', 'onnxruntime-web', 'tesseract-wasm', 'ppu-paddle-ocr', '@huggingface/transformers'],
     },
     server: {
         // Pin the port. Vite otherwise moves to the next free one when 5173 is
