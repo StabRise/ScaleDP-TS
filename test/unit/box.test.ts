@@ -3,6 +3,7 @@ import type { Point } from '../../src/core/geometry.js'
 import {
     type Box,
     bbox,
+    boxCoverage,
     boxFromBBox,
     boxFromPolygon,
     boxIou,
@@ -153,13 +154,42 @@ describe('boxIou', () => {
 })
 
 describe('merging', () => {
-    it('unions geometry and resets angle to 0', () => {
+    it('unions geometry and keeps angle 0 when neither box is rotated', () => {
+        const merged = mergeBoxes(
+            createBox({ x: 0, y: 0, width: 10, height: 10, angle: 0, text: 'a', score: 0.9 }),
+            createBox({ x: 20, y: 5, width: 10, height: 10, angle: 0, text: 'b', score: 0.5 })
+        )
+        expect(merged).toMatchObject({ x: 0, y: 0, width: 30, height: 15, angle: 0, text: 'a b' })
+        expect(merged.score).toBeCloseTo(0.5, 9)
+    })
+
+    it('keeps a real orientation when either box is rotated, rather than flattening it', () => {
+        // `mergeOverlappingBoxes` only calls this once `isOnSameLine` has already
+        // agreed the pair shares an angle, so silently resetting to 0 here would
+        // throw away the one thing that told the caller these belong together —
+        // exactly what happened to the rotated OCR lines this regression covers.
         const merged = mergeBoxes(
             createBox({ x: 0, y: 0, width: 10, height: 10, angle: 30, text: 'a', score: 0.9 }),
             createBox({ x: 20, y: 5, width: 10, height: 10, angle: 30, text: 'b', score: 0.5 })
         )
-        expect(merged).toMatchObject({ x: 0, y: 0, width: 30, height: 15, angle: 0, text: 'a b' })
+        expect(merged.angle).not.toBe(0)
+        expect(merged.text).toBe('a b')
         expect(merged.score).toBeCloseTo(0.5, 9)
+
+        // Both source squares sit almost entirely inside the merged box — the
+        // point of going through minAreaRect instead of a naive AABB union.
+        // `boxCoverage` itself reads `x`/`y`/`width`/`height` as if `angle` were
+        // 0 (see `bbox()`), so it underestimates a rotated square's true
+        // footprint a little; a high but not exact bound reflects that.
+        for (const src of [
+            createBox({ x: 0, y: 0, width: 10, height: 10, angle: 30 }),
+            createBox({ x: 20, y: 5, width: 10, height: 10, angle: 30 }),
+        ]) {
+            expect(boxCoverage(src, merged)).toBeGreaterThan(0.75)
+        }
+
+        // And the result is tighter than the axis-aligned union would have been.
+        expect(merged.width * merged.height).toBeLessThan(30 * 15)
     })
 
     it('groups boxes on the same line by vertical centre', () => {

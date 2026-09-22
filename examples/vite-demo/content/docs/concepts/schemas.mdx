@@ -40,8 +40,10 @@ shape(box, padding)     // [[x0, y0], [x1, y1]]
 ```
 
 `boxIou` compares axis-aligned envelopes and ignores angle. `mergeBoxes` joins
-text with a space, takes the **minimum** score, and resets `angle` to 0 — merging
-two rotated boxes cannot preserve a single rotation.
+text with a space and takes the **minimum** score. Two axis-aligned boxes merge
+into their axis-aligned union. When either is rotated, the result is the minimum
+rotated rectangle over both boxes' true corners, so a pair that already shares an
+orientation keeps it. Python ScaleDP resets `angle` to 0 in both cases.
 
 ## `ScaleDpImage`
 

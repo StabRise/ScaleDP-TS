@@ -38,6 +38,20 @@ function openDb(name: string): Promise<IDBDatabase> {
         }
         request.onsuccess = () => resolve(request.result)
         request.onerror = () => reject(request.error)
+        // Fires when another tab holds a connection open across the version
+        // change this open needed (first-ever open on a fresh origin is one:
+        // it upgrades from nothing to `DB_VERSION`). Neither `onsuccess` nor
+        // `onerror` follows a block on its own -- the request just waits for
+        // the other connection to close -- so without this handler a stale tab
+        // left over from a crash or a hard reload turns into a silent,
+        // indefinite hang here with no signal that anything is wrong.
+        request.onblocked = () => {
+            console.warn(
+                `[scaledp] IndexedDB open of "${name}" is blocked by a connection open in ` +
+                    'another tab. Close other tabs with this app open (or reload them) to ' +
+                    'let the version change through.'
+            )
+        }
     })
 }
 

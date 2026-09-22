@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### 🐛 Fixes
+
+- **`mergeBoxes` keeps the orientation of rotated boxes.** It used to union
+  `x`/`y`/`width`/`height` as if every box were axis-aligned and reset `angle`
+  to 0. `mergeOverlappingBoxes` only merges a pair once `isOnSameLine` has
+  agreed the two share an angle, so flattening threw away that shared
+  orientation. For a rotated box those fields do not describe its footprint
+  anyway, so the union also covered the wrong rectangles. When either box is
+  rotated, the merge now takes `minAreaRect` over both boxes' true corners.
+  Axis-aligned pairs keep the cheap union and `angle: 0`. This departs from
+  Python ScaleDP, which still resets the angle.
+
+- **A blocked IndexedDB open now warns instead of hanging silently.** When
+  another tab holds a connection across the model cache's version change, the
+  open request waits with neither `onsuccess` nor `onerror` firing. A stale tab
+  left over from a crash or a hard reload made model loading hang with no
+  signal. An `onblocked` handler now logs a warning that names the database and
+  says to close or reload the other tabs.
+
+### 🔧 Chores
+
+- Dev dependencies are pinned to exact versions, `ppu-paddle-ocr` moves to
+  6.6.0, and a pnpm override holds `onnxruntime-web` at 1.29.0 so a transitive
+  copy cannot bring in a second, mismatched runtime.
+
 ## [0.2.0] - 15.09.2026
 
 ### 🚀 Features
