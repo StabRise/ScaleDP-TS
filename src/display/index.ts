@@ -327,8 +327,23 @@ export function visualizeNer(
     return container
 }
 
-/** A summary table of detected boxes. */
-export function showBoxes(output: DetectorOutput | Document, limit = 20): HTMLElement {
+export interface ShowBoxesOptions {
+    /** A text filter above the table, matching `Box.text` case-insensitively. Default true. */
+    search?: boolean
+}
+
+/**
+ * A summary table of detected boxes.
+ *
+ * `limit` truncates the table itself (0 shows every row); `search` is a live
+ * filter over whatever rows are shown, so a long table stays reachable without
+ * hiding rows from it up front.
+ */
+export function showBoxes(
+    output: DetectorOutput | Document,
+    limit = 20,
+    options: ShowBoxesOptions = {}
+): HTMLElement {
     if (output.exception) return errorBlock(output.exception)
 
     const boxes: Box[] = output.bboxes
@@ -365,6 +380,33 @@ export function showBoxes(output: DetectorOutput | Document, limit = 20): HTMLEl
     }
 
     const wrapper = element('div')
+
+    // Only worth offering once there is something to search through; a
+    // one-row table has nothing to filter.
+    if ((options.search ?? true) && shown.length > 1) {
+        const search = document.createElement('input')
+        search.type = 'search'
+        search.placeholder = 'Filter boxes by text…'
+        search.setAttribute('aria-label', 'Filter boxes by text')
+        search.style.cssText =
+            'display:block;box-sizing:border-box;width:100%;margin-bottom:6px;padding:4px 8px'
+        wrapper.append(search)
+
+        // Rows stay in the DOM and keep their `data-box-index` -- filtering
+        // only ever toggles visibility, so a host wiring click handlers to
+        // those rows (see the demo's BoxTable) does not need to know search
+        // exists.
+        const rows = [...table.rows].slice(1)
+        search.addEventListener('input', () => {
+            const query = search.value.trim().toLowerCase()
+            for (const [index, box] of shown.entries()) {
+                const row = rows[index]
+                if (!row) continue
+                row.style.display = query === '' || box.text.toLowerCase().includes(query) ? '' : 'none'
+            }
+        })
+    }
+
     wrapper.append(table)
     if (limit > 0 && boxes.length > limit) {
         wrapper.append(element('p', { text: `Showing ${limit} of ${boxes.length} boxes.` }))

@@ -306,9 +306,6 @@ function Panel({ column, all, page, onPick, pageSpace = true }: PanelProps) {
     return <Detached className="framed" node={showImage(asImage(column))} />
 }
 
-/** How many boxes `showBoxes` lists before it stops. */
-const BOX_LIMIT = 200
-
 /**
  * The boxes table, with a click on a row outlining that box on the page.
  *
@@ -338,10 +335,9 @@ function BoxTable({
     // it as a dependency -- otherwise every click would rebuild the callback and
     // rewire all two hundred rows.
     const pickedRef = useRef<number | null>(null)
-    const node = useMemo(
-        () => showBoxes({ path: '', type: '', exception: '', bboxes: boxes }, BOX_LIMIT),
-        [boxes]
-    )
+    // Unlimited: showBoxes's own search box is how a long table stays usable,
+    // rather than truncating rows out of it before a reader can find them.
+    const node = useMemo(() => showBoxes({ path: '', type: '', exception: '', bboxes: boxes }, 0), [boxes])
     // Fitting inside the page is necessary but nowhere near sufficient: boxes
     // from a 1000x300 picture all fit inside a 1700x2200 page while meaning
     // something else entirely. `pageSpace` is what actually settles it.

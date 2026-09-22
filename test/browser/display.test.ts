@@ -162,15 +162,51 @@ describe('visualizeNer', () => {
 })
 
 describe('showBoxes', () => {
+    const boxes = (n: number) =>
+        Array.from({ length: n }, (_, i) =>
+            createBox({ text: `w${i}`, score: 0.9, x: i, y: 0, width: 10, height: 5 })
+        )
+
     it('tabulates boxes and truncates with a note', () => {
-        const document_ = createDocument({
-            bboxes: Array.from({ length: 5 }, (_, i) =>
-                createBox({ text: `w${i}`, score: 0.9, x: i, y: 0, width: 10, height: 5 })
-            ),
-        })
+        const document_ = createDocument({ bboxes: boxes(5) })
         const node = showBoxes(document_, 2)
         expect(node.querySelector('table')?.rows).toHaveLength(3)
         expect(node.textContent).toContain('Showing 2 of 5')
+    })
+
+    it('shows every box when limit is 0', () => {
+        const document_ = createDocument({ bboxes: boxes(5) })
+        const node = showBoxes(document_, 0)
+        expect(node.querySelector('table')?.rows).toHaveLength(6)
+        expect(node.textContent).not.toContain('Showing')
+    })
+
+    it('filters rows by text as the search box is typed, without removing them', () => {
+        const document_ = createDocument({ bboxes: boxes(5) })
+        const node = showBoxes(document_, 0)
+        const search = node.querySelector('input[type="search"]') as HTMLInputElement
+        expect(search).toBeTruthy()
+
+        const dataRows = () => [...node.querySelectorAll<HTMLElement>('[data-box-index]')]
+        expect(dataRows()).toHaveLength(5)
+
+        search.value = 'w3'
+        search.dispatchEvent(new Event('input'))
+        const visible = dataRows().filter((row) => row.style.display !== 'none')
+        expect(visible).toHaveLength(1)
+        expect(visible[0]?.textContent).toContain('w3')
+        // Rows stay in the DOM -- a host's data-box-index click wiring keeps working.
+        expect(dataRows()).toHaveLength(5)
+
+        search.value = ''
+        search.dispatchEvent(new Event('input'))
+        expect(dataRows().filter((row) => row.style.display !== 'none')).toHaveLength(5)
+    })
+
+    it('omits the search box for a table with one row or fewer', () => {
+        const document_ = createDocument({ bboxes: boxes(1) })
+        const node = showBoxes(document_, 0)
+        expect(node.querySelector('input[type="search"]')).toBeNull()
     })
 })
 

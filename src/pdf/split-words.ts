@@ -13,7 +13,7 @@
  */
 
 import { context2d, createCanvas } from '../core/image.js'
-import type { Box } from '../schemas/box.js'
+import { type Box, boxFromPolygon, type Point } from '../schemas/box.js'
 import type { TextBox } from './extract-text.js'
 
 /** Widen each word slightly so glyph overhang is not clipped. */
@@ -95,41 +95,55 @@ export function splitRunIntoWords(run: TextBox): Box[] {
     const measured = tokens.map((token) => measureWord(token, font))
     const totalMeasured = measured.reduce((sum, w) => sum + w, 0) || 1
 
-    // The substitute font's absolute metrics are meaningless; only the ratios
-    // matter, so normalise them onto the run's real extent.
-    const runLength = Math.hypot(run.width * run.readDirX, run.height * run.readDirY) || run.width
-    const scale = runLength / totalMeasured
+    // The run's real reading-axis extent, taken from the true corner-to-corner
+    // distance rather than run.width -- Box forces `width` to be the longer
+    // side, which for a tall/narrow run is the *height* axis, not this one.
+    const scale = readingLength(run) / totalMeasured
 
-    // Walking starts at whichever corner the reading direction comes *from*, so
-    // a right-to-left or bottom-to-top run starts at the opposite edge.
-    let cursorX = run.readDirX >= 0 ? run.x : run.x + run.width
-    let cursorY = run.readDirY >= 0 ? run.y : run.y + run.height
+    const heightMag = Math.hypot(run.heightX, run.heightY) || 1
+    const upX = run.heightX / heightMag
+    const upY = run.heightY / heightMag
+    const pad = heightMag * WORD_PADDING_RATIO
+
+    // Walking starts at the run's real anchor corner (where the glyph transform
+    // places the first character) and advances along the true reading vector --
+    // this works unmodified for right-to-left, bottom-to-top and rotated runs,
+    // none of which are axis-aligned corner-plus-span rectangles.
+    let offset = 0
 
     const out: Box[] = []
     for (const [i, token] of tokens.entries()) {
         const advance = (measured[i] as number) * scale
         if (!/^\s+$/.test(token)) {
-            const pad = run.height * WORD_PADDING_RATIO
-            const spanX = Math.abs(run.readDirX) > Math.abs(run.readDirY) ? advance : run.width
-            const spanY = Math.abs(run.readDirY) > Math.abs(run.readDirX) ? advance : run.height
+            const segStart = offset - pad
+            const segEnd = offset + advance + pad
 
-            const left = run.readDirX >= 0 ? cursorX : cursorX - spanX
-            const top = run.readDirY >= 0 ? cursorY : cursorY - spanY
+            const p0: Point = [
+                run.anchorX + run.readDirX * segStart - upX * pad,
+                run.anchorY + run.readDirY * segStart - upY * pad,
+            ]
+            const p1: Point = [
+                run.anchorX + run.readDirX * segEnd - upX * pad,
+                run.anchorY + run.readDirY * segEnd - upY * pad,
+            ]
+            const p2: Point = [p0[0] + run.heightX + upX * pad * 2, p0[1] + run.heightY + upY * pad * 2]
+            const p3: Point = [p1[0] + run.heightX + upX * pad * 2, p1[1] + run.heightY + upY * pad * 2]
 
-            out.push({
-                text: token,
-                score: run.score,
-                x: Math.floor(left - pad),
-                y: Math.floor(top - pad),
-                width: Math.max(1, Math.ceil(spanX + pad * 2)),
-                height: Math.max(1, Math.ceil(spanY + pad * 2)),
-                angle: run.angle,
-            })
+            out.push(boxFromPolygon([p0, p1, p2, p3], { text: token, score: run.score }))
         }
-        cursorX += run.readDirX * advance
-        cursorY += run.readDirY * advance
+        offset += advance
     }
     return out
+}
+
+/** True reading-axis extent of a run, from its real corner-to-corner distance. */
+function readingLength(run: TextBox): number {
+    // anchor -> anchor + readDir * L is corners[0] -> corners[1] from extraction;
+    // recovering L from width/height would pick the wrong axis whenever the run
+    // is taller than it is wide, since Box.width is always the longer side.
+    const heightMag = Math.hypot(run.heightX, run.heightY)
+    const area = run.width * run.height
+    return heightMag > 0 ? area / heightMag : run.width
 }
 
 /** Split every run on a page into word boxes. */

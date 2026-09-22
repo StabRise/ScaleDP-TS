@@ -22,7 +22,7 @@ renderInto('#inline', visualizeNer(row.text, row.ner))
 | `showJson(value, indent)` | `show_json` | |
 | `showNer(ner, { limit, whiteList })` | `show_ner` | Table; `limit` defaults 20, `0` shows all |
 | `visualizeNer(document, ner, { labelsList, showLabels })` | `visualize_ner` | Text with entities highlighted inline |
-| `showBoxes(output, limit)` | — | Box table: text, score, x, y, w, h, angle |
+| `showBoxes(output, limit, { search })` | — | Box table: text, score, x, y, w, h, angle. `limit` defaults 20, `0` shows all; `search` adds a live text filter above the table and defaults on |
 | `renderInto(target, node)` | — | `replaceChildren`; throws if the selector matches nothing |
 | `colorForGroup(name)` | — | The same stable HSL hash `ImageDrawBoxes` uses |
 

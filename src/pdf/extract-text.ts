@@ -8,22 +8,34 @@
  * reading `a` as a width scale breaks on rotated text, so the reading direction
  * and the "up" direction are recovered as *unit* vectors -- otherwise the font
  * size gets counted twice. The four corners are then pushed through
- * `convertToViewportPoint` and reduced to an axis-aligned box.
- *
- * No semantic `angle` is emitted, deliberately. A rotated glyph matrix is
- * indistinguishable from page-level /Rotate compensation or an embedded
- * FontMatrix, so composing the corners geometrically and taking their bounding
- * box is correct regardless of which caused it. `readDirX`/`readDirY` carry the
- * direction that word-splitting needs.
+ * `convertToViewportPoint` and fed to `boxFromPolygon`, which recovers the
+ * rect's true centre, size and `angle` via `minAreaRect` -- the same path
+ * DBNet's polygon output goes through -- rather than flattening to an
+ * axis-aligned box. That matters for skewed text (e.g. 45 degrees): an AABB
+ * around a rotated glyph run is needlessly large and reports `angle: 0`, which
+ * `isRotated`/`isOnSameLine` then treat as upright. `readDirX`/`readDirY` still
+ * carry the viewport-space reading direction that word-splitting needs.
  */
 
-import type { Box } from '../schemas/box.js'
+import { type Box, boxFromPolygon, type Point } from '../schemas/box.js'
 
-/** A box plus the reading direction, which splitting needs but ScaleDP's Box lacks. */
+/** A box plus the reading geometry, which splitting needs but ScaleDP's Box lacks. */
 export interface TextBox extends Box {
     /** Unit vector, in viewport space, along which reading progresses. */
     readDirX: number
     readDirY: number
+    /**
+     * The real corner (viewport space) where reading begins.
+     *
+     * `Box.x`/`Box.y` is the top-left of a box *centred* on the rect, per the
+     * Box convention (see schemas/box.ts) -- for a rotated run that is not a
+     * literal corner, so splitting needs this separately to walk the run.
+     */
+    anchorX: number
+    anchorY: number
+    /** Viewport-space vector spanning the run's height, from `anchor*` to the opposite edge. */
+    heightX: number
+    heightY: number
     /** pdf.js font identifier, e.g. 'g_d0_f1'. */
     fontName: string
 }
@@ -84,29 +96,25 @@ export function textItemToBox(item: TextItemLike, viewport: ViewportLike): TextB
             startX + dirX * item.width - upX * item.height,
             startY + dirY * item.width - upY * item.height
         ),
-    ]
-
-    const xs = corners.map((p) => p[0] as number)
-    const ys = corners.map((p) => p[1] as number)
-    const x = Math.min(...xs)
-    const y = Math.min(...ys)
+    ] as [Point, Point, Point, Point]
 
     // Reading direction in viewport space, taken from the start and end points
     // rather than from the matrix, so the viewport's own flip is accounted for.
     const [startScreenX = 0, startScreenY = 0] = corners[0] ?? []
     const [endScreenX = 0, endScreenY = 0] = corners[1] ?? []
+    const [bottomScreenX = 0, bottomScreenY = 0] = corners[2] ?? []
     const readMag = Math.hypot(endScreenX - startScreenX, endScreenY - startScreenY) || 1
 
+    const box = boxFromPolygon(corners, { text: item.str, score: TEXT_LAYER_SCORE })
+
     return {
-        text: item.str,
-        score: TEXT_LAYER_SCORE,
-        x: Math.floor(x),
-        y: Math.floor(y),
-        width: Math.max(1, Math.ceil(Math.max(...xs) - x)),
-        height: Math.max(1, Math.ceil(Math.max(...ys) - y)),
-        angle: 0,
+        ...box,
         readDirX: (endScreenX - startScreenX) / readMag,
         readDirY: (endScreenY - startScreenY) / readMag,
+        anchorX: startScreenX,
+        anchorY: startScreenY,
+        heightX: bottomScreenX - startScreenX,
+        heightY: bottomScreenY - startScreenY,
         fontName: item.fontName ?? '',
     }
 }

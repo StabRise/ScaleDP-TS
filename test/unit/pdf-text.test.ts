@@ -37,6 +37,7 @@ describe('textItemToBox', () => {
         expect(box.height).toBe(12)
         // Baseline at y=700, glyph tops 9pt above it, flipped into a 800-tall page.
         expect(box.y).toBe(800 - 709)
+        expect(box.angle).toBeCloseTo(0, 3)
         expect(box.readDirX).toBeCloseTo(1, 6)
         expect(box.readDirY).toBeCloseTo(0, 6)
     })
@@ -53,14 +54,36 @@ describe('textItemToBox', () => {
         expect(large.width).toBe(small.width)
     })
 
-    it('produces an axis-aligned box for rotated text and reports the reading direction', () => {
+    it('produces a tight box for a 90-degree rotation, reporting the rotation itself', () => {
         // 90-degree rotation: [a,b,c,d] = [0, 12, -12, 0]
         const box = textItemToBox(item({ transform: [0, 12, -12, 0, 100, 700] }), viewport()) as TextBox
-        expect(box.angle).toBe(0)
-        // Text now runs vertically, so the box is tall and narrow.
-        expect(box.height).toBeGreaterThan(box.width)
+        // Box.width is always the longer side by convention, so it stays 60x12
+        // regardless of rotation -- only `angle` records that the run is now
+        // vertical rather than horizontal.
+        expect(box.width).toBeCloseTo(60, 0)
+        expect(box.height).toBeCloseTo(12, 0)
+        expect(Math.abs(box.angle) === 90 || Math.abs(box.angle - 90) < 3).toBe(true)
         expect(Math.abs(box.readDirY)).toBeCloseTo(1, 6)
         expect(Math.abs(box.readDirX)).toBeCloseTo(0, 6)
+    })
+
+    it('reports a genuine angle and a tight box for text rotated 45 degrees', () => {
+        // 45-degree rotation: a=b=c=-d scaled to font size 12.
+        const s = 12 / Math.SQRT2
+        const box = textItemToBox(item({ transform: [s, s, -s, s, 100, 700] }), viewport()) as TextBox
+
+        // The box must not be flattened to angle 0, and its footprint must be
+        // the tight 60x12 rect (Box.width/height are the rect's own side
+        // lengths, unaffected by rotation) -- not the much larger axis-aligned
+        // bounding box that the old min/max-of-corners code produced instead,
+        // whose side would have been roughly (60+12)/sqrt(2) ~= 51.
+        expect(Math.abs(box.angle)).toBeGreaterThan(3)
+        expect(box.width).toBeCloseTo(60, 0)
+        expect(box.height).toBeCloseTo(12, 0)
+
+        // Reading direction sits diagonally, not along either axis.
+        expect(Math.abs(box.readDirX)).toBeGreaterThan(0.3)
+        expect(Math.abs(box.readDirY)).toBeGreaterThan(0.3)
     })
 })
 
@@ -80,6 +103,10 @@ describe('relativeCharWidth', () => {
 })
 
 describe('splitRunIntoWords', () => {
+    // `run()` describes a horizontal 180x12 line starting at its real (viewport
+    // space) top-left corner, i.e. anchor == (x, y) and the height vector runs
+    // straight down -- the geometry `extract-text.ts` would produce for
+    // upright text.
     const run = (overrides: Partial<TextBox> = {}): TextBox => ({
         text: 'Client: Raja Raman',
         score: 0.99,
@@ -90,6 +117,10 @@ describe('splitRunIntoWords', () => {
         angle: 0,
         readDirX: 1,
         readDirY: 0,
+        anchorX: 100,
+        anchorY: 50,
+        heightX: 0,
+        heightY: 12,
         fontName: 'Helvetica',
         ...overrides,
     })
@@ -118,7 +149,9 @@ describe('splitRunIntoWords', () => {
     })
 
     it('walks from the opposite edge when reading right to left', () => {
-        const words = splitRunIntoWords(run({ readDirX: -1, x: 100, width: 180 }))
+        // Anchor sits at the run's real start corner: the right edge, since
+        // reading runs from there towards x=100.
+        const words = splitRunIntoWords(run({ readDirX: -1, anchorX: 280, anchorY: 50 }))
         expect(words.map((w) => w.text)).toEqual(['Client:', 'Raja', 'Raman'])
         const xs = words.map((w) => w.x)
         // Reading direction is reversed, so successive words move leftward.
@@ -127,9 +160,48 @@ describe('splitRunIntoWords', () => {
     })
 
     it('produces a vertical stack for bottom-to-top text', () => {
-        const words = splitRunIntoWords(run({ readDirX: 0, readDirY: -1, width: 12, height: 180 }))
+        // Anchor sits at the bottom of a 12-wide, 180-tall column; the height
+        // vector (cross-reading extent) now runs horizontally.
+        const words = splitRunIntoWords(
+            run({
+                readDirX: 0,
+                readDirY: -1,
+                width: 12,
+                height: 180,
+                anchorX: 100,
+                anchorY: 230,
+                heightX: 12,
+                heightY: 0,
+            })
+        )
         expect(words).toHaveLength(3)
         const ys = words.map((w) => w.y)
         expect(ys).toEqual([...ys].sort((a, b) => b - a))
+    })
+
+    it('splits a 45-degree run into words that progress diagonally', () => {
+        // Reading direction and height vector both at 45 degrees, viewport y-down.
+        const d = Math.SQRT1_2
+        const words = splitRunIntoWords(
+            run({
+                readDirX: d,
+                readDirY: d,
+                anchorX: 100,
+                anchorY: 50,
+                heightX: -12 * d,
+                heightY: 12 * d,
+                width: 180,
+                height: 12,
+                angle: 45,
+            })
+        )
+        expect(words.map((w) => w.text)).toEqual(['Client:', 'Raja', 'Raman'])
+        // Each successive word's centre must move further along the diagonal.
+        const centres = words.map((w) => w.x + w.y)
+        expect(centres).toEqual([...centres].sort((a, b) => a - b))
+        for (const w of words) {
+            expect(w.width).toBeGreaterThan(0)
+            expect(w.height).toBeGreaterThan(0)
+        }
     })
 })

@@ -123,7 +123,7 @@
         "@vitest/browser-playwright": "^4.1.11",
         "@vitest/coverage-v8": "^4.1.11",
         "onnxruntime-web": "^1.29.0",
-        "pdfjs-dist": "^6.2.108",
+        "pdfjs-dist": "^6.3.289",
         "playwright": "^1.62.1",
         "ppu-paddle-ocr": "^6.4.3",
         "publint": "^0.3.24",
