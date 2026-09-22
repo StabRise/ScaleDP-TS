@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.1] - 22.09.2026
+
+### ⚡ Performance
+
+- **The worker host reuses its pipeline across transforms**
+  (`@stabrise/scaledp/worker`). `startScaleDpWorker` disposed and rebuilt the
+  whole pipeline on every `transform` request. Every stage that owns an ONNX
+  session holds it as an instance field created in `init()`, and
+  `ensureModelFiles` memoises nothing, so a host driven one page at a time —
+  the normal way to stream results — re-read megabytes of weights out of
+  IndexedDB and built a new `InferenceSession` for *every page*. The pipeline
+  is now kept whenever the incoming `StageDescriptor[]` is unchanged, and
+  rebuilt (disposing the old one) when it differs. A run that throws drops the
+  pipeline rather than reusing one left in an unknown state.
+
+- **PDF stages share a parsed document** (`@stabrise/scaledp/pdf`). Each of
+  `PdfToDocument`, `PdfToImage` and `PdfEmbeddedImages` called
+  `getDocument()` independently and destroyed it on the way out, so reading a
+  page's text, looking for embedded images and rendering it parsed the same
+  file three times — and doing that per page parsed a 100-page document
+  hundreds of times. They now go through `withPdfDocument`, which keeps the
+  last two parsed documents.
+
+  The cache is keyed on the identity of the `Uint8Array` a stage was given, not
+  on its contents: two different files can share a length and a prefix, and
+  serving the wrong document is far worse than missing the cache. A caller that
+  builds a fresh array per call simply gets the previous behaviour. Entries are
+  reference-counted, so a document still being read is destroyed by its last
+  user rather than out from under it.
+
+  Two helpers come with it, both on `@stabrise/scaledp/pdf`: `withPdfDocument`
+  runs a callback against a loaded PDF, reusing an already-parsed one where
+  possible, and `resetPdfDocuments` drops every cached document, releasing the
+  pdf.js worker's copies — a host that tears its engine down between documents
+  should call it.
+
 ## [0.3.0] - 22.09.2026
 
 ### 🚀 Features

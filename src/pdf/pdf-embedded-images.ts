@@ -27,7 +27,7 @@ import { toBytes } from '../stages/data-to-image.js'
 import { type EmbeddedImage, extractEmbeddedImages, type ImagePlacement } from './extract-images.js'
 import { coveringBoxes } from './merge-text.js'
 import { POINTS_PER_INCH, pageIndexes } from './pdf-to-image.js'
-import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
+import { describePdfError, withPdfDocument } from './pdfjs.js'
 
 export interface PdfEmbeddedImagesParams extends BaseStageParams {
     /** Pixel space the placement boxes are expressed in. Match PdfToDocument. */
@@ -106,23 +106,19 @@ export class PdfEmbeddedImages extends Stage<PdfEmbeddedImagesParams> {
         const { pageCol, pathCol, pageLimit } = this.params
         const path = String(row[pathCol] ?? 'memory')
 
-        const pdfjs = await loadPdfjs()
-        const task = pdfjs.getDocument(documentOptions(toBytes(input)))
-
         try {
             // pdf.js defers worker setup, so a missing worker surfaces on first
             // page access rather than from task.promise.
-            const pdf = await task.promise
-            const rows: Row[] = []
-            for (const index of pageIndexes(row[pageCol], pdf.numPages, pageLimit)) {
-                ctx.signal?.throwIfAborted()
-                rows.push(...(await this.readPage(pdf, index, row, path, ctx)))
-            }
-            return rows
+            return await withPdfDocument(toBytes(input), async (pdf) => {
+                const rows: Row[] = []
+                for (const index of pageIndexes(row[pageCol], pdf.numPages, pageLimit)) {
+                    ctx.signal?.throwIfAborted()
+                    rows.push(...(await this.readPage(pdf, index, row, path, ctx)))
+                }
+                return rows
+            })
         } catch (error) {
             throw describePdfError(error)
-        } finally {
-            await task.destroy()
         }
     }
 

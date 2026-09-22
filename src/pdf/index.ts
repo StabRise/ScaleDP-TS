@@ -63,7 +63,13 @@ export {
     pageIndexes,
     renderPage,
 } from './pdf-to-image.js'
-export { documentOptions, loadPdfjs, resetPdfjs } from './pdfjs.js'
+export {
+    documentOptions,
+    loadPdfjs,
+    resetPdfDocuments,
+    resetPdfjs,
+    withPdfDocument,
+} from './pdfjs.js'
 export {
     cssFontFromPdfName,
     relativeCharWidth,

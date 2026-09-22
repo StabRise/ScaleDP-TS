@@ -55,6 +55,21 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
     let queue: Promise<unknown> = Promise.resolve()
     let active: Pipeline | null = null
 
+    /**
+     * The descriptor list `active` was built from.
+     *
+     * Rebuilding per request is not free: every stage that owns an ONNX session
+     * holds it as an instance field created in `init()`, and `ensureModelFiles`
+     * memoises nothing, so a fresh Pipeline per transform re-reads megabytes of
+     * weights out of IndexedDB and creates a new InferenceSession. A host driven
+     * a page at a time -- which is the normal way to stream results -- paid that
+     * on every page.
+     *
+     * `transform` calls `init()` on every run and every stage's `init()` is
+     * idempotent, so reusing the instance runs the same work minus the rebuild.
+     */
+    let activeKey: string | null = null
+
     scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const message = event.data
         queue = queue.then(async () => {
@@ -70,8 +85,15 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
                         break
                     }
                     case 'transform': {
-                        await active?.dispose()
-                        active = new Pipeline(message.stages.map(buildStage))
+                        // Descriptors are plain JSON by contract -- that is what
+                        // lets them cross this boundary -- so stringifying them
+                        // is a sound identity.
+                        const key = JSON.stringify(message.stages)
+                        if (!active || key !== activeKey) {
+                            await active?.dispose()
+                            active = new Pipeline(message.stages.map(buildStage))
+                            activeKey = key
+                        }
                         const rows: Row[] = await active.transform(message.rows, {
                             onStage: (name, ms, count) =>
                                 post({
@@ -88,11 +110,18 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
                     case 'dispose': {
                         await active?.dispose()
                         active = null
+                        activeKey = null
                         post({ type: 'disposed', requestId: message.requestId })
                         break
                     }
                 }
             } catch (error) {
+                // A pipeline that failed mid-build or mid-run must not be handed
+                // to the next request as if it were good.
+                if (message.type === 'transform') {
+                    active = null
+                    activeKey = null
+                }
                 post({
                     type: 'error',
                     requestId: message.requestId,

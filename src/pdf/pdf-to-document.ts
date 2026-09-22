@@ -18,7 +18,7 @@ import { createDocument, type Document } from '../schemas/document.js'
 import { toBytes } from '../stages/data-to-image.js'
 import { extractTextBoxes } from './extract-text.js'
 import { POINTS_PER_INCH, pageIndexes } from './pdf-to-image.js'
-import { describePdfError, documentOptions, loadPdfjs } from './pdfjs.js'
+import { describePdfError, withPdfDocument } from './pdfjs.js'
 import { splitRunsIntoWords } from './split-words.js'
 
 export interface PdfToDocumentParams extends BaseStageParams {
@@ -50,42 +50,38 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
         const { outputCol, pageCol, pathCol, resolution, pageLimit, splitWords } = this.params
         const path = String(row[pathCol] ?? 'memory')
 
-        const pdfjs = await loadPdfjs()
-        const task = pdfjs.getDocument(documentOptions(toBytes(input)))
-
         try {
             // pdf.js defers worker setup, so a missing worker surfaces on first
             // page access rather than from task.promise.
-            const pdf = await task.promise
-            const rows: Row[] = []
+            return await withPdfDocument(toBytes(input), async (pdf) => {
+                const rows: Row[] = []
 
-            for (const index of pageIndexes(row[pageCol], pdf.numPages, pageLimit)) {
-                ctx.signal?.throwIfAborted()
-                const page = await pdf.getPage(index + 1)
-                try {
-                    const viewport = page.getViewport({ scale: resolution / POINTS_PER_INCH })
-                    const runs = await extractTextBoxes(page, viewport)
-                    const bboxes = splitWords ? splitRunsIntoWords(runs) : runs
+                for (const index of pageIndexes(row[pageCol], pdf.numPages, pageLimit)) {
+                    ctx.signal?.throwIfAborted()
+                    const page = await pdf.getPage(index + 1)
+                    try {
+                        const viewport = page.getViewport({ scale: resolution / POINTS_PER_INCH })
+                        const runs = await extractTextBoxes(page, viewport)
+                        const bboxes = splitWords ? splitRunsIntoWords(runs) : runs
 
-                    rows.push({
-                        ...row,
-                        [pageCol]: index,
-                        [outputCol]: createDocument({
-                            path,
-                            type: 'pdf',
-                            text: runs.map((r) => r.text).join('\n'),
-                            bboxes,
-                        }),
-                    })
-                } finally {
-                    page.cleanup()
+                        rows.push({
+                            ...row,
+                            [pageCol]: index,
+                            [outputCol]: createDocument({
+                                path,
+                                type: 'pdf',
+                                text: runs.map((r) => r.text).join('\n'),
+                                bboxes,
+                            }),
+                        })
+                    } finally {
+                        page.cleanup()
+                    }
                 }
-            }
-            return rows
+                return rows
+            })
         } catch (error) {
             throw describePdfError(error)
-        } finally {
-            await task.destroy()
         }
     }
 

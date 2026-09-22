@@ -1,6 +1,6 @@
 {
     "name": "@stabrise/scaledp",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "description": "Process documents (PDF, images) in the browser using AI/ML pipelines: OCR, text detection, and NER on onnxruntime-web. A browser mirror of the ScaleDP Python library.",
     "keywords": [
         "ocr",
