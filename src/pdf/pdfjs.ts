@@ -171,6 +171,43 @@ export function describePdfError(error: unknown): Error {
     )
 }
 
+/**
+ * A canvas factory that needs no DOM.
+ *
+ * pdf.js only ships `DOMCanvasFactory`, whose `_createCanvas` calls
+ * `document.createElement('canvas')`, and it instantiates one for the scratch
+ * canvases rendering needs (soft masks, transparency groups, patterns). Passing
+ * a rendering target of our own is not enough -- inside a Worker those internal
+ * canvases still throw `ReferenceError: document is not defined`, which is how
+ * `PdfToImage` fails there despite this library being otherwise DOM-free.
+ *
+ * Duck-typed rather than extending pdf.js's `BaseCanvasFactory`, which is not
+ * exported. Only `create`/`reset`/`destroy` are called.
+ */
+class OffscreenCanvasFactory {
+    create(width: number, height: number) {
+        if (width <= 0 || height <= 0) throw new Error('Invalid canvas size')
+        const canvas = new OffscreenCanvas(width, height)
+        return { canvas, context: canvas.getContext('2d', { willReadFrequently: true }) }
+    }
+
+    reset(canvasAndContext: { canvas: OffscreenCanvas | null }, width: number, height: number) {
+        if (!canvasAndContext.canvas) throw new Error('Canvas is not specified')
+        if (width <= 0 || height <= 0) throw new Error('Invalid canvas size')
+        canvasAndContext.canvas.width = width
+        canvasAndContext.canvas.height = height
+    }
+
+    destroy(canvasAndContext: { canvas: OffscreenCanvas | null; context?: unknown }) {
+        if (!canvasAndContext.canvas) throw new Error('Canvas is not specified')
+        // Zeroing frees the backing store rather than waiting for GC.
+        canvasAndContext.canvas.width = 0
+        canvasAndContext.canvas.height = 0
+        canvasAndContext.canvas = null
+        canvasAndContext.context = null
+    }
+}
+
 /** Document-level options assembled from the global config. */
 export function documentOptions(data: Uint8Array): Record<string, unknown> {
     const { cMapUrl, standardFontDataUrl, wasmUrl } = getConfig().pdf
@@ -180,11 +217,28 @@ export function documentOptions(data: Uint8Array): Record<string, unknown> {
     owned.set(data)
 
     const options: Record<string, unknown> = { data: owned }
+    // pdf.js takes a class here and constructs it itself; the lowercase
+    // `canvasFactory` key is the internal one and is ignored on `getDocument`.
+    // Unconditional: this library renders to OffscreenCanvas everywhere else,
+    // and a page context has no reason to prefer a DOM canvas for scratch work.
+    if (typeof OffscreenCanvas !== 'undefined') {
+        options.CanvasFactory = OffscreenCanvasFactory
+    }
     if (cMapUrl) {
         options.cMapUrl = cMapUrl
         options.cMapPacked = true
     }
     if (standardFontDataUrl) options.standardFontDataUrl = standardFontDataUrl
     if (wasmUrl) options.wasmUrl = wasmUrl
+
+    // Given all three asset URLs, pdf.js derives `useWorkerFetch` by validating
+    // them with `isValidFetchUrl(url, document.baseURI)` -- a bare `document`,
+    // which is a ReferenceError inside a Worker. That is not a rendering
+    // failure but a `getDocument` one: it throws before a page is ever touched,
+    // so every PDF stage dies in a worker the moment assets are configured.
+    // Passing the boolean short-circuits the derivation, and the value matches
+    // what pdf.js would have computed for same-origin URLs like these.
+    options.useWorkerFetch = Boolean(cMapUrl && standardFontDataUrl && wasmUrl)
+
     return options
 }

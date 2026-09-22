@@ -205,3 +205,44 @@ describe('splitRunIntoWords', () => {
         }
     })
 })
+
+describe('documentOptions', () => {
+    it('sets useWorkerFetch itself rather than letting pdf.js derive it', async () => {
+        // pdf.js derives it with `isValidFetchUrl(url, document.baseURI)` — a
+        // bare `document`, which is a ReferenceError inside a Worker. It only
+        // reaches that expression when every asset URL is set, which is exactly
+        // the configured case, so `getDocument` threw before touching a page and
+        // every PDF stage died in a worker.
+        const { configure, resetConfig } = await import('../../src/core/config.js')
+        const { documentOptions } = await import('../../src/pdf/pdfjs.js')
+        try {
+            configure({
+                pdf: {
+                    cMapUrl: '/pdfjs/cmaps/',
+                    standardFontDataUrl: '/pdfjs/standard_fonts/',
+                    wasmUrl: '/pdfjs/wasm/',
+                },
+            })
+            const options = documentOptions(new Uint8Array([1, 2, 3]))
+            expect(options.useWorkerFetch).toBe(true)
+
+            // A class, not an instance: pdf.js constructs it itself, and the
+            // lowercase `canvasFactory` key is ignored on `getDocument`. Only
+            // offered where OffscreenCanvas exists, which this node environment
+            // is not — so the guard, not the class, is what is asserted here.
+            expect(options.CanvasFactory).toBe(
+                typeof OffscreenCanvas === 'undefined' ? undefined : expect.any(Function)
+            )
+        } finally {
+            resetConfig()
+        }
+    })
+
+    it('still answers when no asset URLs are configured', async () => {
+        const { resetConfig } = await import('../../src/core/config.js')
+        const { documentOptions } = await import('../../src/pdf/pdfjs.js')
+        resetConfig()
+        // Nothing for pdf.js to validate, so the worker cannot fetch them.
+        expect(documentOptions(new Uint8Array([1])).useWorkerFetch).toBe(false)
+    })
+})

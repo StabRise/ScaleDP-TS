@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.2] - 22.09.2026
+
+### 🐛 Fixes
+
+- **PDF stages work inside a Worker** (`@stabrise/scaledp/pdf`). Every PDF stage
+  threw `ReferenceError: document is not defined` in a worker as soon as
+  `configure()` supplied asset URLs — which is the normal configuration, so OCR,
+  rendering and embedded-image extraction all died there while working fine on
+  the main thread. The library's own browser tests run in a page context, where
+  `document` exists, so nothing caught it.
+
+  The cause is in `getDocument`, not in rendering: given `cMapUrl`,
+  `standardFontDataUrl` and `wasmUrl`, pdf.js derives `useWorkerFetch` by
+  calling `isValidFetchUrl(url, document.baseURI)` — a bare `document`. It threw
+  before a page was ever touched. `documentOptions` now passes `useWorkerFetch`
+  explicitly, short-circuiting that derivation with the value pdf.js would have
+  computed anyway.
+
+  A `CanvasFactory` built on `OffscreenCanvas` is supplied alongside it, for the
+  scratch canvases rendering needs (soft masks, transparency groups, patterns).
+  pdf.js otherwise falls back to `DOMCanvasFactory`, which calls
+  `document.createElement` for those even when the render target is supplied.
+
 ## [0.3.1] - 22.09.2026
 
 ### ⚡ Performance

@@ -68,7 +68,13 @@ export default defineConfig({
         // pdf.js refuses a worker whose version differs from the API by a
         // single patch. Dedupe makes every engine resolve from here, so the
         // loaded code and the assets copied into public/ are the same install.
-        dedupe: ['pdfjs-dist', 'onnxruntime-web', 'tesseract-wasm', 'ppu-paddle-ocr', '@huggingface/transformers'],
+        dedupe: [
+            'pdfjs-dist',
+            'onnxruntime-web',
+            'tesseract-wasm',
+            'ppu-paddle-ocr',
+            '@huggingface/transformers',
+        ],
     },
     server: {
         // Pin the port. Vite otherwise moves to the next free one when 5173 is
