@@ -1,8 +1,32 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 22.09.2026
+
+### 🚀 Features
+
+- **`showBoxes` can filter its table by text** (`@stabrise/scaledp/display`). A
+  new third argument, `{ search }`, adds an input above the table that hides
+  rows whose `Box.text` does not contain the query, case-insensitively. It is
+  **on by default** whenever more than one row is shown; pass
+  `{ search: false }` to get the bare table as before. Filtering only toggles
+  row visibility, so rows keep their `data-box-index` and a host's click
+  handlers keep working.
 
 ### 🐛 Fixes
+
+- **PDF text-layer boxes carry their real rotation** (`@stabrise/scaledp/pdf`).
+  `PdfToDocument` used to flatten every text run to its axis-aligned bounding
+  box and report `angle: 0`. For skewed text that box is far larger than the
+  run, and `isRotated`/`isOnSameLine` treated it as upright. Runs now go
+  through `boxFromPolygon`, the same path DBNet's polygons take, so a rotated
+  run gets a tight box with its true `angle`. Word splitting walks the run
+  along its real reading direction, so right-to-left, bottom-to-top and rotated
+  runs split correctly.
+
+  Output changes for rotated text only. `width` is always the longer side and
+  `x`/`y` are derived from the rect's centre, per the `Box` convention, so a
+  vertical run now reports about 60×12 at `angle` 90 where it used to report
+  12×60 at `angle` 0. Upright text is unchanged.
 
 - **`mergeBoxes` keeps the orientation of rotated boxes.** It used to union
   `x`/`y`/`width`/`height` as if every box were axis-aligned and reset `angle`
