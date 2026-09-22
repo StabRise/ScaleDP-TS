@@ -17,6 +17,8 @@ export type { StageDescriptor }
 export type WorkerRequest =
     | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }
     | { type: 'transform'; requestId: number; stages: StageDescriptor[]; rows: Row[] }
+    | { type: 'putContent'; requestId: number; key: string; content: Uint8Array }
+    | { type: 'dropContent'; requestId: number; key: string }
     | { type: 'dispose'; requestId: number }
 
 export type WorkerResponse =
@@ -24,8 +26,25 @@ export type WorkerResponse =
     | { type: 'stage'; requestId: number; name: string; ms: number; rows: number }
     | { type: 'result'; requestId: number; rows: Row[] }
     | { type: 'configured'; requestId: number }
+    | { type: 'stored'; requestId: number }
     | { type: 'disposed'; requestId: number }
     | { type: 'error'; requestId: number; message: string }
+
+/**
+ * The row field naming content held in the worker.
+ *
+ * Structured clone copies every byte of every message, so a caller that runs
+ * several pipelines over one file -- read its text, find its images, render it
+ * -- pays for the whole file again on each. Worse, the copy is a new
+ * `Uint8Array` every time, so the document cache (keyed on identity, because
+ * keying on content would mean a hash whose collision serves the wrong
+ * document) misses and pdf.js re-parses.
+ *
+ * `putContent` stores the bytes once; a row then carries this field instead of
+ * `content` and the host swaps the stored buffer in. The same buffer object is
+ * handed to every transform, so the document cache hits.
+ */
+export const CONTENT_REF_COL = 'contentRef'
 
 /**
  * Config minus its function-valued fields.

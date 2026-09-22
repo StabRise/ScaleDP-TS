@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0] - 22.09.2026
+
+### 🚀 Features
+
+- **A worker can hold a file instead of being sent it again**
+  (`@stabrise/scaledp/worker`). `ScaleDpWorkerClient.putContent(key, bytes)`
+  registers a document once; a row then carries `contentRef: key` (the column
+  name is exported as `CONTENT_REF_COL`) in place of `content`, and the host
+  swaps the stored buffer in. `dropContent(key)` releases it, and `dispose`
+  clears everything the worker holds.
+
+  Structured clone copies every byte of every message, so a caller running
+  several pipelines over one file — read its text, find its embedded images,
+  render a page — paid for the whole file on each. Per page, per pipeline. A
+  20 MB, 100-page document moved roughly 6 GB through `postMessage`.
+
+  It also defeated the document cache added in 0.3.2. That cache keys on
+  `Uint8Array` identity, and structured clone produces a new array per message,
+  so it missed every time and pdf.js re-parsed the file for every transform.
+  Referenced content is the *same buffer object* on each one, so the cache now
+  hits as intended.
+
+  Identity remains the cache key on purpose: keying on content would mean a
+  hash, and a collision would serve the wrong document — which, for the
+  redaction case this library exists for, means one file's boxes over another's.
+
+  Rows carrying `content` directly keep working unchanged.
+
 ## [0.3.2] - 22.09.2026
 
 ### 🐛 Fixes

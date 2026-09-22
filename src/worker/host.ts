@@ -14,7 +14,7 @@
 import { configure } from '../core/config.js'
 import { formatException } from '../core/errors.js'
 import { Pipeline, type Row, type Stage } from '../core/pipeline.js'
-import type { StageDescriptor, WorkerRequest, WorkerResponse } from './protocol.js'
+import { CONTENT_REF_COL, type StageDescriptor, type WorkerRequest, type WorkerResponse } from './protocol.js'
 
 /** Builds a stage from its descriptor. Consumers register the stages they use. */
 export type StageFactory = (descriptor: StageDescriptor) => Stage | undefined
@@ -56,6 +56,32 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
     let active: Pipeline | null = null
 
     /**
+     * Content registered with `putContent`, by key.
+     *
+     * Holding the bytes here is the point: a row referencing a key gets the
+     * *same* buffer object on every transform, so the document cache hits
+     * instead of re-parsing a fresh copy. Nothing is evicted automatically --
+     * the caller registered it and the caller drops it, because only the caller
+     * knows when a document is finished with.
+     */
+    const contents = new Map<string, Uint8Array>()
+
+    /** Swap `contentRef` for the bytes it names. */
+    const resolveRows = (rows: Row[]): Row[] =>
+        rows.map((row) => {
+            const key = row[CONTENT_REF_COL]
+            if (typeof key !== 'string') return row
+            const content = contents.get(key)
+            if (!content) {
+                throw new Error(
+                    `No content registered under "${key}". Call putContent() before referencing it.`
+                )
+            }
+            const { [CONTENT_REF_COL]: _ref, ...rest } = row
+            return { ...rest, content }
+        })
+
+    /**
      * The descriptor list `active` was built from.
      *
      * Rebuilding per request is not free: every stage that owns an ONNX session
@@ -94,7 +120,7 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
                             active = new Pipeline(message.stages.map(buildStage))
                             activeKey = key
                         }
-                        const rows: Row[] = await active.transform(message.rows, {
+                        const rows: Row[] = await active.transform(resolveRows(message.rows), {
                             onStage: (name, ms, count) =>
                                 post({
                                     type: 'stage',
@@ -107,10 +133,21 @@ export function startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as n
                         post({ type: 'result', requestId: message.requestId, rows })
                         break
                     }
+                    case 'putContent': {
+                        contents.set(message.key, message.content)
+                        post({ type: 'stored', requestId: message.requestId })
+                        break
+                    }
+                    case 'dropContent': {
+                        contents.delete(message.key)
+                        post({ type: 'stored', requestId: message.requestId })
+                        break
+                    }
                     case 'dispose': {
                         await active?.dispose()
                         active = null
                         activeKey = null
+                        contents.clear()
                         post({ type: 'disposed', requestId: message.requestId })
                         break
                     }

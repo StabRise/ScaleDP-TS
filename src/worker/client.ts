@@ -111,6 +111,28 @@ export class ScaleDpWorkerClient {
         return this.send<Row[]>({ type: 'transform', stages, rows })
     }
 
+    /**
+     * Hand the worker a file once, to be referenced by key from later rows.
+     *
+     * Structured clone copies every byte of every message, so running several
+     * pipelines over one document -- read its text, find its images, render it
+     * -- otherwise copies the whole file once per pipeline, per page. Each copy
+     * is also a fresh `Uint8Array`, which the document cache keys on, so pdf.js
+     * re-parses every time too.
+     *
+     * A row carrying `contentRef: key` instead of `content` gets the stored
+     * buffer, the same object every time. Call `dropContent` when the document
+     * is finished with; the worker holds it until then.
+     */
+    putContent(key: string, content: Uint8Array): Promise<void> {
+        return this.send({ type: 'putContent', key, content })
+    }
+
+    /** Release content registered with `putContent`. */
+    dropContent(key: string): Promise<void> {
+        return this.send({ type: 'dropContent', key })
+    }
+
     async dispose(): Promise<void> {
         await this.send({ type: 'dispose' }).catch(() => undefined)
         this.options.worker.terminate()

@@ -28,10 +28,10 @@ export type { ScaleDpWorkerOptions } from './client.js'
 export { createScaleDpWorker, ScaleDpWorkerClient } from './client.js'
 export type { StageFactory } from './host.js'
 export { registerStages, startScaleDpWorker } from './host.js'
-
 export type {
     StageDescriptor,
     TransferableConfig,
     WorkerRequest,
     WorkerResponse,
 } from './protocol.js'
+export { CONTENT_REF_COL } from './protocol.js'

@@ -20,6 +20,9 @@ import type {
 
 const counts = { built: 0, disposed: 0, applied: 0 }
 
+/** Buffers each run was handed, so identity across transforms is observable. */
+const seenContent: unknown[] = []
+
 class Probe extends Stage {
     readonly name = 'Probe'
 
@@ -28,8 +31,9 @@ class Probe extends Stage {
         counts.built += 1
     }
 
-    protected async apply(): Promise<unknown> {
+    protected async apply(_input: unknown, row: { content?: unknown }): Promise<unknown> {
         counts.applied += 1
+        seenContent.push(row.content)
         if (this.params.outputCol === 'boom') throw new Error('probe exploded')
         return { ok: true }
     }
@@ -77,6 +81,7 @@ beforeEach(() => {
     counts.built = 0
     counts.disposed = 0
     counts.applied = 0
+    seenContent.length = 0
 })
 
 describe('startScaleDpWorker', () => {
@@ -134,5 +139,66 @@ describe('startScaleDpWorker', () => {
 
         // Rebuilt rather than reusing a pipeline left in an unknown state.
         expect(counts.built).toBe(2)
+    })
+})
+
+describe('content handles', () => {
+    it('hands every transform the same buffer object', async () => {
+        const { send } = stubScope()
+        const bytes = new Uint8Array([1, 2, 3, 4])
+        await send({ type: 'putContent', key: 'doc-1', content: bytes })
+
+        // Three pipelines over one file, as reading text, finding images and
+        // rendering a page would be.
+        for (const col of ['a', 'b', 'c']) {
+            await send({ type: 'transform', stages: stages(col), rows: [{ contentRef: 'doc-1' }] })
+        }
+
+        expect(seenContent).toHaveLength(3)
+        // Identity, not equality: the document cache keys on it, so a fresh
+        // copy per transform would miss and pdf.js would re-parse each time.
+        expect(seenContent[0]).toBe(bytes)
+        expect(seenContent[1]).toBe(bytes)
+        expect(seenContent[2]).toBe(bytes)
+    })
+
+    it('leaves a row carrying its own content alone', async () => {
+        const { send } = stubScope()
+        const inline = new Uint8Array([9])
+        await send({ type: 'transform', stages: stages('a'), rows: [{ content: inline }] })
+        expect(seenContent[0]).toBe(inline)
+    })
+
+    it('fails loudly on an unregistered key', async () => {
+        const { send } = stubScope()
+        const response = await send({
+            type: 'transform',
+            stages: stages('a'),
+            rows: [{ contentRef: 'never-registered' }],
+        })
+        expect(response.type).toBe('error')
+        expect((response as { message: string }).message).toMatch(/putContent/)
+    })
+
+    it('releases content on dropContent and on dispose', async () => {
+        const { send } = stubScope()
+        await send({ type: 'putContent', key: 'doc-1', content: new Uint8Array([1]) })
+        await send({ type: 'dropContent', key: 'doc-1' })
+
+        const afterDrop = await send({
+            type: 'transform',
+            stages: stages('a'),
+            rows: [{ contentRef: 'doc-1' }],
+        })
+        expect(afterDrop.type).toBe('error')
+
+        await send({ type: 'putContent', key: 'doc-2', content: new Uint8Array([2]) })
+        await send({ type: 'dispose' })
+        const afterDispose = await send({
+            type: 'transform',
+            stages: stages('a'),
+            rows: [{ contentRef: 'doc-2' }],
+        })
+        expect(afterDispose.type).toBe('error')
     })
 })
