@@ -1,3 +1,4 @@
+import { isSkipped } from '@stabrise/scaledp'
 import { STAGE_SPECS } from '@stabrise/scaledp/registry'
 import { useMemo, useState } from 'react'
 import { columnsBefore, danglingInputs, multipliesRows } from '../lib/columns'
@@ -28,12 +29,16 @@ export function Builder() {
     // exception landed in. A run keeps going after one stage fails, so several
     // cards can carry a message at once -- and with a multi-page document a
     // stage can fail on one page and not the others, so every row is searched
-    // and the first message found is the one shown.
+    // and the first message found is the one shown -- except that a real
+    // failure on any page outranks a skip on another. A hybrid PDF whose first
+    // page has no pictures must not hide that page seven's OCR crashed.
     const failures = useMemo(() => {
         const byColumn = new Map<string, string>()
         for (const row of rows) {
             for (const column of outputsOf(row)) {
-                if (column.exception && !byColumn.has(column.name)) {
+                if (!column.exception) continue
+                const seen = byColumn.get(column.name)
+                if (seen === undefined || (isSkipped(seen) && !isSkipped(column.exception))) {
                     byColumn.set(column.name, column.exception)
                 }
             }

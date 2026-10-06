@@ -22,9 +22,13 @@ export default defineConfig({
     target: ['es2022', 'chrome111', 'firefox128', 'safari17'],
     deps: {
         // Every ML/PDF engine is an optional peer dependency. Bundling one would
-        // duplicate the runtime and break the single-onnxruntime-web rule.
+        // duplicate the runtime and break the single-onnxruntime-web rule. The
+        // phone and date libraries are optional peers too: RegexNer works
+        // without them, so their weight is the application's choice.
         neverBundle: [
             '@huggingface/transformers',
+            'chrono-node',
+            'libphonenumber-js',
             'onnxruntime-web',
             'pdfjs-dist',
             'ppu-paddle-ocr',

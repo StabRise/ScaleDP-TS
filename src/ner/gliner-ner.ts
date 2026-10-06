@@ -8,7 +8,7 @@
 
 import { getConfig } from '../core/config.js'
 import { boxesForRange, buildCharToBoxMap } from '../core/entities.js'
-import { NerError } from '../core/errors.js'
+import { NerError, upstreamError } from '../core/errors.js'
 import { ensureModelFiles } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
@@ -132,7 +132,7 @@ export class GlinerNer extends Stage<GlinerNerParams> {
             throw new NerError('Expected a Document with text', this.name)
         }
         if (document.exception) {
-            throw new NerError(`Upstream stage failed: ${document.exception}`, this.name)
+            throw upstreamError(document.exception, this.name, (message) => new NerError(message, this.name))
         }
 
         const entities = await this.extract(document)

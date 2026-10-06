@@ -18,7 +18,7 @@ import {
     findWholeWordOccurrences,
     foldForMatching,
 } from '../core/entities.js'
-import { NerError } from '../core/errors.js'
+import { NerError, upstreamError } from '../core/errors.js'
 import {
     assertInRange,
     assertPositiveInt,
@@ -184,7 +184,7 @@ export function applyVocabulary(
             // The model tagged this exact span itself and is being trusted, so
             // its label stands and the vocabulary's is not written over it.
             if (model && options.overrideModelLabels === false) {
-                entities.push({ ...model, word, boxes, source: 'model' })
+                entities.push({ ...model, word, boxes, source: model.source ?? 'model' })
                 continue
             }
 
@@ -197,7 +197,7 @@ export function applyVocabulary(
                     start,
                     end,
                     boxes,
-                    source: fromModel ? 'model' : 'propagated',
+                    source: fromModel ? (model.source ?? 'model') : 'propagated',
                 })
             }
         }
@@ -212,7 +212,7 @@ export function applyVocabulary(
     const covered = entities.map((e) => ({ start: e.start, end: e.end }))
     for (const entity of found) {
         if (covered.some((span) => entity.start < span.end && entity.end > span.start)) continue
-        entities.push({ ...entity, source: 'model' })
+        entities.push({ ...entity, source: entity.source ?? 'model' })
     }
 
     return entities.sort((a, b) => a.start - b.start || a.entity_group.localeCompare(b.entity_group))
@@ -296,13 +296,13 @@ export class NerConsistency extends Stage<NerConsistencyParams> {
             throw new NerError(`Expected NER output in "${this.nerCol}"`, this.name)
         }
         if (ner.exception) {
-            throw new NerError(`Upstream stage failed: ${ner.exception}`, this.name)
+            throw upstreamError(ner.exception, this.name, (message) => new NerError(message, this.name))
         }
         if (!document || typeof document.text !== 'string') {
             throw new NerError(`Expected a Document in "${this.documentCol}"`, this.name)
         }
         if (document.exception) {
-            throw new NerError(`Upstream stage failed: ${document.exception}`, this.name)
+            throw upstreamError(document.exception, this.name, (message) => new NerError(message, this.name))
         }
 
         const vocabulary = this.vocabulary ?? this.collect([row])

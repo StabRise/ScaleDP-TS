@@ -9,7 +9,7 @@
  */
 
 import { getConfig } from '../core/config.js'
-import { DetectionError } from '../core/errors.js'
+import { DetectionError, upstreamError } from '../core/errors.js'
 import { decodeImage, letterbox, toImageData, toNchwFloat32 } from '../core/image.js'
 import { ensureModelFiles } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
@@ -215,7 +215,11 @@ export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
         // empty Image, so testing the bytes first would report "no decoded bytes" and
         // bury the real cause.
         if (image?.exception) {
-            throw new DetectionError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(
+                image.exception,
+                this.name,
+                (message) => new DetectionError(message, this.name)
+            )
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new DetectionError('Expected an Image with decoded bytes', this.name)

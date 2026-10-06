@@ -174,6 +174,8 @@ for the full shape.
 | `presetCol` | `string` | `''` | Take the model from a script-detection column, per page, instead of the fixed preset above. Empty pins it to the preset. Falls back to the preset whenever the column has no usable answer. |
 | `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
 | `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
+| `endPadding` | `number` 0–2 | `0.3` | Extend each region along its line by this fraction of its height, stopping at the next region -- recovers a handwritten capital or flourish the detector left off. 0 reads regions as detected. |
+| `dropNested` | `boolean` | `true` | Skip a region lying mostly inside a larger one, such as a loose stroke of a handwritten capital, since the larger region already reads it. |
 | `scoreThreshold` | `number` 0–1 | `0.5` | Drop regions below this confidence. |
 | `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
 | `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |

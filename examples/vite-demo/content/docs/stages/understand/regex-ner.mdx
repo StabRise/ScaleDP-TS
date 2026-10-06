@@ -1,0 +1,206 @@
+---
+title: RegexNer
+description: Find dates, phone numbers, e-mail addresses, URLs, IBANs, card numbers, PESEL, SSN, postal codes and countries in OCR text, with patterns that survive OCR's mistakes.
+---
+
+<StageMeta type="RegexNer" />
+
+A NER model is good at names and poor at numbers, and numbers are exactly what
+redaction cannot afford to miss. A plain regex is no better on a scan: OCR reads
+`0` as `O`, `1` as `l` or `|`, drops a comma into a card number, and breaks a
+phone number across a line. One wrong character and an exact pattern sees
+nothing.
+
+`RegexNer` matches loosely, then validates strictly. Every candidate is checked
+— Luhn for cards, the checksum and encoded birth date for PESEL, the calendar for
+dates, the allocation rules for SSN — and a failed check lowers the score.
+
+```ts
+import { Pipeline, RegexNer } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { PaddleTextRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new RegexNer({ defaultCountry: 'PL' }),
+]).transform(file)
+
+for (const entity of rows[0].ner.entities) {
+    console.log(entity.entity_group, entity.word, entity.score, entity.boxes)
+}
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 300 } },
+    { type: 'PaddleTextRecognizer', options: { keepFormatting: true } },
+    { type: 'RegexNer', options: {} },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'ner'], outputCol: 'annotated', lineWidth: 2, displayDataList: ['entity_group', 'score'] } },
+]} />
+
+It needs no model and no download. It reads the `Document` in `text`, the same
+column `GlinerNer` reads, and writes `ner`. Every entity carries
+`source: 'pattern'` and the OCR boxes it spans.
+
+## What it finds
+
+| Label | Matches | Checked by |
+| --- | --- | --- |
+| `DATE` | `12.03.2024`, `2024-03-12`, `12 Jan 2024`, `Jan. 12, 2024`, `12 stycznia 2024`; month and year alone, `10/2024`, `2024-10`, `October 2024` (a two-digit month: `FV 3/2024` is an invoice number) | the calendar, both day-first and month-first; `30.02.2000` is still reported, in doubt |
+| `PHONE` | `+48 600-123-456`, `(555) 123-4567`, `600 123 456` | libphonenumber-js, when installed |
+| `EMAIL` | `jan.kowalski@example.com`, and OCR's `jan.kowalski @ example .com` | — |
+| `URL` | `https://example.com/a?b#c`, `www.example.pl`, OCR's `http ://…`; a bare `example.com/path` on a common TLD | sentence punctuation is left off the end |
+| `IBAN` | `DE89 3704 0044 0532 0130 00`, compact or grouped; a Polish NRB `61 1090 1014 0000 0712 1981 2874` | mod 97 and the country's IBAN length; an NRB as `PL` + its digits |
+| `CREDIT_CARD` | 13–19 digits in groups of four; Amex 4-6-5 | Luhn |
+| `PESEL` | 11 digits | checksum and the encoded birth date |
+| `SSN` | `123-45-6789` | the never-issued ranges: area `000`, `666`, `9xx`; group `00`; serial `0000` |
+| `ZIP_CODE` | `00-950`, `94105-1234`, `NY 10001`, `SW1A 1AA`, `K1A 0B1` | context: see below |
+| `COUNTRY` | `Poland`, `POLAND`, `Niemcy`, `USA`, `DEU`; `PL` after a label | ISO 3166; context for anything ambiguous, see below |
+
+### Countries
+
+Names come from the runtime's own `Intl.DisplayNames`, so `countryLocales`
+(default `['en', 'pl']`) can be any language the browser knows and no list of
+names is shipped. Three-letter codes come from the ISO 3166 table.
+
+A country is personal data mostly as a nationality or a country of birth, and a
+country list collides with ordinary text, so ambiguity is resolved by a label
+before it — `Country:`, `Nationality:`, `Citizenship:`, `Obywatelstwo:`,
+`Kraj urodzenia:`:
+
+| Form | Without a label | With one |
+| --- | --- | --- |
+| a name, `Poland`, `HONG KONG` | `0.75` | `0.9` |
+| a name that is also a person or thing, `Chad`, `Jordan`, `Georgia`, `Turkey` | dropped | `0.9` |
+| a three-letter code, `POL`, `USA` | `0.6` | `0.9` |
+| a code that is a word or acronym, `AND`, `CAN`, `PNG` | dropped | `0.9` |
+| a two-letter code, `PL`, `IT` | dropped | `0.85` |
+
+### Postal codes need context
+
+Five bare digits are a US ZIP, and also a German, French, Italian or Spanish
+postal code — and a price, a house number, an invoice number. Such a code counts
+only with something around it that says what it is:
+
+| Context | Example | Score |
+| --- | --- | --- |
+| a keyword before it | `ZIP 94105`, `kod pocztowy: 31-042`, `PLZ 10115` | `0.9` |
+| a US state before it | `New York, NY 10001` | `0.85` |
+| a town after it | `10115 Berlin` (not `12345 Main Street`) | `0.6` |
+| nothing | `Total 12345 PLN` | `0.4`, dropped |
+
+A Polish `00-000` or a ZIP+4 is distinctive by its shape and needs no context.
+UK and Canadian codes are read from the raw text, because their letters are part
+of the code and the lookalike repair would turn the `B` of `0B1` into an `8`.
+
+## How it tolerates OCR
+
+There are three layers, each for a different kind of mistake.
+
+**Lookalikes are repaired first.** Inside a number, `O` `o` `Q` `D` read as `0`;
+`I` `l` `i` `|` `!` as `1`; `Z` `z` as `2`; `S` `s` as `5`; `G` `b` as `6`;
+`B` as `8`; `g` `q` as `9`. "Inside a number" means a run with at least one
+real digit, no letter touching it, and at least half real digits across the
+whole spaced-out number. So `4111 1lll 1111 1111` is repaired, while `Bill`,
+`SOS` and the `1s` of `1st` are not. A repair changes characters but never the
+length, so offsets still land on the right boxes. A repaired match scores a
+little lower.
+
+**Stray symbols are absorbed.** Patterns run on a small approximate-regex engine,
+`FuzzyRegex`, so a match may absorb up to `maxEdits` characters — a comma in
+`123-45-67,89`, or a `*` where a digit smudged. Only punctuation and symbols
+count. A stray letter or digit is never forgiven, because that is how one number
+becomes another. Each edit costs score, and a digit that had to be guessed can't
+be checksum-verified, so it scores as unverified.
+
+**Libraries add what the patterns don't know.** When they are installed,
+[libphonenumber-js](https://www.npmjs.com/package/libphonenumber-js) finds
+phone numbers by each country's real numbering plan, and
+[chrono-node](https://www.npmjs.com/package/chrono-node) finds dates in
+`dateLocales`. Both are optional peer dependencies, loaded lazily the first
+time the stage runs:
+
+```bash
+npm i libphonenumber-js chrono-node
+```
+
+Without them the built-in patterns still run. Set `useLibraries: false` to get
+the same results whatever is installed.
+
+Phone numbers written without a country code, such as `600 123 456`, need a
+`defaultCountry` before libphonenumber-js will read them. The built-in pattern
+finds them either way, at a lower score.
+
+## Scores and the threshold
+
+| Score | Means |
+| --- | --- |
+| `0.95` | checksum passed: an IBAN, a card, a PESEL, or a phone number libphonenumber-js read with its country code |
+| `0.9` | a valid date or a well-formed SSN |
+| `0.7` | well-shaped but unverifiable: a separated phone number, `validate: false`, or a guessed digit |
+| `0.55` | an unmistakable shape whose check failed: a card grouped 4-4-4-4, an IBAN of its country's length, a date like `30.02.2000` |
+| `0.3`–`0.45` | any other failed check, or a bare digit run that could be anything |
+
+The default `threshold` of `0.5` keeps the first four rows. A number grouped
+like a card is a card to a redactor, whatever its check digit says — one OCR
+misread is enough to break Luhn — so it is reported, plainly in doubt. Raise the
+threshold to `0.6` to keep only what checked out; lower it to see every failed
+check. An identifier that fails its check is still held against
+the other labels, so a card number with a typo is never reported as a phone
+number instead.
+
+When two detectors claim the same digits, a reading that kept the text's own
+grouping beats one that had to absorb a character. After that, the more specific
+label wins: e-mail, URL, IBAN, card, PESEL, SSN, date, postal code, country, phone.
+
+A match never starts straight after a country code. The digits in
+`+48790844156` are eleven and PESEL-shaped, but the `+` says they are a phone
+number, and only the phone pattern, which reads the `+` itself, may claim them.
+
+## With GLiNER
+
+The two are complementary: patterns for structured identifiers, the model for
+names and free text. Give one of them its own output column and draw both:
+
+```ts
+new Pipeline([
+    new PdfToImage({ resolution: 300 }),
+    new PaddleTextRecognizer({ keepFormatting: true }),
+    new GlinerNer({ inputCol: 'text', labels: ['person', 'organization', 'address'] }),
+    new RegexNer({ outputCol: 'ids' }),
+    new ImageDrawBoxes({ inputCols: ['image', 'ner', 'ids'] }),
+])
+```
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `labels` | `string[]` | `['DATE', 'PHONE', 'EMAIL', 'URL', 'IBAN', 'CREDIT_CARD', 'PESEL', 'SSN', 'ZIP_CODE', 'COUNTRY']` | Which identifiers to look for. |
+| `threshold` | `number` 0–1 | `0.5` | Minimum score. A failed checksum scores below the default 0.5 without being discarded outright. |
+| `ocrTolerant` | `boolean` | `true` | Read O as 0, l as 1, S as 5 inside numbers, and allow max edits. Off matches the text as written. |
+| `maxEdits` | `number` 0–3 | `1` | Stray or smudged symbols a match may absorb, each costing score. Letters and digits are never absorbed. |
+| `validate` | `boolean` | `true` | Score by checksum and calendar. Off accepts any well-shaped number, for synthetic data. |
+| `defaultCountry` | `string` | `''` | ISO code such as PL or US, for phone numbers written without +. Needs libphonenumber-js. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'text'` | Input column |
+| `outputCol` | `string` | `'ner'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `useLibraries` | `boolean` | `true` | Add libphonenumber-js and chrono-node finds when they are installed. Off runs the built-in patterns alone. |
+| `dateLocales` | `string[]` | `['en']` | chrono-node locales for named-month dates. Numeric and Polish dates are built in. |
+| `countryLocales` | `string[]` | `['en', 'pl']` | Languages to recognise country names in, e.g. en, pl, de. ISO codes are found in any language. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

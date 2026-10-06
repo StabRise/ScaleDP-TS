@@ -77,6 +77,7 @@ Every entity carries a `source`:
 
 - `model` — this exact span is what the NER stage reported.
 - `propagated` — the string was found elsewhere and matched here.
+- `pattern` — `RegexNer` found this exact span; that provenance is kept.
 
 `ImageDrawBoxes` renders it like any other field: pass
 `displayDataList: ['entity_group', 'source']` to see which highlights the model

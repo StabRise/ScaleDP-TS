@@ -12,7 +12,7 @@
  */
 
 import { getConfig } from '../core/config.js'
-import { OcrError } from '../core/errors.js'
+import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage, toImageData } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
@@ -139,7 +139,7 @@ export class TesseractOcr extends Stage<TesseractOcrParams> {
         // empty Image, so testing the bytes first would report "no decoded bytes" and
         // bury the real cause.
         if (image?.exception) {
-            throw new OcrError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new OcrError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new OcrError('Expected an Image with decoded bytes', this.name)

@@ -7,7 +7,7 @@
  * and as boxes when it has `bboxes`.
  */
 
-import { ImageError } from '../core/errors.js'
+import { ImageError, upstreamError } from '../core/errors.js'
 import { context2d, createCanvas, decodeImage, encodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
@@ -175,7 +175,7 @@ export class ImageDrawBoxes extends Stage<ImageDrawBoxesParams> {
         const image = row[imageCol as string] as ScaleDpImage | undefined
 
         if (image?.exception) {
-            throw new ImageError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new ImageError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new ImageError('Expected an Image with decoded bytes', this.name)

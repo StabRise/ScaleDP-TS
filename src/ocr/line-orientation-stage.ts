@@ -14,7 +14,7 @@
  * every box's coordinates untouched and downstream stages need no adjustment.
  */
 
-import { DetectionError } from '../core/errors.js'
+import { DetectionError, upstreamError } from '../core/errors.js'
 import { context2d, createCanvas, cropBox, decodeImage, encodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
@@ -104,7 +104,11 @@ export class LineOrientationDetector extends Stage<LineOrientationDetectorParams
         const image = row[imageCol] as ScaleDpImage | undefined
 
         if (image?.exception) {
-            throw new DetectionError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(
+                image.exception,
+                this.name,
+                (message) => new DetectionError(message, this.name)
+            )
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new DetectionError('Expected an Image with decoded bytes', this.name)

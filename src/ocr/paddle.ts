@@ -6,7 +6,7 @@
  * and boxes). Both run PP-OCR models through ppu-paddle-ocr on onnxruntime-web.
  */
 
-import { OcrError } from '../core/errors.js'
+import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage, imageDataToCanvas } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
@@ -66,7 +66,7 @@ async function toCanvas(input: unknown): Promise<OffscreenCanvas> {
     // empty Image, so testing the bytes first would report "no decoded bytes" and
     // bury the real cause.
     if (image?.exception) {
-        throw new OcrError(`Upstream stage failed: ${image.exception}`, 'toCanvas')
+        throw upstreamError(image.exception, 'toCanvas', (message) => new OcrError(message, 'toCanvas'))
     }
     if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
         throw new OcrError('Expected an Image with decoded bytes', 'toCanvas')

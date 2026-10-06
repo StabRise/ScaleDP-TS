@@ -19,7 +19,7 @@ import { EXECUTION_TIME_COL, ROW_TIME_COL, type Row, Stage, type StageContext } 
 import type { Box } from '../schemas/box.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import { boxToPage, type ImagePlacement } from './extract-images.js'
-import { assembleDocument, MERGE_STRATEGIES, type MergeStrategy } from './merge-text.js'
+import { assembleDocument, joinWordFragments, MERGE_STRATEGIES, type MergeStrategy } from './merge-text.js'
 import { NO_EMBEDDED_IMAGES } from './pdf-embedded-images.js'
 
 export interface PdfMergeImageTextParams extends BaseStageParams {
@@ -32,6 +32,21 @@ export interface PdfMergeImageTextParams extends BaseStageParams {
     strategy: MergeStrategy
     /** How much of a box the other source must cover before it is dropped. */
     coverageThreshold: number
+    /**
+     * Drop a covered box only when the covering box reads the same, allowing
+     * for OCR errors. Where an invisible text layer disagrees with the picture
+     * beneath it, both readings are kept, so the visible words are never lost
+     * to a layer that does not match them.
+     *
+     * Deliberately differs from Python ScaleDP, which drops on coverage alone;
+     * `false` restores that.
+     */
+    matchText: boolean
+    /**
+     * Glue the pieces of a word an OCR detector split apart -- `F` and `reya`
+     * back into `Freya` -- before merging. See `joinWordFragments`.
+     */
+    joinFragments: boolean
     /** Rebuild the original layout with spaces and blank lines. */
     keepFormatting: boolean
     /** Line-grouping tolerance in pixels; 0 derives it from character height. */
@@ -64,6 +79,8 @@ export const PDF_MERGE_IMAGE_TEXT_DEFAULTS: PdfMergeImageTextParams = Object.fre
     groupByCols: ['path', 'page'],
     strategy: 'text-layer-wins' as MergeStrategy,
     coverageThreshold: 0.5,
+    matchText: true,
+    joinFragments: true,
     keepFormatting: false,
     lineTolerance: 0,
     collect: true,
@@ -161,7 +178,10 @@ export class PdfMergeImageText extends Stage<PdfMergeImageTextParams> {
                 continue
             }
             if (!placement) continue
-            for (const box of read.bboxes) ocrBoxes.push(boxToPage(box, placement))
+            // In the picture's own pixels, before mapping: there the text runs
+            // along x, and only boxes read from the same picture are candidates.
+            const boxes = this.params.joinFragments ? joinWordFragments(read.bboxes) : read.bboxes
+            for (const box of boxes) ocrBoxes.push(boxToPage(box, placement))
         }
 
         // The text layer's own failure is the page's; one image's is not, unless
@@ -176,6 +196,7 @@ export class PdfMergeImageText extends Stage<PdfMergeImageTextParams> {
             path,
             strategy: this.params.strategy,
             coverageThreshold: this.params.coverageThreshold,
+            matchText: this.params.matchText,
             keepFormatting,
             lineTolerance,
             exception,

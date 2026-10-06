@@ -129,7 +129,7 @@ describe('PaddleRecognizer', () => {
 
     it('reads every box a detector found, keeping each box own geometry', async () => {
         stubPaddle(['Hello', 'World'])
-        const stage = new PaddleRecognizer()
+        const stage = new PaddleRecognizer({ endPadding: 0 })
 
         const document_ = await run(
             stage,
@@ -151,7 +151,7 @@ describe('PaddleRecognizer', () => {
 
     it('crops a rotated box straightened, not as its axis-aligned envelope', async () => {
         const calls = stubPaddle(['Skewed'])
-        const stage = new PaddleRecognizer()
+        const stage = new PaddleRecognizer({ endPadding: 0 })
 
         await run(stage, [createBox({ x: 10, y: 60, width: 80, height: 20, angle: 30 })], await page())
 
@@ -160,9 +160,19 @@ describe('PaddleRecognizer', () => {
         expect(calls[0]?.slots[0]).toEqual({ x: 0, y: 0, width: 85, height: 25 })
     })
 
+    it('extends each crop along its line by default, to take in a capital the detector missed', async () => {
+        const calls = stubPaddle(['Freya'])
+        const stage = new PaddleRecognizer()
+
+        await run(stage, [createBox({ x: 100, y: 60, width: 100, height: 20 })], await page())
+
+        // 0.3 of the 20px height at each end, plus the usual padding of 5.
+        expect(calls[0]?.slots[0]).toEqual({ x: 0, y: 0, width: 100 + 2 * 6 + 5, height: 25 })
+    })
+
     it('stacks the crops onto one sheet, so a page costs one batch of inferences', async () => {
         const calls = stubPaddle(['a', 'b', 'c'])
-        const stage = new PaddleRecognizer()
+        const stage = new PaddleRecognizer({ endPadding: 0 })
 
         await run(
             stage,
@@ -189,7 +199,7 @@ describe('PaddleRecognizer', () => {
         stubPaddle(['first', 'second', 'third'], { reverse: true })
         // Region level, so each box is the detector's own and the mapping is
         // readable without reasoning about padding.
-        const stage = new PaddleRecognizer({ boxLevel: 'region' })
+        const stage = new PaddleRecognizer({ endPadding: 0, boxLevel: 'region' })
 
         const document_ = await run(
             stage,
@@ -209,7 +219,7 @@ describe('PaddleRecognizer', () => {
 
     it('drops regions below scoreThreshold', async () => {
         stubPaddle(['keep', 'drop'], { scores: [0.9, 0.2] })
-        const stage = new PaddleRecognizer({ scoreThreshold: 0.5 })
+        const stage = new PaddleRecognizer({ endPadding: 0, scoreThreshold: 0.5 })
 
         const document_ = await run(
             stage,
@@ -227,7 +237,7 @@ describe('PaddleRecognizer', () => {
 
     it('reads a scaleFactor crop off the resized page, and reports the original box', async () => {
         const calls = stubPaddle(['Scaled'])
-        const stage = new PaddleRecognizer({ scaleFactor: 2, padding: 0 })
+        const stage = new PaddleRecognizer({ endPadding: 0, scaleFactor: 2, padding: 0 })
 
         const document_ = await run(stage, [createBox({ x: 10, y: 20, width: 40, height: 10 })], await page())
 
@@ -240,7 +250,7 @@ describe('PaddleRecognizer', () => {
 
     it('skips upright boxes when onlyRotated is on', async () => {
         const calls = stubPaddle(['Skewed'])
-        const stage = new PaddleRecognizer({ onlyRotated: true })
+        const stage = new PaddleRecognizer({ endPadding: 0, onlyRotated: true })
 
         const document_ = await run(
             stage,
@@ -261,13 +271,13 @@ describe('PaddleRecognizer', () => {
         const box = createBox({ x: 0, y: 0, width: 100, height: 20 })
         const marked = await page(true)
 
-        const upright = new PaddleRecognizer({ detectLineOrientation: true, padding: 0 })
+        const upright = new PaddleRecognizer({ endPadding: 0, detectLineOrientation: true, padding: 0 })
         stubOrientation(upright, false)
         await run(upright, [box], marked)
         const notTurned = corners(fake.sheets[0] as OffscreenCanvas)
 
         stubPaddle(['Upside'])
-        const flipped = new PaddleRecognizer({ detectLineOrientation: true, padding: 0 })
+        const flipped = new PaddleRecognizer({ endPadding: 0, detectLineOrientation: true, padding: 0 })
         stubOrientation(flipped, true)
         const document_ = await run(flipped, [box], marked)
         const turned = corners(fake.sheets[0] as OffscreenCanvas)
@@ -283,7 +293,9 @@ describe('PaddleRecognizer', () => {
     it('records a missing box column rather than throwing', async () => {
         stubPaddle(['unused'])
 
-        const rows = await new Pipeline([new PaddleRecognizer()]).transform([{ image: await page() }])
+        const rows = await new Pipeline([new PaddleRecognizer({ endPadding: 0 })]).transform([
+            { image: await page() },
+        ])
         const document_ = rows[0]?.text as Document
 
         expect(document_.exception).toMatch(/No boxes in column "boxes"/)
@@ -293,7 +305,7 @@ describe('PaddleRecognizer', () => {
     it('reports an upstream failure rather than the missing bytes it caused', async () => {
         stubPaddle(['unused'])
 
-        const rows = await new Pipeline([new PaddleRecognizer()]).transform([
+        const rows = await new Pipeline([new PaddleRecognizer({ endPadding: 0 })]).transform([
             { image: createImage({ exception: 'PdfToImage: boom' }), boxes: createDetectorOutput({}) },
         ])
         const document_ = rows[0]?.text as Document
@@ -303,10 +315,15 @@ describe('PaddleRecognizer', () => {
 
     it('starts a second sheet rather than one past the canvas ceiling', async () => {
         const calls = stubPaddle(['x'])
-        // 35px per crop after padding; 300 of them overrun the 8192px ceiling.
+        // 35px per crop after padding; 300 of them overrun the 8192px ceiling. They
+        // overlap on purpose, so nested-region dropping is off: every one is read.
         const boxes = Array.from({ length: 300 }, (_, i) => createBox({ x: 0, y: i, width: 100, height: 30 }))
 
-        const document_ = await run(new PaddleRecognizer(), boxes, await page())
+        const document_ = await run(
+            new PaddleRecognizer({ endPadding: 0, dropNested: false }),
+            boxes,
+            await page()
+        )
 
         expect(calls).toHaveLength(2)
         expect(calls.every((call) => call.sheet.height <= 8192)).toBe(true)
@@ -323,7 +340,7 @@ describe('PaddleRecognizer', () => {
             ctx.fillRect(20, 20, 60, 30)
             ctx.fillRect(140, 20, 40, 30)
         })
-        const stage = new PaddleRecognizer({ padding: 0 })
+        const stage = new PaddleRecognizer({ endPadding: 0, padding: 0 })
 
         const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 50 })], marked)
 
@@ -349,7 +366,7 @@ describe('PaddleRecognizer', () => {
             ctx.fillRect(20, 25, 60, 20)
             ctx.fillRect(140, 25, 40, 20)
         })
-        const stage = new PaddleRecognizer({ padding: 0 })
+        const stage = new PaddleRecognizer({ endPadding: 0, padding: 0 })
 
         const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 60 })], marked)
 
@@ -373,7 +390,7 @@ describe('PaddleRecognizer', () => {
         })
 
         const document_ = await run(
-            new PaddleRecognizer({ padding: 0 }),
+            new PaddleRecognizer({ endPadding: 0, padding: 0 }),
             [createBox({ x: 10, y: 10, width: 200, height: 50 })],
             marked
         )
@@ -395,7 +412,7 @@ describe('PaddleRecognizer', () => {
         })
 
         const document_ = await run(
-            new PaddleRecognizer({ padding: 0 }),
+            new PaddleRecognizer({ endPadding: 0, padding: 0 }),
             [createBox({ x: 10, y: 10, width: 200, height: 50 })],
             marked
         )
@@ -416,7 +433,7 @@ describe('PaddleRecognizer', () => {
         })
 
         const document_ = await run(
-            new PaddleRecognizer({ padding: 0 }),
+            new PaddleRecognizer({ endPadding: 0, padding: 0 }),
             [createBox({ x: 10, y: 10, width: 220, height: 50 })],
             marked
         )
@@ -436,7 +453,7 @@ describe('PaddleRecognizer', () => {
             ctx.fillRect(20, 20, 60, 30)
             ctx.fillRect(140, 20, 40, 30)
         })
-        const stage = new PaddleRecognizer({ boxLevel: 'region', padding: 0 })
+        const stage = new PaddleRecognizer({ endPadding: 0, boxLevel: 'region', padding: 0 })
 
         const document_ = await run(stage, [createBox({ x: 10, y: 10, width: 200, height: 50 })], marked)
 
@@ -457,7 +474,7 @@ describe('PaddleRecognizer', () => {
             ctx.fillRect(20, -15, 60, 30)
             ctx.restore()
         })
-        const stage = new PaddleRecognizer({ padding: 0 })
+        const stage = new PaddleRecognizer({ endPadding: 0, padding: 0 })
 
         const document_ = await run(
             stage,
@@ -475,8 +492,10 @@ describe('PaddleRecognizer', () => {
     })
 
     it('rejects a bad inputCols or an unknown preset at construction', () => {
-        expect(() => new PaddleRecognizer({ inputCols: ['image'] })).toThrow(/inputCols must be/)
-        expect(() => new PaddleRecognizer({ preset: 'nope' })).toThrow(/Unknown OCR preset/)
+        expect(() => new PaddleRecognizer({ endPadding: 0, inputCols: ['image'] })).toThrow(
+            /inputCols must be/
+        )
+        expect(() => new PaddleRecognizer({ endPadding: 0, preset: 'nope' })).toThrow(/Unknown OCR preset/)
     })
 
     describe('presetCol', () => {
@@ -484,7 +503,7 @@ describe('PaddleRecognizer', () => {
 
         it('takes the model from the column, per row', async () => {
             stubPaddle(['a', 'b'])
-            const stage = new PaddleRecognizer({ preset: 'v6-small', presetCol: 'script' })
+            const stage = new PaddleRecognizer({ endPadding: 0, preset: 'v6-small', presetCol: 'script' })
             const image = await page()
 
             // Two pages in one run, in different scripts: the point of the
@@ -510,7 +529,11 @@ describe('PaddleRecognizer', () => {
 
         it('falls back to the configured preset when the page was not classified', async () => {
             stubPaddle(['a'])
-            const stage = new PaddleRecognizer({ preset: 'v5-latin-mobile', presetCol: 'script' })
+            const stage = new PaddleRecognizer({
+                endPadding: 0,
+                preset: 'v5-latin-mobile',
+                presetCol: 'script',
+            })
 
             await new Pipeline([stage]).transform([
                 {
@@ -525,7 +548,7 @@ describe('PaddleRecognizer', () => {
 
         it('pins the model when no column is named', async () => {
             stubPaddle(['a'])
-            const stage = new PaddleRecognizer({ preset: 'v5-latin-mobile' })
+            const stage = new PaddleRecognizer({ endPadding: 0, preset: 'v5-latin-mobile' })
 
             await run(stage, boxes, await page())
 

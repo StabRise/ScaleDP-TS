@@ -38,6 +38,53 @@ An IoU test would keep both and the text would come out doubled.
 `coverageThreshold` is how much of a box the winner must cover before the loser
 is dropped.
 
+## A text layer that does not match the picture
+
+Coverage alone trusts the winner blindly. On a searchable scan that is right,
+because the invisible layer is an OCR of the very picture beneath it. But a
+layer can disagree with what is printed: stale after the image was edited, a
+stamp laid over a scan, or planted to hide what is underneath. Under coverage
+alone, an invisible `CONFIDENTIAL` over a picture of `Freya Yamamoto` would
+erase the name from the result, and for redaction the visible words are the
+ones that leak.
+
+So with `matchText` (on by default) the losing box is dropped only when the
+winner covering it **reads the same words**. The comparison ignores case,
+accents and punctuation, looks for the shorter text inside the longer (an OCR
+word inside the layer's line), and allows about one edit in three characters
+for OCR's misreads. Where the two disagree, both readings are kept.
+
+| Text layer | OCR beneath it | Result |
+| --- | --- | --- |
+| `Total due on receipt` | `Tota1` | the layer alone: the same words, misread |
+| `CONFIDENTIAL` | `Freya Yamamoto` | both: they disagree |
+
+`matchText: false` drops on coverage alone, which is how Python ScaleDP merges.
+
+## Pictures that overlap
+
+A page can draw one picture over another, such as a framed photo with a second
+image laid on part of it. Each is read on its own, so the same name comes back
+twice: once whole, and once as a stray fragment from the other picture's crop.
+OCR readings are therefore de-duplicated against each other as well as against
+the text layer, by the same rule: a reading covered by a larger one that says
+the same words is dropped, and two readings that disagree are both kept.
+
+## Words OCR split apart
+
+A text detector often cuts a word's first letter off as a region of its own (a
+larger initial, a letter with a gap after it), so the recognizer returns `F` and
+`reya`. Neither is the word, and line ordering can even put the letter after the
+rest. With `joinFragments` (on by default) such pieces are glued back into
+`Freya` before the merge. Two boxes count as pieces of one word when they sit on
+the same line and touch: a gap under 15% of the text height, where a word space
+is nearer 25–30%, or an outright overlap. One side must be a fragment of at most
+three characters unless the boxes truly overlap, and a box stacked on another is
+never fused into it.
+
+It runs on each picture's own boxes before they are mapped onto the page, so
+boxes read from two different pictures are never joined.
+
 ## Reading order, across both sources
 
 `text` and `bboxes` come out of a single line grouping over the *merged* set, so
@@ -80,6 +127,8 @@ failure is not visible in the output.
 | `groupByCols` | `string[]` | `['path', 'page']` | Row fields that together identify one page. |
 | `strategy` | `'text-layer-wins'` \| `'ocr-wins'` \| `'union'` | `'text-layer-wins'` | Which source to believe where both describe the same words. |
 | `coverageThreshold` | `number` 0–1 | `0.5` | How much of a box the winning source must cover before the losing one is dropped. |
+| `matchText` | `boolean` | `true` | Drop a covered box only when both sources read the same words. Where an invisible text layer disagrees with the picture under it, both are kept, so the visible words are never lost. |
+| `joinFragments` | `boolean` | `true` | Glue the pieces of a word OCR split apart, such as F and reya, back into Freya before merging. |
 | `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
 | `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |
 | `collect` | `boolean` | `true` | Gather the columns that differ across a page’s rows into arrays, so the pictures it was cut into, the regions found and what was read all survive the reduction. |

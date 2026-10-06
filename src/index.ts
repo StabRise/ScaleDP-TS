@@ -25,10 +25,22 @@ export {
     DetectionError,
     formatException,
     ImageError,
+    isSkipped,
     NerError,
+    NO_EMBEDDED_IMAGES,
     OcrError,
     ScaleDpError,
+    SkipError,
+    upstreamError,
 } from './core/errors.js'
+export type {
+    FuzzyCosts,
+    FuzzyEdit,
+    FuzzyEditKind,
+    FuzzyMatch,
+    FuzzySearchOptions,
+} from './core/fuzzy-regex.js'
+export { FuzzyRegex } from './core/fuzzy-regex.js'
 export * from './core/geometry.js'
 export * from './core/image.js'
 export type { ModelFile, ModelFiles, ModelSpec } from './core/model-cache.js'
@@ -59,8 +71,18 @@ export type {
 export { EXECUTION_TIME_COL, Pipeline, ROW_TIME_COL, Stage, toRows } from './core/pipeline.js'
 export * from './core/text.js'
 export * from './schemas/index.js'
+export type { CountryMatch } from './stages/countries.js'
+export { countryLocalesSupported, findCountries, ISO_COUNTRIES } from './stages/countries.js'
 export type { DataToImageParams } from './stages/data-to-image.js'
 export { DATA_TO_IMAGE_DEFAULTS, DataToImage, toBytes } from './stages/data-to-image.js'
+export type { FitBoxesToInkParams, FitOptions, Luma } from './stages/fit-boxes-to-ink.js'
+export {
+    FIT_BOXES_TO_INK_DEFAULTS,
+    FitBoxesToInk,
+    fitBoxesToInk,
+    fitBoxToInk,
+    toLuma,
+} from './stages/fit-boxes-to-ink.js'
 export type { ImageCropBoxesParams } from './stages/image-crop-boxes.js'
 export { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from './stages/image-crop-boxes.js'
 export type { ImageDrawBoxesParams } from './stages/image-draw-boxes.js'
@@ -78,3 +100,28 @@ export {
     NER_CONSISTENCY_DEFAULTS,
     NerConsistency,
 } from './stages/ner-consistency.js'
+export type {
+    FindPatternOptions,
+    LibraryMatch,
+    NormalisedText,
+    PatternEngines,
+    PatternLabel,
+    PatternMatch,
+    RegexNerParams,
+} from './stages/regex-ner.js'
+export {
+    DATE_LOCALES,
+    dateValid,
+    findPatternEntities,
+    findPatternMatches,
+    ibanValid,
+    loadPatternEngines,
+    luhnValid,
+    normaliseOcrText,
+    PATTERN_DETECTORS,
+    PATTERN_LABELS,
+    peselValid,
+    REGEX_NER_DEFAULTS,
+    RegexNer,
+    ssnValid,
+} from './stages/regex-ner.js'

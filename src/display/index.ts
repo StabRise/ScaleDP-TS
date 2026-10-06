@@ -332,6 +332,11 @@ export interface ShowBoxesOptions {
     search?: boolean
 }
 
+/** A coordinate as a reader wants it: whole pixels as they are, a rotated box's to one decimal. */
+function pixels(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
 /**
  * A summary table of detected boxes.
  *
@@ -367,10 +372,10 @@ export function showBoxes(
         for (const value of [
             box.text,
             box.score.toFixed(3),
-            String(box.x),
-            String(box.y),
-            String(box.width),
-            String(box.height),
+            pixels(box.x),
+            pixels(box.y),
+            pixels(box.width),
+            pixels(box.height),
             box.angle.toFixed(1),
         ]) {
             const cell = tr.insertCell()

@@ -6,7 +6,7 @@
  * is what makes the crops usable as recognizer input.
  */
 
-import { ImageError } from '../core/errors.js'
+import { ImageError, upstreamError } from '../core/errors.js'
 import { cropBox, decodeImage, encodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
@@ -71,7 +71,7 @@ export class ImageCropBoxes extends Stage<ImageCropBoxesParams> {
         const image = row[imageCol] as ScaleDpImage | undefined
 
         if (image?.exception) {
-            throw new ImageError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new ImageError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new ImageError('Expected an Image with decoded bytes', this.name)

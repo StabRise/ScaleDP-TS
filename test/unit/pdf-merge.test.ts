@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { assembleDocument, coveringBoxes, dropCovered, mergeBoxSets } from '../../src/pdf/merge-text.js'
+import {
+    assembleDocument,
+    coveringBoxes,
+    dedupeReadings,
+    dropCovered,
+    joinWordFragments,
+    mergeBoxSets,
+    textsAgree,
+} from '../../src/pdf/merge-text.js'
 import { boxCoverage, createBox } from '../../src/schemas/box.js'
 
 const box = (text: string, x: number, y: number, width = 40, height = 10) =>
@@ -40,6 +48,110 @@ describe('dropCovered', () => {
         const winners = [box('l', 0, 0, 30, 10), box('r', 60, 0, 30, 10)]
 
         expect(dropCovered([target], winners, 0.5)).toHaveLength(1)
+    })
+
+    it('keeps a box whose cover reads something else', () => {
+        // An invisible text layer that does not match the picture beneath it:
+        // the visible name must survive the merge, or redaction never sees it.
+        const ocr = [box('Freya Yamamoto', 100, 100, 120, 12)]
+        const textLayer = [box('CONFIDENTIAL', 100, 100, 120, 12)]
+
+        expect(dropCovered(ocr, textLayer, 0.5).map((b) => b.text)).toEqual(['Freya Yamamoto'])
+        // Coverage alone, as Python ScaleDP does it, would drop it.
+        expect(dropCovered(ocr, textLayer, 0.5, false)).toEqual([])
+    })
+
+    it('still drops an OCR word that misreads the layer it sits under', () => {
+        const ocr = [box('Tota1', 100, 100)]
+        const textLayer = [box('Total due on receipt', 100, 100, 200, 12)]
+        expect(dropCovered(ocr, textLayer, 0.5)).toEqual([])
+    })
+})
+
+describe('dedupeReadings', () => {
+    it('drops a stray fragment another picture read inside the same word', () => {
+        // Two overlapping pictures over one handwritten name: one read it whole,
+        // the other's crop gave a `T` off the capital.
+        const word = box('Freya', 159, 1114, 52, 25)
+        const stray = box('T', 159, 1113, 13, 8)
+        expect(dedupeReadings([stray, word], 0.5)).toEqual([word])
+    })
+
+    it('keeps one of two identical readings', () => {
+        const a = box('Yamamoto', 100, 100, 100, 25)
+        const b = box('Yamamoto', 101, 100, 100, 25)
+        expect(dedupeReadings([a, b], 0.5)).toHaveLength(1)
+    })
+
+    it('keeps readings that disagree about the same spot', () => {
+        const stamp = box('CONFIDENTIAL', 100, 100, 120, 25)
+        const name = box('Freya Yamamoto', 102, 101, 110, 22)
+        expect(dedupeReadings([stamp, name], 0.5)).toHaveLength(2)
+    })
+
+    it('keeps neighbours that merely touch', () => {
+        expect(
+            dedupeReadings([box('Freya', 100, 100, 50, 25), box('Yamamoto', 152, 100, 80, 25)], 0.5)
+        ).toHaveLength(2)
+    })
+})
+
+describe('joinWordFragments', () => {
+    const texts = (boxes: ReturnType<typeof joinWordFragments>) => boxes.map((b) => b.text)
+
+    it('glues a split-off first letter back onto its word', () => {
+        // The case from a real page: `F` at x=507, `reya` at x=513, overlapping.
+        const joined = joinWordFragments([box('reya', 513, 1116, 45, 30), box('F', 507, 1116, 12, 30)])
+        expect(texts(joined)).toEqual(['Freya'])
+        expect(joined[0]).toMatchObject({ x: 507, width: 51 })
+    })
+
+    it('glues a fragment that touches without overlapping', () => {
+        expect(texts(joinWordFragments([box('Fr', 100, 100, 20, 30), box('eya', 122, 100, 30, 30)]))).toEqual(
+            ['Freya']
+        )
+    })
+
+    it('keeps two words with a space between them apart', () => {
+        // A word space is a quarter of the height or more.
+        const words = [box('Freya', 100, 100, 50, 30), box('Yamamoto', 158, 100, 80, 30)]
+        expect(texts(joinWordFragments(words))).toEqual(['Freya', 'Yamamoto'])
+    })
+
+    it('keeps two whole words that merely sit close', () => {
+        const words = [box('Freya', 100, 100, 50, 30), box('Yamamoto', 152, 100, 80, 30)]
+        expect(texts(joinWordFragments(words))).toEqual(['Freya', 'Yamamoto'])
+    })
+
+    it('never fuses a duplicate stacked on the same spot', () => {
+        const stacked = [box('CONFIDENTIAL', 100, 100, 120, 30), box('Freya Yamamoto', 102, 100, 118, 30)]
+        expect(joinWordFragments(stacked)).toHaveLength(2)
+    })
+
+    it('leaves boxes on different lines alone', () => {
+        expect(joinWordFragments([box('F', 100, 100, 12, 30), box('reya', 110, 140, 45, 30)])).toHaveLength(2)
+    })
+})
+
+describe('textsAgree', () => {
+    it.each([
+        ['Total', 'Total due on receipt'],
+        ['Tota1', 'Total'],
+        ['FREYA', 'freya'],
+        ['Kraków', 'Krakow'],
+        ['1,240.00', '1240.00'],
+        ['—', 'anything'],
+    ])('%j agrees with %j', (a, b) => {
+        expect(textsAgree(a, b)).toBe(true)
+        expect(textsAgree(b, a)).toBe(true)
+    })
+
+    it.each([
+        ['CONFIDENTIAL', 'Freya Yamamoto'],
+        ['Smith', 'Jones'],
+        ['44051401359', '12345678901'],
+    ])('%j does not agree with %j', (a, b) => {
+        expect(textsAgree(a, b)).toBe(false)
     })
 })
 

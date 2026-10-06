@@ -1620,6 +1620,11 @@ html:not(.dark) {
     grid-area: 1 / 1;
 }
 
+/* A page whose boxes can be found by clicking them says so by the cursor. */
+.page-frame--pickable {
+    cursor: crosshair;
+}
+
 .page-frame__overlay {
     pointer-events: none;
     display: grid;
@@ -1762,6 +1767,11 @@ html:not(.dark) {
     border-radius: 50%;
     background: var(--entity);
     vertical-align: middle;
+}
+
+/* Nothing to do on this page, rather than a failure. */
+.tab__bad--skip {
+    background: var(--flag);
 }
 
 .ghost.is-on {

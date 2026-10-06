@@ -89,6 +89,8 @@
     },
     "peerDependencies": {
         "@huggingface/transformers": ">=3.7.0",
+        "chrono-node": ">=2.7.0",
+        "libphonenumber-js": ">=1.11.0",
         "onnxruntime-web": ">=1.23.0",
         "pdfjs-dist": ">=5.0.0",
         "ppu-paddle-ocr": ">=6.0.0",
@@ -97,6 +99,12 @@
     },
     "peerDependenciesMeta": {
         "@huggingface/transformers": {
+            "optional": true
+        },
+        "chrono-node": {
+            "optional": true
+        },
+        "libphonenumber-js": {
             "optional": true
         },
         "onnxruntime-web": {
@@ -122,6 +130,9 @@
         "@vitest/browser": "^4.1.11",
         "@vitest/browser-playwright": "^4.1.11",
         "@vitest/coverage-v8": "^4.1.11",
+        "chrono-node": "2.10.2",
+        "i18n-iso-countries": "^7.14.0",
+        "libphonenumber-js": "1.13.14",
         "onnxruntime-web": "1.29.0",
         "pdfjs-dist": "6.3.289",
         "playwright": "^1.62.1",

@@ -22,6 +22,16 @@
 
 export const BOX_COLOR = '#3fc9f5'
 
+/**
+ * Pixels drawn outside every box, at the presets' 200 DPI.
+ *
+ * Small on purpose: the hybrid presets fit their boxes to the ink first (see
+ * FitBoxesToInk), so a box already covers its glyphs, and a wide margin on top
+ * only makes the outlines of neighbouring words overlap -- which reads as boxes
+ * drawn twice. The library keeps Python's default of 0.
+ */
+const PADDING = 1
+
 export interface BuiltinPreset {
     id: string
     name: string
@@ -36,7 +46,7 @@ export interface BuiltinPreset {
  * stage's options one level deep, so a nested value like `inputCols` would
  * otherwise be the *same array* in every preset here. Nothing mutates one today
  * -- setParam replaces values rather than editing them -- but a single in-place
- * edit somewhere would quietly rewrite all five.
+ * edit somewhere would quietly rewrite all of them.
  */
 const drawText = () => ({
     type: 'ImageDrawBoxes',
@@ -45,6 +55,7 @@ const drawText = () => ({
         outputCol: 'annotated',
         color: BOX_COLOR,
         lineWidth: 2,
+        padding: PADDING,
     },
 })
 
@@ -64,7 +75,7 @@ const drawEntities = () => ({
         // than two.
         color: null,
         lineWidth: 3,
-        padding: 2,
+        padding: PADDING + 1,
         displayDataList: ['entity_group'],
     },
 })
@@ -109,27 +120,70 @@ const hybridRead = () => [
 ]
 
 /**
- * ...and the two stages every one of them ends with.
+ * The merge every hybrid preset ends with.
  *
- * The merge maps each picture's boxes back onto the page through its placement
- * and folds the rows back to one per page. `text-layer-wins` is its default:
- * where a page carries an invisible OCR layer over a scan, the PDF's own words
- * are the exact ones.
+ * It maps each picture's boxes back onto the page through its placement and
+ * folds the rows back to one per page, writing the result to `document`.
+ * `text-layer-wins` is its default: where a page carries an invisible OCR
+ * layer over a scan, the PDF's own words are the exact ones.
  */
-const hybridMerge = () => [
-    // `collect` is on by default, so the pictures the page was cut into, the
-    // regions found in each and what was read all survive the reduction --
-    // which is the first thing to check when a reading comes back short.
-    { type: 'PdfMergeImageText', options: { keepFormatting: true } },
+// `collect` is on by default, so the pictures the page was cut into, the
+// regions found in each and what was read all survive the reduction -- which
+// is the first thing to check when a reading comes back short.
+const hybridMerge = () => ({ type: 'PdfMergeImageText', options: { keepFormatting: true } })
+
+/**
+ * The merged page's boxes, fitted to the page's own ink. Text-layer boxes come
+ * from font metrics, which a script font's flourishes and descenders overrun,
+ * so this is what keeps a box -- and a redaction drawn from it -- from stopping
+ * short of the glyphs.
+ */
+const fitDocument = () => ({
+    type: 'FitBoxesToInk',
+    options: { inputCols: ['image', 'document'], outputCol: 'document' },
+})
+
+/** ...and, when the words themselves are the result, the drawing after it. */
+const drawDocument = () => ({
+    type: 'ImageDrawBoxes',
+    options: {
+        // The merged document, so typed words and scanned words are outlined
+        // together -- which is the point of a hybrid preset.
+        inputCols: ['image', 'document'],
+        outputCol: 'annotated',
+        color: BOX_COLOR,
+        lineWidth: 2,
+        padding: PADDING,
+    },
+})
+
+/**
+ * DBNet over each embedded picture and PP-OCR reading exactly those regions.
+ *
+ * Pointed at the extracted picture, not at `image`: the page is only there to
+ * be drawn on, and detecting over it again would find the typed text the layer
+ * has already read exactly.
+ */
+const hybridDetectRead = () => [
+    { type: 'DbnetOnnxDetector', options: { inputCol: 'embedded', outputCol: 'detected' } },
+    // DBNet misses what is thin and isolated at a line's ends -- the looping
+    // capital of handwriting above all -- and a crop without it reads `reya`.
+    // Fitting the regions to the picture's ink first hands the recognizer the
+    // whole word.
     {
-        type: 'ImageDrawBoxes',
+        type: 'FitBoxesToInk',
+        options: { inputCols: ['embedded', 'detected'], outputCol: 'detected' },
+    },
+    {
+        type: 'PaddleRecognizer',
         options: {
-            // The merged document, so typed words and scanned words are outlined
-            // together -- which is the point of a hybrid preset.
-            inputCols: ['image', 'document'],
-            outputCol: 'annotated',
-            color: BOX_COLOR,
-            lineWidth: 2,
+            inputCols: ['embedded', 'detected'],
+            outputCol: 'image_text',
+            // On here, though the stage defaults it off, for the same reason as
+            // the other detection presets: PaddleOCR turns a crop taller than it
+            // is wide by itself but never a line that is merely upside down, and
+            // a pasted-in scan is exactly where that happens.
+            detectLineOrientation: true,
         },
     },
 ]
@@ -197,7 +251,9 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
                 type: 'PaddleTextRecognizer',
                 options: { inputCol: 'embedded', outputCol: 'image_text' },
             },
-            ...hybridMerge(),
+            hybridMerge(),
+            fitDocument(),
+            drawDocument(),
         ],
     },
     {
@@ -205,27 +261,7 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
         name: 'PDF text layer + scanned images with Text Detection',
         summary:
             'The same, with DBNet finding the regions inside each embedded picture and PP-OCR reading exactly those. What a scan pasted in askew needs, since the recognizer can turn each region the right way up.',
-        stages: [
-            ...hybridRead(),
-            // Pointed at the extracted picture, not at `image`: the page is only
-            // there to be drawn on, and detecting over it again would find the
-            // typed text the layer has already read exactly.
-            { type: 'DbnetOnnxDetector', options: { inputCol: 'embedded', outputCol: 'detected' } },
-            {
-                type: 'PaddleRecognizer',
-                options: {
-                    inputCols: ['embedded', 'detected'],
-                    outputCol: 'image_text',
-                    // On here, though the stage defaults it off, for the same
-                    // reason as the other detection presets: PaddleOCR turns a
-                    // crop taller than it is wide by itself but never a line that
-                    // is merely upside down, and a pasted-in scan is exactly
-                    // where that happens.
-                    detectLineOrientation: true,
-                },
-            },
-            ...hybridMerge(),
-        ],
+        stages: [...hybridRead(), ...hybridDetectRead(), hybridMerge(), fitDocument(), drawDocument()],
     },
     {
         id: 'builtin:tesseract-detect',
@@ -334,6 +370,22 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
             },
             { type: 'GlinerNer', options: {} },
             { type: 'NerConsistency', options: {} },
+            drawEntities(),
+        ],
+    },
+    {
+        id: 'builtin:pii-patterns-pdf-hybrid',
+        name: 'Identifiers in PDF text layer + scanned images',
+        summary:
+            'The hybrid reader with Text Detection, then RegexNer: dates, phone numbers, e-mail addresses, URLs, IBANs, card numbers, PESEL, SSN, postal codes and countries, matched with patterns that tolerate OCR’s mistakes and checked by checksum. No model to download for the matching itself.',
+        stages: [
+            ...hybridRead(),
+            ...hybridDetectRead(),
+            hybridMerge(),
+            fitDocument(),
+            // The merged page, typed and scanned words alike, so an identifier
+            // is found whichever half of the page it sits in.
+            { type: 'RegexNer', options: { inputCol: 'document' } },
             drawEntities(),
         ],
     },

@@ -11,7 +11,7 @@
  * the output rather than making the caller run the lookup separately.
  */
 
-import { OcrError } from '../core/errors.js'
+import { OcrError, upstreamError } from '../core/errors.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
 import type { ScaleDpImage } from '../schemas/image.js'
@@ -63,7 +63,7 @@ export class TesseractScriptDetector extends Stage<TesseractScriptDetectorParams
         // empty Image, so testing the bytes first would report "no decoded bytes" and
         // bury the real cause.
         if (image?.exception) {
-            throw new OcrError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new OcrError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new OcrError('Expected an Image with decoded bytes', this.name)

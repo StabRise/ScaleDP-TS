@@ -8,7 +8,7 @@ import type { Box } from './box.js'
  * A producer that does not track provenance leaves this unset, so the field is
  * additive -- Python's `Entity` has no such column.
  */
-export type EntitySource = 'model' | 'propagated'
+export type EntitySource = 'model' | 'propagated' | 'pattern'
 
 export interface Entity {
     entity_group: string
@@ -19,7 +19,10 @@ export interface Entity {
     end: number
     /** Boxes the entity's characters fall inside; empty when there is no OCR layer. */
     boxes: Box[]
-    /** Set by `NerConsistency`: whether a model found this occurrence or it was propagated onto it. */
+    /**
+     * Set by `NerConsistency` -- whether a model found this occurrence or it was
+     * propagated onto it -- and by `RegexNer`, as `'pattern'`.
+     */
     source?: EntitySource
 }
 

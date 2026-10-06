@@ -49,6 +49,7 @@ transcription of it.
 | [PdfMergeImageText](/docs/stages/transform/pdf-merge-image-text) | document, document | document | — |
 | [LineOrientationDetector](/docs/stages/transform/line-orientation-detector) | image, boxes | image | `onnxruntime-web` |
 | [ImageDrawBoxes](/docs/stages/transform/image-draw-boxes) | image, boxes | image | — |
+| [FitBoxesToInk](/docs/stages/transform/fit-boxes-to-ink) | image, boxes | boxes | — |
 | [ImageCropBoxes](/docs/stages/transform/image-crop-boxes) | image, boxes | image | — |
 
 ### Understand
@@ -57,6 +58,7 @@ transcription of it.
 | --- | --- | --- | --- |
 | [GlinerNer](/docs/stages/understand/gliner-ner) | document | ner | `@huggingface/transformers` |
 | [NerConsistency](/docs/stages/understand/ner-consistency) | ner, document | ner | — |
+| [RegexNer](/docs/stages/understand/regex-ner) | document | ner | — |
 
 {/* /generated:catalogue */}
 

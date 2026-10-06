@@ -12,7 +12,7 @@
  * which only 'per-box' can honour.
  */
 
-import { OcrError } from '../core/errors.js'
+import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
@@ -21,6 +21,7 @@ import type { Box } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
+import { dropNestedRegions, extendAlongText } from './extend-regions.js'
 import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-orientation.js'
 import { getPaddleRecognizer } from './paddle-service.js'
 import { readRegions } from './paddle-words.js'
@@ -44,6 +45,22 @@ export interface PaddleRecognizerParams extends BaseStageParams {
     scaleFactor: number
     /** Grow each box before cropping. ScaleDP hardcodes 5. */
     padding: number
+    /**
+     * Extend each region along its line, at both ends, by this fraction of its
+     * height before reading -- stopping short of any other region on the same
+     * line. Recovers what a detector leaves off a line's ends: the looping
+     * capital of handwriting, a swash, a final flourish. 0 reads the detected
+     * regions as they are, which is Python ScaleDP's behaviour. See
+     * `extendAlongText`.
+     */
+    endPadding: number
+    /**
+     * Skip a region that lies mostly inside a larger one -- a loose piece of a
+     * handwritten capital the detector returned beside its word -- since the
+     * larger region's reading already covers it. Python ScaleDP reads every
+     * region; `false` restores that. See `dropNestedRegions`.
+     */
+    dropNested: boolean
     /** Drop regions below this confidence (0-1). */
     scoreThreshold: number
     /** Rebuild the original layout with spaces and blank lines. */
@@ -114,6 +131,8 @@ export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze(
     presetCol: '',
     scaleFactor: 1,
     padding: 5,
+    endPadding: 0.3,
+    dropNested: true,
     scoreThreshold: 0.5,
     keepFormatting: false,
     lineTolerance: 0,
@@ -168,6 +187,12 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
         }
     }
 
+    /** The detector's regions, grown along their lines and with nested fragments dropped. */
+    private regions(boxes: Box[]): Box[] {
+        const grown = extendAlongText(boxes, this.params.endPadding)
+        return this.params.dropNested ? dropNestedRegions(grown) : grown
+    }
+
     protected async apply(_input: unknown, row: Row, ctx: StageContext): Promise<Document> {
         const {
             inputCols,
@@ -188,7 +213,7 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
         // but empty Image, so testing the bytes first would report "no decoded
         // bytes" and bury the real cause.
         if (image?.exception) {
-            throw new OcrError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new OcrError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new OcrError('Expected an Image with decoded bytes', this.name)
@@ -216,7 +241,7 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
             bboxes = await readRegions(
                 recognition,
                 bitmap,
-                boxesOf(source),
+                this.regions(boxesOf(source)),
                 {
                     scaleFactor,
                     padding,

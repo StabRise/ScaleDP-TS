@@ -49,9 +49,11 @@ import {
     PdfToImage,
 } from '../pdf/index.js'
 import { DATA_TO_IMAGE_DEFAULTS, DataToImage } from '../stages/data-to-image.js'
+import { FIT_BOXES_TO_INK_DEFAULTS, FitBoxesToInk } from '../stages/fit-boxes-to-ink.js'
 import { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from '../stages/image-crop-boxes.js'
 import { IMAGE_DRAW_BOXES_DEFAULTS, ImageDrawBoxes } from '../stages/image-draw-boxes.js'
 import { NER_CONSISTENCY_DEFAULTS, NerConsistency } from '../stages/ner-consistency.js'
+import { DATE_LOCALES, PATTERN_LABELS, REGEX_NER_DEFAULTS, RegexNer } from '../stages/regex-ner.js'
 import type { ColumnKind, StageParamOption, StageParamSpec, StageSpec } from './types.js'
 
 /**
@@ -106,7 +108,11 @@ const LABEL_FIELDS: readonly StageParamOption[] = Object.freeze([
     { value: 'angle', label: 'angle', title: 'Box: degrees about its centre' },
     { value: 'entity_group', label: 'entity_group', title: 'Entity: the label it matched' },
     { value: 'word', label: 'word', title: 'Entity: the matched text' },
-    { value: 'source', label: 'source', title: 'Entity: model or propagated (NerConsistency)' },
+    {
+        value: 'source',
+        label: 'source',
+        title: 'Entity: model, propagated (NerConsistency) or pattern (RegexNer)',
+    },
     { value: 'x', label: 'x', title: 'Box: top-left x' },
     { value: 'y', label: 'y', title: 'Box: top-left y' },
     { value: 'width', label: 'width', title: 'Box: the longer side' },
@@ -117,6 +123,27 @@ const CONSISTENCY_SCOPE_OPTIONS: readonly StageParamOption[] = Object.freeze([
     { value: 'document', label: 'Document', title: 'Pool entities across every page' },
     { value: 'row', label: 'Page', title: 'Keep each page independent' },
 ])
+
+const PATTERN_LABEL_TITLES: Readonly<Record<string, string>> = {
+    DATE: 'Numeric and named-month dates, calendar-checked',
+    PHONE: 'Phone numbers; libphonenumber-js when installed',
+    EMAIL: 'E-mail addresses, tolerating OCR spaces and © for @',
+    URL: 'Web addresses with a scheme or www., or a bare domain on a common TLD',
+    IBAN: 'Bank accounts: IBAN by mod 97 and country length, and the Polish NRB',
+    CREDIT_CARD: 'Card numbers, Luhn-checked',
+    PESEL: 'Polish national ID, checksum and birth date checked',
+    SSN: 'US Social Security numbers',
+    ZIP_CODE: 'Postal codes: PL 00-000, US ZIP and ZIP+4, UK, Canada; bare five digits need context',
+    COUNTRY: 'Country names and ISO codes; ambiguous ones need a label such as Nationality:',
+}
+
+const PATTERN_LABEL_OPTIONS: readonly StageParamOption[] = Object.freeze(
+    PATTERN_LABELS.map((label) => ({ value: label, label, title: PATTERN_LABEL_TITLES[label] }))
+)
+
+const DATE_LOCALE_OPTIONS: readonly StageParamOption[] = Object.freeze(
+    DATE_LOCALES.map((locale) => ({ value: locale, label: locale }))
+)
 
 const OCR_PRESETS: readonly StageParamOption[] = Object.freeze(
     PADDLE_OCR_PRESETS.map((preset) => ({
@@ -144,6 +171,25 @@ const DBNET_MODEL_OPTIONS: readonly StageParamOption[] = Object.freeze(
         title: model.notes,
     }))
 )
+
+/** Shared by both region recognizers. */
+const dropNested: StageParamSpec = {
+    key: 'dropNested',
+    kind: 'boolean',
+    label: 'Skip nested regions',
+    help: 'Skip a region lying mostly inside a larger one, such as a loose stroke of a handwritten capital, since the larger region already reads it.',
+}
+
+/** Shared by both region recognizers. */
+const endPadding: StageParamSpec = {
+    key: 'endPadding',
+    kind: 'number',
+    label: 'Line-end padding',
+    min: 0,
+    max: 2,
+    step: 0.05,
+    help: 'Extend each region along its line by this fraction of its height, stopping at the next region -- recovers a handwritten capital or flourish the detector left off. 0 reads regions as detected.',
+}
 
 /* ── Param builders ──────────────────────────────────────────────────────── */
 
@@ -544,6 +590,18 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 step: 0.05,
                 help: 'How much of a box the winning source must cover before the losing one is dropped.',
             },
+            {
+                key: 'matchText',
+                kind: 'boolean',
+                label: 'Only drop matching text',
+                help: 'Drop a covered box only when both sources read the same words. Where an invisible text layer disagrees with the picture under it, both are kept, so the visible words are never lost.',
+            },
+            {
+                key: 'joinFragments',
+                kind: 'boolean',
+                label: 'Join split words',
+                help: 'Glue the pieces of a word OCR split apart, such as F and reya, back into Freya before merging.',
+            },
             keepFormatting,
             lineTolerance,
             {
@@ -875,6 +933,8 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 step: 1,
                 help: 'Grow each box before cropping. ScaleDP hardcodes 5.',
             },
+            endPadding,
+            dropNested,
             scoreThreshold('Drop regions below this confidence.'),
             keepFormatting,
             lineTolerance,
@@ -1020,6 +1080,8 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 step: 1,
                 help: 'Grow each box before cropping. ScaleDP hardcodes 5.',
             },
+            endPadding,
+            dropNested,
             scoreThreshold('Drop words below this confidence.'),
             keepFormatting,
             lineTolerance,
@@ -1170,6 +1232,85 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         ],
     },
     {
+        type: 'RegexNer',
+        label: 'Pattern entities',
+        group: 'Understand',
+        subpath: '@stabrise/scaledp',
+        summary:
+            'Find dates, phones, e-mails, URLs, IBANs, card numbers, PESEL, SSN, postal codes and countries with OCR-tolerant patterns.',
+        consumes: ['document'],
+        produces: 'ner',
+        defaults: asRecord(REGEX_NER_DEFAULTS),
+        params: [
+            ...baseParams({ input: { accepts: ['document'] } }),
+            {
+                key: 'labels',
+                kind: 'stringList',
+                label: 'Detect',
+                options: PATTERN_LABEL_OPTIONS,
+                help: 'Which identifiers to look for.',
+            },
+            {
+                key: 'threshold',
+                kind: 'number',
+                label: 'Threshold',
+                min: 0,
+                max: 1,
+                step: 0.05,
+                help: 'Minimum score. A failed checksum scores below the default 0.5 without being discarded outright.',
+            },
+            {
+                key: 'ocrTolerant',
+                kind: 'boolean',
+                label: 'OCR tolerant',
+                help: 'Read O as 0, l as 1, S as 5 inside numbers, and allow max edits. Off matches the text as written.',
+            },
+            {
+                key: 'maxEdits',
+                kind: 'number',
+                label: 'Max edits',
+                min: 0,
+                max: 3,
+                step: 1,
+                help: 'Stray or smudged symbols a match may absorb, each costing score. Letters and digits are never absorbed.',
+            },
+            {
+                key: 'validate',
+                kind: 'boolean',
+                label: 'Validate',
+                help: 'Score by checksum and calendar. Off accepts any well-shaped number, for synthetic data.',
+            },
+            {
+                key: 'useLibraries',
+                kind: 'boolean',
+                label: 'Use libraries',
+                advanced: true,
+                help: 'Add libphonenumber-js and chrono-node finds when they are installed. Off runs the built-in patterns alone.',
+            },
+            {
+                key: 'defaultCountry',
+                kind: 'string',
+                label: 'Default country',
+                help: 'ISO code such as PL or US, for phone numbers written without +. Needs libphonenumber-js.',
+            },
+            {
+                key: 'dateLocales',
+                kind: 'stringList',
+                label: 'Date languages',
+                options: DATE_LOCALE_OPTIONS,
+                advanced: true,
+                help: 'chrono-node locales for named-month dates. Numeric and Polish dates are built in.',
+            },
+            {
+                key: 'countryLocales',
+                kind: 'stringList',
+                label: 'Country languages',
+                advanced: true,
+                help: 'Languages to recognise country names in, e.g. en, pl, de. ISO codes are found in any language.',
+            },
+        ],
+    },
+    {
         type: 'ImageDrawBoxes',
         label: 'Draw boxes',
         group: 'Transform',
@@ -1234,6 +1375,58 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         ],
     },
     {
+        type: 'FitBoxesToInk',
+        label: 'Fit boxes to ink',
+        group: 'Transform',
+        subpath: '@stabrise/scaledp',
+        summary:
+            'Grow boxes that stop short of their text -- a missed capital, a descender -- to the ink they belong to.',
+        consumes: ['image', 'boxes'],
+        produces: 'boxes',
+        defaults: asRecord(FIT_BOXES_TO_INK_DEFAULTS),
+        params: [
+            ...baseParams({
+                input: 'unused',
+                output: { help: 'Usually the box column itself, to fit it in place.' },
+            }),
+            {
+                key: 'inputCols',
+                kind: 'columns',
+                label: 'Input columns',
+                arity: 2,
+                accepts: ['image', 'boxes'],
+                help: 'The image the boxes are in, then the boxes: a detector output or a Document.',
+            },
+            {
+                key: 'maxGrowAlong',
+                kind: 'number',
+                label: 'Max growth along text',
+                min: 0,
+                max: 5,
+                step: 0.05,
+                help: 'Most a box may grow at each end of its line, as a fraction of its height.',
+            },
+            {
+                key: 'maxGrowAcross',
+                kind: 'number',
+                label: 'Max growth across text',
+                min: 0,
+                max: 5,
+                step: 0.05,
+                help: 'Most a box may grow above and below, as a fraction of its height. It stops at the first blank row anyway, so lines never merge.',
+            },
+            {
+                key: 'gapRatio',
+                kind: 'number',
+                label: 'Letter gap',
+                min: 0,
+                max: 1,
+                step: 0.01,
+                help: 'Blank gap along the text still crossed, as a fraction of height -- reaches a capital written apart from its word. A word space is about 0.25.',
+            },
+        ],
+    },
+    {
         type: 'ImageCropBoxes',
         label: 'Crop boxes',
         group: 'Transform',
@@ -1293,6 +1486,7 @@ export const STAGE_CLASSES = Object.freeze({
     DataToImage,
     DbnetOnnxDetector,
     FaceDetector,
+    FitBoxesToInk,
     GlinerNer,
     ImageCropBoxes,
     ImageDrawBoxes,
@@ -1305,6 +1499,7 @@ export const STAGE_CLASSES = Object.freeze({
     PdfMergeImageText,
     PdfToDocument,
     PdfToImage,
+    RegexNer,
     SignatureDetector,
     TesseractOcr,
     TesseractRecognizer,

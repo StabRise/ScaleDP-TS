@@ -16,7 +16,7 @@
  */
 
 import { getConfig } from '../core/config.js'
-import { DetectionError } from '../core/errors.js'
+import { DetectionError, upstreamError } from '../core/errors.js'
 import {
     decodeImage,
     IMAGENET_MEAN,
@@ -130,7 +130,11 @@ export class DbnetOnnxDetector extends Stage<DbnetOnnxDetectorParams> {
         // empty Image, so testing the bytes first would report "no decoded bytes" and
         // bury the real cause.
         if (image?.exception) {
-            throw new DetectionError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(
+                image.exception,
+                this.name,
+                (message) => new DetectionError(message, this.name)
+            )
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new DetectionError('Expected an Image with decoded bytes', this.name)

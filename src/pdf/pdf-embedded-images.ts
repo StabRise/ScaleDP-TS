@@ -16,7 +16,7 @@
  * page explosions multiplying.
  */
 
-import { ImageError } from '../core/errors.js'
+import { ImageError, NO_EMBEDDED_IMAGES } from '../core/errors.js'
 import { encodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
@@ -79,8 +79,12 @@ export const PDF_EMBEDDED_IMAGES_DEFAULTS: PdfEmbeddedImagesParams = Object.free
     returnEmpty: true,
 })
 
-/** Recorded on the emitted image when a page painted no readable raster. */
-export const NO_EMBEDDED_IMAGES = 'This page has no embedded images to read.'
+/**
+ * Recorded on the emitted image when a page painted no readable raster. It is a
+ * skip, not a failure (see `isSkipped`), and lives in core so the engine
+ * stages can recognise it without importing pdf.js.
+ */
+export { NO_EMBEDDED_IMAGES }
 
 export class PdfEmbeddedImages extends Stage<PdfEmbeddedImagesParams> {
     readonly name = 'PdfEmbeddedImages'

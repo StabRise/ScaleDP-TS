@@ -8,7 +8,7 @@
  * boxes, straightens each one, and reads it.
  */
 
-import { OcrError } from '../core/errors.js'
+import { OcrError, upstreamError } from '../core/errors.js'
 import type { Point } from '../core/geometry.js'
 import { cropBox, cropGeometry, decodeImage, rotate180, toImageData } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
@@ -18,6 +18,7 @@ import { type Box, boxFromPolygon, isRotated } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
+import { dropNestedRegions, extendAlongText } from './extend-regions.js'
 import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-orientation.js'
 import { getTesseractClient } from './tesseract.js'
 
@@ -29,6 +30,22 @@ export interface TesseractRecognizerParams extends BaseStageParams {
     scaleFactor: number
     /** Grow each box before cropping. ScaleDP hardcodes 5. */
     padding: number
+    /**
+     * Extend each region along its line, at both ends, by this fraction of its
+     * height before reading -- stopping short of any other region on the same
+     * line. Recovers what a detector leaves off a line's ends: the looping
+     * capital of handwriting, a swash, a final flourish. 0 reads the detected
+     * regions as they are, which is Python ScaleDP's behaviour. See
+     * `extendAlongText`.
+     */
+    endPadding: number
+    /**
+     * Skip a region that lies mostly inside a larger one -- a loose piece of a
+     * handwritten capital the detector returned beside its word -- since the
+     * larger region's reading already covers it. Python ScaleDP reads every
+     * region; `false` restores that. See `dropNestedRegions`.
+     */
+    dropNested: boolean
     /** Drop words below this confidence (0-1). */
     scoreThreshold: number
     keepFormatting: boolean
@@ -69,6 +86,8 @@ export const TESSERACT_RECOGNIZER_DEFAULTS: TesseractRecognizerParams = Object.f
     lang: ['eng'] as readonly string[],
     scaleFactor: 1,
     padding: 5,
+    endPadding: 0.3,
+    dropNested: true,
     scoreThreshold: 0.5,
     keepFormatting: false,
     lineTolerance: 0,
@@ -114,6 +133,12 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
         }
     }
 
+    /** The detector's regions, grown along their lines and with nested fragments dropped. */
+    private regions(boxes: Box[]): Box[] {
+        const grown = extendAlongText(boxes, this.params.endPadding)
+        return this.params.dropNested ? dropNestedRegions(grown) : grown
+    }
+
     protected async apply(_input: unknown, row: Row, ctx: StageContext): Promise<Document> {
         const {
             inputCols,
@@ -130,7 +155,7 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
         const image = row[imageCol] as ScaleDpImage | undefined
 
         if (image?.exception) {
-            throw new OcrError(`Upstream stage failed: ${image.exception}`, this.name)
+            throw upstreamError(image.exception, this.name, (message) => new OcrError(message, this.name))
         }
         if (!image || !(image.data instanceof Uint8Array) || image.data.byteLength === 0) {
             throw new OcrError('Expected an Image with decoded bytes', this.name)
@@ -151,7 +176,7 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
         const recognized: Box[] = []
 
         try {
-            for (const box of boxesOf(source)) {
+            for (const box of this.regions(boxesOf(source))) {
                 ctx.signal?.throwIfAborted()
 
                 // Straightens rotated boxes rather than taking their envelope,

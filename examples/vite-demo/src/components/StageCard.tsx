@@ -1,3 +1,4 @@
+import { isSkipped } from '@stabrise/scaledp'
 import { getStageSpec } from '@stabrise/scaledp/registry'
 import { useEffect, useState } from 'react'
 import { type CacheState, cacheTarget, probeCache, probeCachedValues } from '../lib/cache'
@@ -99,9 +100,10 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
     // Closed, the one thing a card cannot show is which parameters were touched.
     // Counting them keeps "this stage is not at its defaults" visible.
     const changedCount = Object.keys(stage.options).length
+    const skipped = isSkipped(exception)
 
     return (
-        <li className={`card${exception ? ' card--failed' : ''}`} data-open={open || undefined}>
+        <li className={`card${exception && !skipped ? ' card--failed' : ''}`} data-open={open || undefined}>
             <div className="card__head">
                 <span className="card__n">{index + 1}</span>
                 {/* The title is the disclosure, so the whole name is the hit
@@ -186,7 +188,8 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
                     one of the two.
                 </p>
             )}
-            {exception && <p className="warn warn--error">{exception}</p>}
+            {/* A skip -- a page with nothing for this stage to do -- is a warning, not a failure. */}
+            {exception && <p className={skipped ? 'warn' : 'warn warn--error'}>{exception}</p>}
 
             {open && (
                 <>

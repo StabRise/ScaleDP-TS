@@ -100,6 +100,8 @@ the recognition confidence, as the name says.
 | `boxLevel` | `'word'` \| `'region'` | `'word'` | Word boxes are Tesseract’s own. Pick “region” to get one box per region the detector found instead, which is what Python ScaleDP returns. |
 | `scaleFactor` | `number` 0.1–8 | `1` | Resize the page by this factor before cropping. |
 | `padding` | `number` | `5` | Grow each box before cropping. ScaleDP hardcodes 5. |
+| `endPadding` | `number` 0–2 | `0.3` | Extend each region along its line by this fraction of its height, stopping at the next region -- recovers a handwritten capital or flourish the detector left off. 0 reads regions as detected. |
+| `dropNested` | `boolean` | `true` | Skip a region lying mostly inside a larger one, such as a loose stroke of a handwritten capital, since the larger region already reads it. |
 | `scoreThreshold` | `number` 0–1 | `0.5` | Drop words below this confidence. |
 | `keepFormatting` | `boolean` | `false` | Rebuild the original layout with spaces and blank lines. |
 | `lineTolerance` | `number` | `0` | Line-grouping tolerance in pixels; 0 derives it from character height. |

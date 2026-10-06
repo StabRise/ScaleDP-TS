@@ -99,7 +99,7 @@ describe('TesseractRecognizer', () => {
 
     it('recognizes every box a detector found, rotated ones included', async () => {
         const seen = stubTesseract(['Hello', 'World'])
-        const stage = new TesseractRecognizer({ detectLineOrientation: false })
+        const stage = new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false })
 
         const document_ = await run(
             stage,
@@ -121,7 +121,11 @@ describe('TesseractRecognizer', () => {
     it('keeps each box geometry and attaches the recognized text', async () => {
         stubTesseract(['Invoice'])
         // Region level: the detector's own box comes back, angle and all.
-        const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'region' })
+        const stage = new TesseractRecognizer({
+            endPadding: 0,
+            detectLineOrientation: false,
+            boxLevel: 'region',
+        })
         const document_ = await run(
             stage,
             [createBox({ x: 25, y: 40, width: 100, height: 24, angle: 12 })],
@@ -134,14 +138,18 @@ describe('TesseractRecognizer', () => {
 
     it('drops words below the confidence threshold', async () => {
         stubTesseract(['faint'], 0.2)
-        const stage = new TesseractRecognizer({ detectLineOrientation: false, scoreThreshold: 0.5 })
+        const stage = new TesseractRecognizer({
+            endPadding: 0,
+            detectLineOrientation: false,
+            scoreThreshold: 0.5,
+        })
         const document_ = await run(stage, [createBox({ x: 0, y: 0, width: 50, height: 20 })], await page())
         expect(document_.bboxes).toHaveLength(0)
     })
 
     it('turns an inverted crop before reading it', async () => {
         stubTesseract(['flipped'])
-        const stage = new TesseractRecognizer()
+        const stage = new TesseractRecognizer({ endPadding: 0 })
         stubOrientation(stage, true)
 
         const document_ = await run(stage, [createBox({ x: 0, y: 0, width: 60, height: 20 })], await page())
@@ -150,7 +158,11 @@ describe('TesseractRecognizer', () => {
 
     it('onlyRotated keeps just the rotated and inverted boxes', async () => {
         stubTesseract(['a', 'b'])
-        const stage = new TesseractRecognizer({ detectLineOrientation: false, onlyRotated: true })
+        const stage = new TesseractRecognizer({
+            endPadding: 0,
+            detectLineOrientation: false,
+            onlyRotated: true,
+        })
 
         const document_ = await run(
             stage,
@@ -166,7 +178,7 @@ describe('TesseractRecognizer', () => {
 
     it('defaults onlyRotated off, unlike ScaleDP, so a plain run is not empty', async () => {
         stubTesseract(['a', 'b'])
-        const stage = new TesseractRecognizer({ detectLineOrientation: false })
+        const stage = new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false })
         const document_ = await run(
             stage,
             [
@@ -179,7 +191,7 @@ describe('TesseractRecognizer', () => {
     })
 
     it('says which column is missing rather than silently reading nothing', async () => {
-        const stage = new TesseractRecognizer({ detectLineOrientation: false })
+        const stage = new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false })
         const rows = await new Pipeline([stage]).transform([{ image: await page() }])
         const document_ = rows[0]?.text as Document
         expect(document_.exception).toContain('No boxes in column "boxes"')
@@ -187,7 +199,7 @@ describe('TesseractRecognizer', () => {
     })
 
     it('reports an upstream failure rather than its own shape complaint', async () => {
-        const stage = new TesseractRecognizer({ detectLineOrientation: false })
+        const stage = new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false })
         const rows = await new Pipeline([stage]).transform([
             { image: createImage({ exception: 'PdfToImage exploded' }), boxes: createDetectorOutput({}) },
         ])
@@ -196,7 +208,11 @@ describe('TesseractRecognizer', () => {
 
     it('rebuilds the layout when keepFormatting is set', async () => {
         stubTesseract(['left', 'right'])
-        const stage = new TesseractRecognizer({ detectLineOrientation: false, keepFormatting: true })
+        const stage = new TesseractRecognizer({
+            endPadding: 0,
+            detectLineOrientation: false,
+            keepFormatting: true,
+        })
         const document_ = await run(
             stage,
             [
@@ -225,7 +241,7 @@ describe('TesseractRecognizer', () => {
 
         it('defaults to one box per word', async () => {
             stubTesseractItems([[word('one', 5, 3, 25, 13), word('two', 40, 3, 70, 13)]])
-            const stage = new TesseractRecognizer({ detectLineOrientation: false })
+            const stage = new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false })
             const document_ = await run(
                 stage,
                 [createBox({ x: 100, y: 50, width: 200, height: 40 })],
@@ -239,7 +255,11 @@ describe('TesseractRecognizer', () => {
 
         it('still gives one box per region when asked', async () => {
             stubTesseract(['one two'])
-            const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'region' })
+            const stage = new TesseractRecognizer({
+                endPadding: 0,
+                detectLineOrientation: false,
+                boxLevel: 'region',
+            })
             const document_ = await run(
                 stage,
                 [createBox({ x: 100, y: 50, width: 200, height: 40 })],
@@ -254,7 +274,11 @@ describe('TesseractRecognizer', () => {
             // padding 5 puts the crop origin at (95, 45), so a word at (5, 3)
             // in the crop is at (100, 48) on the page.
             stubTesseractItems([[word('one', 5, 3, 25, 13), word('two', 40, 3, 70, 13)]])
-            const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'word' })
+            const stage = new TesseractRecognizer({
+                endPadding: 0,
+                detectLineOrientation: false,
+                boxLevel: 'word',
+            })
             const document_ = await run(
                 stage,
                 [createBox({ x: 100, y: 50, width: 200, height: 40 })],
@@ -271,7 +295,7 @@ describe('TesseractRecognizer', () => {
             // The crop is 205x45; turned back, (5,3)-(25,13) becomes
             // (180,32)-(200,42), which is (275,77) on the page.
             stubTesseractItems([[word('one', 5, 3, 25, 13)]])
-            const stage = new TesseractRecognizer({ boxLevel: 'word' })
+            const stage = new TesseractRecognizer({ endPadding: 0, boxLevel: 'word' })
             stubOrientation(stage, true)
             const document_ = await run(
                 stage,
@@ -284,7 +308,11 @@ describe('TesseractRecognizer', () => {
 
         it('keeps a word inside its rotated region, at the region’s angle', async () => {
             stubTesseractItems([[word('one', 5, 3, 25, 13)]])
-            const stage = new TesseractRecognizer({ detectLineOrientation: false, boxLevel: 'word' })
+            const stage = new TesseractRecognizer({
+                endPadding: 0,
+                detectLineOrientation: false,
+                boxLevel: 'word',
+            })
             const region = createBox({ x: 100, y: 50, width: 200, height: 40, angle: 30 })
             const document_ = await run(stage, [region], await page())
 
@@ -305,6 +333,7 @@ describe('TesseractRecognizer', () => {
             // there, and half that on the page.
             stubTesseractItems([[word('one', 5, 3, 25, 13)]])
             const stage = new TesseractRecognizer({
+                endPadding: 0,
                 detectLineOrientation: false,
                 boxLevel: 'word',
                 scaleFactor: 2,
@@ -334,13 +363,14 @@ describe('TesseractRecognizer', () => {
 
             stubTesseractItems(items)
             const asRegion = await run(
-                new TesseractRecognizer({ detectLineOrientation: false, scoreThreshold: 0.5 }),
+                new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false, scoreThreshold: 0.5 }),
                 [region],
                 await page()
             )
             stubTesseractItems(items)
             const asWords = await run(
                 new TesseractRecognizer({
+                    endPadding: 0,
                     detectLineOrientation: false,
                     boxLevel: 'word',
                     scoreThreshold: 0.5,
@@ -362,13 +392,14 @@ describe('TesseractRecognizer', () => {
 
             stubTesseractItems(items)
             const asRegion = await run(
-                new TesseractRecognizer({ detectLineOrientation: false, scoreThreshold: 0.5 }),
+                new TesseractRecognizer({ endPadding: 0, detectLineOrientation: false, scoreThreshold: 0.5 }),
                 [region],
                 await page()
             )
             stubTesseractItems(items)
             const asWords = await run(
                 new TesseractRecognizer({
+                    endPadding: 0,
                     detectLineOrientation: false,
                     boxLevel: 'word',
                     scoreThreshold: 0.5,
@@ -383,7 +414,9 @@ describe('TesseractRecognizer', () => {
     })
 
     it('rejects an inputCols list that is not [image, boxes]', () => {
-        expect(() => new TesseractRecognizer({ inputCols: ['image'] })).toThrow(/\[imageColumn, boxColumn\]/)
+        expect(() => new TesseractRecognizer({ endPadding: 0, inputCols: ['image'] })).toThrow(
+            /\[imageColumn, boxColumn\]/
+        )
     })
 })
 

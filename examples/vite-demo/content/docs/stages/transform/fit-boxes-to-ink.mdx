@@ -1,0 +1,111 @@
+---
+title: FitBoxesToInk
+description: Grow boxes that stop short of their text to the ink they belong to, checked pixel by pixel.
+---
+
+<StageMeta type="FitBoxesToInk" />
+
+Every source of boxes reports them a little short of the glyphs. A text detector
+misses what is thin and isolated at a line's ends, such as the looping capital
+of handwriting, because those strokes score low on its probability map. A PDF
+text layer sizes boxes from font metrics, which a script font's flourishes and
+descenders overrun. For reading, a clipped capital turns `Freya` into `reya`. For
+redaction, a box short of its text leaves the edge of a name showing.
+
+This stage checks each box against the pixels and grows it until the ink it
+belongs to is inside. Boxes only ever grow, and their text is untouched.
+
+```ts
+import { Pipeline, FitBoxesToInk } from '@stabrise/scaledp'
+import { PdfToImage } from '@stabrise/scaledp/pdf'
+import { DbnetOnnxDetector, PaddleRecognizer } from '@stabrise/scaledp/ocr'
+
+const rows = await new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    new DbnetOnnxDetector({ outputCol: 'detected' }),
+    // Before reading, so the crop contains the whole word.
+    new FitBoxesToInk({ inputCols: ['image', 'detected'], outputCol: 'detected' }),
+    new PaddleRecognizer({ inputCols: ['image', 'detected'] }),
+    // After reading, so the final boxes cover the glyphs.
+    new FitBoxesToInk({ inputCols: ['image', 'text'], outputCol: 'text' }),
+]).transform(file)
+```
+
+<TryIt stages={[
+    { type: 'PdfToImage', options: { resolution: 200 } },
+    { type: 'DbnetOnnxDetector', options: { outputCol: 'detected' } },
+    { type: 'FitBoxesToInk', options: { inputCols: ['image', 'detected'], outputCol: 'detected' } },
+    { type: 'PaddleRecognizer', options: { inputCols: ['image', 'detected'], keepFormatting: true } },
+    { type: 'FitBoxesToInk', options: { inputCols: ['image', 'text'], outputCol: 'text' } },
+    { type: 'ImageDrawBoxes', options: { inputCols: ['image', 'text'], outputCol: 'annotated', color: '#3fc9f5', lineWidth: 2 } },
+]} />
+
+It reads `bboxes` off a `DetectorOutput` or a `Document` and writes the same
+value back with the boxes grown, by default in place. The boxes must be in the
+image's own pixels: the embedded picture a detector ran on, or the page after
+`PdfMergeImageText`.
+
+## How a box is fitted
+
+**Ink is told from background locally.** The background is the median
+brightness of a thin ring just outside the box, where it is the great majority
+even when a stroke escapes. Ink is anything that differs from it by at least
+half the contrast the box's own text has. So dark text on paper, white text on
+black and text on a coloured highlight all work, and a low-contrast box is left
+alone rather than guessed at.
+
+**Each edge steps outwards** one pixel line at a time while the line just past it
+still holds ink:
+
+| Direction | Crosses a blank gap of | Stops at |
+| --- | --- | --- |
+| along the text | up to `gapRatio` × height (0.15; a word space is ~0.25) | the end of the ink, or `maxGrowAlong` × height |
+| across the text | nothing | the first blank row, or `maxGrowAcross` × height |
+
+Crossing small gaps along the line is what reaches a capital written a little
+apart from the rest of its word. Never crossing one across the line is what keeps
+two lines from merging. Two passes are made, so a swash leaving the box at a
+corner is reached along the text and then its top across it.
+
+**A box never grows into another box.** Each edge may move at most to the nearest
+box beyond it: along the line for left and right, among boxes overlapping it for
+top and bottom. In a PDF text layer each word's box runs almost to the next
+word's start, a gap of a few pixels, well inside the letter-gap tolerance, so ink
+alone would merge every word with the next. A box counts as beyond an edge only
+when its centre is, so an invisible text layer's box stacked on the same word
+doesn't pin the OCR box in place.
+
+**Thin rules don't count.** A column needs a tenth of the line's height in ink to
+carry a box along, so an underline or a table rule running out of the box, one
+or two pixels thick, cannot drag it sideways.
+
+**Rotated boxes** are fitted in their own frame, along and across their line, and
+keep their angle.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['image', 'boxes']` | The image the boxes are in, then the boxes: a detector output or a Document. |
+| `maxGrowAlong` | `number` 0–5 | `0.75` | Most a box may grow at each end of its line, as a fraction of its height. |
+| `maxGrowAcross` | `number` 0–5 | `0.5` | Most a box may grow above and below, as a fraction of its height. It stops at the first blank row anyway, so lines never merge. |
+| `gapRatio` | `number` 0–1 | `0.15` | Blank gap along the text still crossed, as a fraction of height -- reaches a capital written apart from its word. A word space is about 0.25. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'image'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'boxes'` | Usually the box column itself, to fit it in place. |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

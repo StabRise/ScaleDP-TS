@@ -17,10 +17,12 @@
     "dependencies": {
         "@huggingface/transformers": "^3.7.3",
         "@react-router/node": "^8.3.1",
+        "chrono-node": "^2.10.2",
         "fumadocs-core": "^16.15.4",
         "fumadocs-mdx": "^15.4.0",
         "fumadocs-ui": "^16.15.4",
         "isbot": "^5",
+        "libphonenumber-js": "^1.13.14",
         "lucide-react": "^1.35.0",
         "onnxruntime-web": "^1.29.0",
         "pdfjs-dist": "^6.2.108",

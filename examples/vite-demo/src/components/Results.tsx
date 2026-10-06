@@ -6,9 +6,11 @@
  */
 
 import type { Row } from '@stabrise/scaledp'
+import { isSkipped } from '@stabrise/scaledp'
 import type { Box, ScaleDpImage } from '@stabrise/scaledp/display'
 import { boxOverlay, showBoxes, showImage, showNer, showText, visualizeNer } from '@stabrise/scaledp/display'
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { boxesAt, type PagePoint } from '../lib/hit-test'
 import {
     asDetector,
     asDocument,
@@ -80,6 +82,15 @@ export function Results() {
     // that sets it also clears it, on its way out as well as on a new list.
     const [picked, setPicked] = useState<Box | null>(null)
 
+    // The other direction: a click on the page, in image pixels, which the boxes
+    // table resolves to a row. Only offered while a table that can be picked
+    // from is showing, since otherwise a click has nothing to land on.
+    const [pagePoint, setPagePoint] = useState<PagePoint | null>(null)
+    const [pageClickable, setPageClickable] = useState(false)
+    // A point is a place on one page; on the next page it means nothing.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: `selected` is the trigger
+    useEffect(() => setPagePoint(null), [selected])
+
     const results = useRef<HTMLElement>(null)
     const pageFrame = usePageHeight(results)
 
@@ -124,7 +135,12 @@ export function Results() {
                 {page?.exception ? (
                     <p className="warn warn--error">{page.exception}</p>
                 ) : (
-                    <PageImage image={page ? asImage(page) : null} picked={picked} frame={pageFrame} />
+                    <PageImage
+                        image={page ? asImage(page) : null}
+                        picked={picked}
+                        frame={pageFrame}
+                        onPoint={pageClickable ? setPagePoint : null}
+                    />
                 )}
                 {failed && (
                     <p className="warn warn--error">
@@ -145,7 +161,12 @@ export function Results() {
                             onClick={() => setActive(panel.name)}
                         >
                             {panel.name}
-                            {panel.exception && <span className="tab__bad" title={panel.exception} />}
+                            {panel.exception && (
+                                <span
+                                    className={`tab__bad${isSkipped(panel.exception) ? ' tab__bad--skip' : ''}`}
+                                    title={panel.exception}
+                                />
+                            )}
                         </button>
                     ))}
                 </div>
@@ -155,6 +176,8 @@ export function Results() {
                         all={columns}
                         page={page ? asImage(page) : null}
                         onPick={setPicked}
+                        pagePoint={pagePoint}
+                        onPickable={setPageClickable}
                     />
                 )}
             </div>
@@ -174,11 +197,15 @@ function PageImage({
     image,
     picked,
     frame,
+    onPoint,
 }: {
     image: ScaleDpImage | null
     picked: Box | null
     frame: (node: HTMLElement | null) => void
+    /** Set when a click on the page can pick a box; null leaves the page inert. */
+    onPoint: ((point: PagePoint) => void) | null
 }) {
+    const seq = useRef(0)
     // Keyed on the bytes, so the object URL is not rebuilt on every pick --
     // showImage revokes it on load, and a second render would race the first.
     const node = useMemo(() => (image ? showImage(image) : null), [image])
@@ -187,8 +214,34 @@ function PageImage({
         [image, picked]
     )
 
+    // The picture is scaled to its column, so the click is mapped back through
+    // the rendered size to the image's own pixels -- the space boxes live in.
+    const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+        const img = event.currentTarget.querySelector('img')
+        if (!onPoint || !image || !img) return
+        const rect = img.getBoundingClientRect()
+        if (rect.width === 0) return
+        const scale = image.width / rect.width
+        const x = (event.clientX - rect.left) * scale
+        const y = (event.clientY - rect.top) * scale
+        if (x < 0 || y < 0 || x > image.width || y > image.height) return
+        seq.current += 1
+        // Four screen pixels of slack, whatever the zoom: a one-line box is
+        // only a few pixels tall at column width.
+        onPoint({ x, y, tolerance: 4 * scale, seq: seq.current })
+    }
+
     return (
-        <div className="framed page-frame" ref={frame}>
+        // A mouse convenience on top of the table, which stays the keyboard
+        // route to the same selection -- so no role or key handler here.
+        // biome-ignore lint/a11y/useKeyWithClickEvents: the boxes table is the accessible path
+        // biome-ignore lint/a11y/noStaticElementInteractions: see above
+        <div
+            className={`framed page-frame${onPoint ? ' page-frame--pickable' : ''}`}
+            ref={frame}
+            onClick={onClick}
+            title={onPoint ? 'Click a box to find it in the table' : undefined}
+        >
             <Detached node={node} />
             {overlay && <Detached className="page-frame__overlay" node={overlay} />}
         </div>
@@ -280,13 +333,29 @@ interface PanelProps {
      * wrong place.
      */
     pageSpace?: boolean
+    /** The last click on the page, for a boxes table to resolve to a row. */
+    pagePoint?: PagePoint | null
+    /** Told whether a table that can be picked from is showing. */
+    onPickable?: (pickable: boolean) => void
 }
 
-function Panel({ column, all, page, onPick, pageSpace = true }: PanelProps) {
-    if (column.exception) return <p className="warn warn--error">{column.exception}</p>
+function Panel({ column, all, page, onPick, pageSpace = true, pagePoint, onPickable }: PanelProps) {
+    if (column.exception) {
+        return <p className={isSkipped(column.exception) ? 'warn' : 'warn warn--error'}>{column.exception}</p>
+    }
 
     if (column.kind === 'document') {
-        return <DocumentPanel column={column} all={all} page={page} onPick={onPick} pageSpace={pageSpace} />
+        return (
+            <DocumentPanel
+                column={column}
+                all={all}
+                page={page}
+                onPick={onPick}
+                pageSpace={pageSpace}
+                pagePoint={pagePoint}
+                onPickable={onPickable}
+            />
+        )
     }
     if (column.kind === 'ner') return <NerPanel column={column} all={all} />
     if (column.kind === 'script') return <ScriptPanel column={column} />
@@ -299,7 +368,14 @@ function Panel({ column, all, page, onPick, pageSpace = true }: PanelProps) {
                 <p className="panel__note">
                     {detected.type} — {detected.bboxes.length} boxes
                 </p>
-                <BoxTable boxes={detected.bboxes} page={page} onPick={onPick} pageSpace={pageSpace} />
+                <BoxTable
+                    boxes={detected.bboxes}
+                    page={page}
+                    onPick={onPick}
+                    pageSpace={pageSpace}
+                    pagePoint={pagePoint}
+                    onPickable={onPickable}
+                />
             </>
         )
     }
@@ -322,12 +398,16 @@ function BoxTable({
     page,
     onPick,
     pageSpace = true,
+    pagePoint,
+    onPickable,
 }: {
     boxes: Box[]
     page: ScaleDpImage | null
     onPick: (box: Box | null) => void
     /** False for a gathered list's items, which belong to their own picture. */
     pageSpace?: boolean
+    pagePoint?: PagePoint | null
+    onPickable?: (pickable: boolean) => void
 }) {
     const host = useRef<HTMLDivElement>(null)
     const [picked, setPicked] = useState<number | null>(null)
@@ -354,11 +434,8 @@ function BoxTable({
         return () => onPick(null)
     }, [boxes, onPick])
 
-    const pick = useCallback(
-        (index: number) => {
-            // Clicking the picked row again clears it, so the page can be seen
-            // unobstructed without hunting for a deselect control.
-            const next = pickedRef.current === index ? null : index
+    const select = useCallback(
+        (next: number | null) => {
             pickedRef.current = next
             setPicked(next)
             // Deliberately outside any state updater: React runs those during
@@ -367,6 +444,34 @@ function BoxTable({
         },
         [boxes, onPick]
     )
+
+    // Clicking the picked row again clears it, so the page can be seen
+    // unobstructed without hunting for a deselect control.
+    const pick = useCallback((index: number) => select(pickedRef.current === index ? null : index), [select])
+
+    useEffect(() => {
+        onPickable?.(pickable)
+        return () => onPickable?.(false)
+    }, [pickable, onPickable])
+
+    // A click on the page, resolved to the innermost box under it. Clicking the
+    // same spot again steps outwards through the boxes stacked there -- the word,
+    // then its line, then the region -- and a click on bare page clears.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a new click (`seq`) is the trigger; the rest is read at that moment
+    useEffect(() => {
+        if (!pagePoint || !pickable) return
+        const hits = boxesAt(boxes, pagePoint)
+        if (hits.length === 0) {
+            select(null)
+            return
+        }
+        const current = pickedRef.current === null ? -1 : hits.indexOf(pickedRef.current)
+        const next = hits[(current + 1) % hits.length] as number
+        select(next)
+        host.current
+            ?.querySelector(`[data-box-index="${next}"]`)
+            ?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+    }, [pagePoint?.seq])
 
     // The rows are wired where they are built rather than as React children:
     // `showBoxes` owns the table, and re-rendering it per click would throw away
@@ -415,7 +520,7 @@ function BoxTable({
         <>
             <p className="panel__note">
                 {pickable
-                    ? 'Click a row to outline that box on the page.'
+                    ? 'Click a row to outline that box on the page, or a box on the page to find its row.'
                     : 'These boxes are in the coordinates of the picture they were read from, not the page.'}
             </p>
             <div className={`scroll${pickable ? ' scroll--pickable' : ''}`} ref={host}>
@@ -518,10 +623,27 @@ function ScriptPanel({ column }: { column: OutputColumn }) {
     )
 }
 
-function DocumentPanel({ column, all, page, onPick, pageSpace }: PanelProps) {
+function DocumentPanel({ column, all, page, onPick, pageSpace, pagePoint, onPickable }: PanelProps) {
     const document_ = asDocument(column)
     const [wrap, setWrap] = useState(false)
     const [view, setView] = useState<'text' | 'boxes'>('text')
+
+    // The text view has no rows to light up, so a click on the page brings the
+    // boxes table forward -- which then resolves the very click that opened it.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a new click (`seq`) is the trigger
+    useEffect(() => {
+        if (pagePoint) setView('boxes')
+    }, [pagePoint?.seq])
+
+    // Clickable in the text view too, since a click there is what opens the
+    // table. Whether the boxes are in page space is the table's call, made the
+    // same way it makes it for rows.
+    const pageSpaceBoxes = pageSpace !== false && page !== null && boxesFitIn(document_.bboxes, page)
+    useEffect(() => {
+        if (view === 'boxes') return
+        onPickable?.(pageSpaceBoxes)
+        return () => onPickable?.(false)
+    }, [view, pageSpaceBoxes, onPickable])
     const [copied, setCopied] = useState(false)
 
     const ner = all.find((other) => other.kind === 'ner' && !other.exception)
@@ -576,7 +698,14 @@ function DocumentPanel({ column, all, page, onPick, pageSpace }: PanelProps) {
                     <Detached node={showText(document_, { maxHeight: 'none', preserveLayout: !wrap })} />
                 </div>
             ) : (
-                <BoxTable boxes={document_.bboxes} page={page} onPick={onPick} pageSpace={pageSpace} />
+                <BoxTable
+                    boxes={document_.bboxes}
+                    page={page}
+                    onPick={onPick}
+                    pageSpace={pageSpace}
+                    pagePoint={pagePoint}
+                    onPickable={onPickable}
+                />
             )}
 
             {view === 'text' && ner && (
