@@ -37,9 +37,12 @@ export type { AssembleOptions, MergeOptions, MergeStrategy } from './merge-text.
 export {
     assembleDocument,
     coveringBoxes,
+    dedupeReadings,
     dropCovered,
+    joinWordFragments,
     MERGE_STRATEGIES,
     mergeBoxSets,
+    textsAgree,
 } from './merge-text.js'
 export type { PdfEmbeddedImagesParams } from './pdf-embedded-images.js'
 export {

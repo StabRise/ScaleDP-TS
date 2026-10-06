@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.5.0] - 06.10.2026
+
+### 💥 Behaviour changes
+
+These change output for existing callers with no type error to warn them.
+Each has a switch that restores the previous behaviour, which is also Python
+ScaleDP's.
+
+- **`PdfMergeImageText` keeps visible words a mismatched text layer covers**
+  (`@stabrise/scaledp/pdf`). New `matchText`, on by default: a covered box is
+  dropped only when the box covering it reads the same words, allowing for OCR
+  errors. An invisible `CONFIDENTIAL` laid over a picture of a name no longer
+  erases the name. `matchText: false` restores coverage-only dropping.
+- **`PdfMergeImageText` de-duplicates OCR readings against each other.** Where
+  a page draws one picture over another, each was read separately and the same
+  words came back twice. A reading covered by a larger one that says the same
+  words is now dropped (`strategy: 'union'` still keeps everything).
+- **`PdfMergeImageText` joins words OCR split apart** (`joinFragments`, on by
+  default): `F` + `reya` back into `Freya`.
+- **`PaddleRecognizer` and `TesseractRecognizer` read wider crops**
+  (`@stabrise/scaledp/ocr`). New `endPadding: 0.3` extends each region along its
+  line by 0.3 of its height, stopping at the next region, so a handwritten
+  capital the detector left off is read. New `dropNested: true` skips a region
+  lying mostly inside a larger one. `endPadding: 0, dropNested: false` restores
+  the previous crops.
+- **"No embedded images" is a skip, not a failure.** Stages downstream of a page
+  with no pictures now carry `This page has no embedded images to read.`
+  verbatim in `exception`, instead of wrapping it as
+  `Stage: Error: Upstream stage failed: …` with a stack trace. Check it with the
+  new `isSkipped(exception)`. Real upstream failures are reported as before.
+
+On the extraction-conditions benchmark the hybrid PDF pipeline now reads 53 of
+54 names in full (46 before), with no duplicated boxes.
+
+### 🚀 Features
+
+- **`RegexNer`** (`@stabrise/scaledp`). An engine-free stage that finds `DATE`,
+  `PHONE`, `EMAIL`, `URL`, `IBAN`, `CREDIT_CARD`, `PESEL`, `SSN`, `ZIP_CODE` and
+  `COUNTRY` in OCR text. Patterns match loosely and candidates are validated
+  strictly: Luhn, the PESEL checksum and birth date, IBAN mod 97 and country
+  length, the calendar, the SSN allocation rules. A failed check lowers the
+  score rather than dropping the match; an unmistakable shape that fails
+  (`1234-4567-7891-1234`, `30.02.2000`) is still reported at 0.55.
+  - OCR lookalikes (`O`→`0`, `l`→`1`, `S`→`5`…) are repaired inside numbers
+    without changing the text's length, so offsets still land on their boxes.
+  - Stray symbols are absorbed within `maxEdits`.
+  - Optional peers **`libphonenumber-js`** and **`chrono-node`** are loaded
+    lazily and add phone and date readings when installed; the built-in patterns
+    run without them.
+  - Countries come from `Intl.DisplayNames` in any `countryLocales`, plus ISO
+    3166 codes; ambiguous ones need a label such as `Nationality:`.
+  - Entities carry `source: 'pattern'`, which `NerConsistency` now preserves.
+- **`FuzzyRegex`** (`@stabrise/scaledp`). Approximate regular expressions in
+  plain TypeScript, with per-character substitute/insert/delete costs. The
+  Node `fuzzy-regex` package is a native addon and cannot run in a browser.
+- **`FitBoxesToInk`** (`@stabrise/scaledp`). Grows boxes, pixel by pixel, until
+  they cover the ink they belong to: a capital a detector missed, a descender, a
+  text-layer box sized from font metrics. Never grows into a neighbouring box.
+  Rotated boxes are fitted along their own lines.
+- **`isSkipped`, `SkipError`, `upstreamError`, `NO_EMBEDDED_IMAGES`** exported
+  from the root, for telling a page with nothing to read from a failure.
+- **`textsAgree`, `dedupeReadings`, `joinWordFragments`** exported from
+  `@stabrise/scaledp/pdf`'s merge helpers; `ibanValid`, `luhnValid`,
+  `peselValid`, `ssnValid`, `dateValid`, `ISO_COUNTRIES` from the root.
+
+### 🐛 Fixes
+
+- **`showBoxes`** (`@stabrise/scaledp/display`) prints a rotated box's
+  coordinates to one decimal instead of the full float.
+
 ## [0.4.0] - 22.09.2026
 
 ### 🚀 Features
