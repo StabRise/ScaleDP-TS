@@ -85,7 +85,8 @@
         "test:watch": "vitest",
         "test:browser": "vitest run --project browser",
         "check:pkg": "publint && attw --pack . --profile esm-only",
-        "test:all": "vitest run"
+        "test:all": "vitest run --project unit --project browser",
+        "bench": "node scripts/bench.mjs"
     },
     "peerDependencies": {
         "@huggingface/transformers": ">=3.7.0",

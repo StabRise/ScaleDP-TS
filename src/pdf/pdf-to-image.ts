@@ -33,6 +33,28 @@ export function pageIndexes(page: unknown, numPages: number, pageLimit: number):
     return Array.from({ length: count }, (_, i) => i)
 }
 
+/**
+ * The pages a PDF stage would read for `row`, without reading them: what
+ * `Stage.planPages` returns for every PDF stage. Opening the document goes
+ * through the shared cache, so the stage that then runs per page parses
+ * nothing again.
+ */
+export async function planPdfPages(
+    input: unknown,
+    row: Row,
+    pageCol: string,
+    pageLimit: number
+): Promise<number[]> {
+    return withPdfDocument(toBytes(input), async (pdf) => pageIndexes(row[pageCol], pdf.numPages, pageLimit))
+}
+
+/**
+ * Calls a PDF stage admits at once. pdf.js parses in its own worker and
+ * serves concurrent page requests on one document, so two pages can be in
+ * flight -- one being parsed while the other is drawn.
+ */
+export const PDF_STAGE_CONCURRENCY = 2
+
 export interface PdfToImageParams extends BaseStageParams {
     /** Render DPI. 300 matches ScaleDP's default and suits OCR. */
     resolution: number
@@ -74,6 +96,18 @@ export class PdfToImage extends Stage<PdfToImageParams> {
                 },
             })
         )
+    }
+
+    override get maxConcurrency(): number {
+        return PDF_STAGE_CONCURRENCY
+    }
+
+    override async planPages(row: Row): Promise<number[]> {
+        return planPdfPages(row[this.params.inputCol], row, this.params.pageCol, this.params.pageLimit)
+    }
+
+    override writes(): string[] {
+        return [this.params.outputCol, this.params.pageCol]
     }
 
     /** One input PDF becomes N rows, each carrying its page index. */

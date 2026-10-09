@@ -12,7 +12,7 @@ import { OcrError, upstreamError } from '../core/errors.js'
 import type { Point } from '../core/geometry.js'
 import { cropBox, cropGeometry, decodeImage, rotate180, toImageData } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage, type StageContext } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
 import { type Box, boxFromPolygon, isRotated } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
@@ -126,10 +126,16 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
         return this.params.lang.join('+')
     }
 
-    override async init(): Promise<void> {
+    /** Clients are cached per language, so every stage on one language shares it. */
+    override resources(): string[] {
+        return [`tesseract:${this.language}`]
+    }
+
+    override async init(ctx?: InitContext): Promise<void> {
         await getTesseractClient(this.language)
         if (this.params.detectLineOrientation) {
             this.orientation ??= new LineOrientationClassifier(this.params.oriModel)
+            await this.orientation.load(ctx?.onProgress)
         }
     }
 

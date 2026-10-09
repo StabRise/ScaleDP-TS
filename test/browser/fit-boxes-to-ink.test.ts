@@ -3,14 +3,18 @@
  * both shapes it accepts, and the failure paths.
  */
 import { describe, expect, it } from 'vitest'
+import { configure } from '../../src/core/config.js'
 import { NO_EMBEDDED_IMAGES } from '../../src/core/errors.js'
-import { context2d, createCanvas, encodeImage } from '../../src/core/image.js'
+import { context2d, createCanvas, decodeImage, encodeImage, toImageData } from '../../src/core/image.js'
 import { Pipeline } from '../../src/core/pipeline.js'
+import { PdfToDocument, PdfToImage } from '../../src/pdf/index.js'
 import { createBox } from '../../src/schemas/box.js'
 import { createDetectorOutput, type DetectorOutput } from '../../src/schemas/detector-output.js'
 import { createDocument, type Document } from '../../src/schemas/document.js'
 import { createImage, type ScaleDpImage } from '../../src/schemas/image.js'
-import { FitBoxesToInk } from '../../src/stages/fit-boxes-to-ink.js'
+import { FitBoxesToInk, fitBoxesToInk, toLuma } from '../../src/stages/fit-boxes-to-ink.js'
+
+configure({ pdf: { workerSrc: '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs' } })
 
 /** "reya" as solid letters, with an "F" standing 4px apart before it. */
 async function handwriting(): Promise<ScaleDpImage> {
@@ -65,4 +69,29 @@ describe('FitBoxesToInk', () => {
         const [row] = await new Pipeline([stage]).transform([{ image: await handwriting() }])
         expect((row?.nowhere as Document | undefined)?.exception).toMatch(/Expected boxes in "nowhere"/)
     })
+})
+
+describe('FitBoxesToInk on a real page', () => {
+    it('fits exactly as reading the whole page would, while reading only the bands it needs', async () => {
+        // Text at the top and the bottom, a photograph between: the case the
+        // band reading exists for.
+        const content = new Uint8Array(await (await fetch('/examples/pdfs/SampleWithFace.pdf')).arrayBuffer())
+        const [row] = await new Pipeline([
+            new PdfToDocument({ resolution: 300 }),
+            new PdfToImage({ resolution: 300, keepInputData: true }),
+        ]).transform(content)
+        const image = row?.image as ScaleDpImage
+        const document = row?.document as Document
+        expect(document.bboxes.length).toBeGreaterThan(10)
+
+        const bitmap = await decodeImage(image.data)
+        const whole = toLuma(toImageData(bitmap))
+        bitmap.close()
+        const expected = fitBoxesToInk(whole, document.bboxes)
+
+        const [fitted] = await new Pipeline([
+            new FitBoxesToInk({ inputCols: ['image', 'document'], outputCol: 'fitted' }),
+        ]).transform([row as never])
+        expect((fitted?.fitted as Document | undefined)?.bboxes).toEqual(expected)
+    }, 60000)
 })

@@ -15,7 +15,7 @@
 import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage, type StageContext } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
 import type { Box } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
@@ -26,6 +26,7 @@ import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-ori
 import { getPaddleRecognizer } from './paddle-service.js'
 import { readRegions } from './paddle-words.js'
 import { DEFAULT_OCR_PRESET, presetForRow, validatePreset } from './presets.js'
+import { PADDLE_RECOGNIZER_RESOURCE } from './resources.js'
 
 export interface PaddleRecognizerParams extends BaseStageParams {
     /** [imageColumn, boxColumn]. */
@@ -93,7 +94,17 @@ export interface PaddleRecognizerParams extends BaseStageParams {
      * is the only case it is for.
      */
     spaceRecovery: boolean
-    /** Crops per batched inference. 1 disables batching. */
+    /**
+     * Lines per recognition inference. 1 (the default) reads each line on its
+     * own.
+     *
+     * Batching pads every line to the widest in its batch, and the recogniser
+     * mixes information along the whole line, so the padding corrupts the
+     * reading of the shorter ones -- a whole address line read as nothing, an
+     * e-mail address garbled. On a scanned Russian page a batch of 6 lost
+     * three lines that a batch of 1 read, and was ~20% *slower* for computing
+     * the padding (1551 vs 1266 ms single-threaded, 409 vs 335 ms on 8).
+     */
     recBatchSize: number
     /**
      * Granularity of the boxes returned.
@@ -140,7 +151,7 @@ export const PADDLE_RECOGNIZER_DEFAULTS: PaddleRecognizerParams = Object.freeze(
     onlyRotated: false,
     oriModel: DEFAULT_ORIENTATION_MODEL,
     spaceRecovery: false,
-    recBatchSize: 6,
+    recBatchSize: 1,
     boxLevel: 'word' as 'region' | 'word',
     wordGapRatio: 0.15,
 })
@@ -174,16 +185,26 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
         )
     }
 
-    override async init(): Promise<void> {
+    override resources(): string[] {
+        return [PADDLE_RECOGNIZER_RESOURCE]
+    }
+
+    override async init(ctx?: InitContext): Promise<void> {
         const { preset, recBatchSize, spaceRecovery, detectLineOrientation, oriModel } = this.params
         // Warms the configured preset. When `presetCol` overrides it per row,
         // `apply` asks for that one instead. Nothing is held on the instance:
         // paddle-service caches a session per preset, so asking again is a map
         // lookup, and holding one here would only pin the wrong model once the
         // column starts choosing.
-        await getPaddleRecognizer(preset, { recBatchSize, spaceRecovery })
+        await getPaddleRecognizer(preset, {
+            recBatchSize,
+            spaceRecovery,
+            onProgress: ctx?.onProgress,
+            executionProviders: this.runtime.executionProviders,
+        })
         if (detectLineOrientation) {
             this.orientation ??= new LineOrientationClassifier(oriModel)
+            await this.orientation.load(ctx?.onProgress)
         }
     }
 
@@ -233,6 +254,7 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
         const recognition = await getPaddleRecognizer(presetForRow(row, presetCol, preset), {
             recBatchSize,
             spaceRecovery,
+            executionProviders: this.runtime.executionProviders,
         })
         const bitmap = await decodeImage(image.data)
 

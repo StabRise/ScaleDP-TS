@@ -87,6 +87,10 @@ reproduces a quirk of the Python implementation — BGR pixels with RGB statisti
 | `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
 | `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
 | `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `squareInput` | `boolean` | `false` | Pad to the full 1280×1280 square, as ScaleDP does. Off (the default) runs only the picture’s own shape — up to 4× faster on a wide crop — but the model was trained on squares, so some boxes differ from ScaleDP’s. Turn it on for exact parity. |
+| `pack` | `boolean` | `false` | Detect several of a page’s pictures in one inference, each kept in white on a 1280×1280 square. Every call costs a full square whatever the picture’s size, so a page with three small pictures runs once instead of three times. |
+| `packMaxScale` | `number` 1–8 | `2` | Most a picture is enlarged when packing. ScaleDP enlarges every picture to 1280 on its long side, which leaves no room to share. |
+| `packGutter` | `number` 0–512 | `64` | White between packed pictures, in model pixels, so one picture’s text is not read as continuing into the next. |
 
 </Accordion>
 </Accordions>

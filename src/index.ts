@@ -11,6 +11,8 @@
  *   @stabrise/scaledp/worker  run a pipeline off the main thread
  */
 
+export type { Condition, Json, Operand, Test, Tests } from './core/condition.js'
+export { evaluate, readPath, validateCondition } from './core/condition.js'
 export type { ModelProgress, ScaleDpConfig } from './core/config.js'
 export { configure, defaultNumThreads, getConfig, resetConfig, resolveNumThreads } from './core/config.js'
 export type { FoldedSpan, FoldedText } from './core/entities.js'
@@ -33,6 +35,7 @@ export {
     SkipError,
     upstreamError,
 } from './core/errors.js'
+export { EventStream } from './core/events.js'
 export type {
     FuzzyCosts,
     FuzzyEdit,
@@ -43,15 +46,29 @@ export type {
 export { FuzzyRegex } from './core/fuzzy-regex.js'
 export * from './core/geometry.js'
 export * from './core/image.js'
-export type { ModelFile, ModelFiles, ModelSpec } from './core/model-cache.js'
+export type { Priority, ResourceClaim } from './core/locks.js'
+export type {
+    EnsureModelOptions,
+    ModelFile,
+    ModelFiles,
+    ModelSpec,
+    ProgressListener,
+} from './core/model-cache.js'
 export {
     cacheKey,
     ensureModelFiles,
     evict,
     fileUrl,
     isCached,
+    LazyLoad,
+    ProgressHub,
+    raceAbort,
+    reportProgress,
+    reportReady,
     requestPersistentStorage,
 } from './core/model-cache.js'
+export type { EnvironmentProbe, Parallelism, ParallelismPreset } from './core/parallelism.js'
+export { probeEnvironment, resolveParallelism } from './core/parallelism.js'
 export type { BaseStageParams, Validator } from './core/params.js'
 export {
     assertInRange,
@@ -61,14 +78,31 @@ export {
 } from './core/params.js'
 export type {
     ExecutionTime,
+    InitContext,
     PipelineInput,
     PipelineOptions,
+    PipelineStage,
     Row,
     RowTime,
     StageContext,
     StageDescriptor,
+    StageRuntime,
+    StageScope,
 } from './core/pipeline.js'
 export { EXECUTION_TIME_COL, Pipeline, ROW_TIME_COL, Stage, toRows } from './core/pipeline.js'
+export type {
+    PipelineEvent,
+    PipelineEventType,
+    PlannedStage,
+    RowUpdate,
+    RowUpdateOptions,
+    RunOptions,
+    RunOrder,
+    StageRunOptions,
+    UnitRef,
+} from './core/run.js'
+export type { PipelineEntry } from './core/scheduler.js'
+export { stripBinary } from './core/scheduler.js'
 export * from './core/text.js'
 export * from './schemas/index.js'
 export type { CountryMatch } from './stages/countries.js'
@@ -79,8 +113,10 @@ export type { FitBoxesToInkParams, FitOptions, Luma } from './stages/fit-boxes-t
 export {
     FIT_BOXES_TO_INK_DEFAULTS,
     FitBoxesToInk,
+    fitBands,
     fitBoxesToInk,
     fitBoxToInk,
+    fitRegion,
     toLuma,
 } from './stages/fit-boxes-to-ink.js'
 export type { ImageCropBoxesParams } from './stages/image-crop-boxes.js'

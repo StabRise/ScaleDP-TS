@@ -196,7 +196,7 @@ for the full shape.
 | `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
 | `oriModel` | `string` | `'StabRise/line_orientation_detection_v0.1'` | Hugging Face repo id. Defaults to StabRise/line_orientation_detection_v0.1. |
 | `spaceRecovery` | `boolean` | `false` | Insert a space wherever the space class scores above 0.001. Not what separates words — ppu already does that from the decode’s geometry. Shreds small or noisy text into “s e n s i t i v e”; only for a collapsed word gap on clean, large text. |
-| `recBatchSize` | `number` | `6` | Crops per batched inference. 1 disables batching. |
+| `recBatchSize` | `number` | `1` | Lines per recognition inference. 1 reads each line on its own: batching pads lines to the widest in the batch, which corrupts the shorter ones’ reading and costs more time than it saves. |
 | `wordGapRatio` | `number` 0.05–2 | `0.15` | How wide a blank run must be, relative to the crop’s height, to count as a space rather than letter spacing. |
 
 </Accordion>

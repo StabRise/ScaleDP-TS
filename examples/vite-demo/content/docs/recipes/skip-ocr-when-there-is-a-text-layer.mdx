@@ -52,9 +52,34 @@ boxes are expressed in. Set it to the same number as `PdfToImage` or the two
 box sets will not line up.
 </Callout>
 
-## One pipeline, both columns
+## One pipeline, OCR only where it is needed
 
-If you would rather not branch, run both readers and decide per row afterwards:
+`when` moves the branch into the pipeline. A page with a usable text layer
+passes the OCR stages untouched, and a document whose every page has one never
+loads an OCR model at all:
+
+```ts
+import { pipelineFromDescriptors } from '@stabrise/scaledp/registry'
+import { usableTextLayer } from '@stabrise/scaledp/pdf'
+
+const needsOcr = { any: [{ not: usableTextLayer() }, { var: 'forceOcr', truthy: true }] }
+
+const pipeline = pipelineFromDescriptors([
+    { type: 'PdfToDocument', options: { resolution: 300 } },
+    { type: 'PdfToImage', options: { resolution: 300, keepInputData: true }, when: needsOcr },
+    { type: 'PaddleTextRecognizer', options: { outputCol: 'document' }, when: needsOcr },
+])
+
+const rows = await pipeline.run(file, { vars: { forceOcr: false } })
+```
+
+`usableTextLayer(col, minimumBoxes)` is `hasUsableTextLayer` as a condition.
+Run with `run` rather than `transform` and the text-layer pages come back while
+the scanned ones are still being read. See [Streaming runs](/docs/concepts/streaming).
+
+## Both columns, decided afterwards
+
+If you would rather keep both readings, run both readers and decide per row afterwards:
 
 ```ts
 const pipeline = new Pipeline([
@@ -69,7 +94,7 @@ file stays five rows. The reverse order does not work — `PdfToImage` deletes
 `content` by default, leaving `PdfToDocument` nothing to read. See
 [Columns are the wiring](/docs/concepts/columns).
 
-For most corpora the two-pass version above is still cheaper and clearer.
+For most corpora the conditional pipeline above is cheaper and clearer.
 
 ## When a page is both
 

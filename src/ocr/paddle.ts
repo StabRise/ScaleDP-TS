@@ -9,15 +9,16 @@
 import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage, imageDataToCanvas } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage, type StageContext } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
 import { type Box, boxFromBBox } from '../schemas/box.js'
 import { createDetectorOutput, type DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
-import { getPaddleRecognizer, getPaddleService } from './paddle-service.js'
+import { getPaddleRecognizer, getPaddleService, type PaddleLoadOptions } from './paddle-service.js'
 import { readRegions } from './paddle-words.js'
 import { DEFAULT_OCR_PRESET, presetForRow, validatePreset } from './presets.js'
+import { PADDLE_RECOGNIZER_RESOURCE, PADDLE_SERVICE_RESOURCE } from './resources.js'
 
 /** Recognizing per box gives word-level output; per line merges them first. */
 export type RecognitionStrategy = 'per-box' | 'per-line' | 'cross-line'
@@ -92,12 +93,24 @@ export class PaddleTextDetector extends Stage<PaddleTextDetectorParams> {
         super(resolveParams(PADDLE_TEXT_DETECTOR_DEFAULTS, options, { preset: validatePreset }))
     }
 
-    override async init(): Promise<void> {
-        await getPaddleService(this.params.preset)
+    override async init(ctx?: InitContext): Promise<void> {
+        await getPaddleService(this.params.preset, this.loadOptions(ctx))
+    }
+
+    /** Every stage on the full service shares its sessions. */
+    override resources(): string[] {
+        return [PADDLE_SERVICE_RESOURCE]
+    }
+
+    private loadOptions(ctx?: InitContext): PaddleLoadOptions {
+        return { onProgress: ctx?.onProgress, executionProviders: this.runtime.executionProviders }
     }
 
     protected async apply(input: unknown, row: Row): Promise<DetectorOutput> {
-        const service = await getPaddleService(presetForRow(row, this.params.presetCol, this.params.preset))
+        const service = await getPaddleService(
+            presetForRow(row, this.params.presetCol, this.params.preset),
+            this.loadOptions()
+        )
         const canvas = await toCanvas(input)
         const { boxes } = await service.detect(canvas as never)
 
@@ -156,6 +169,18 @@ export interface PaddleTextRecognizerParams extends PaddleOcrParams {
      * count as a space rather than a gap between letters. 'word' only.
      */
     wordGapRatio: number
+    /**
+     * Lines per recognition inference. 1 (the default) reads each line on its
+     * own.
+     *
+     * Batching pads every line to the widest in its batch, and the recogniser
+     * mixes information along the whole line, so the padding corrupts the
+     * reading of the shorter ones -- a whole address line read as nothing, an
+     * e-mail address garbled. On a scanned Russian page a batch of 6 lost
+     * three lines that a batch of 1 read, and was ~20% *slower* for computing
+     * the padding (1551 vs 1266 ms single-threaded, 409 vs 335 ms on 8).
+     */
+    recBatchSize: number
 }
 
 export const PADDLE_TEXT_RECOGNIZER_DEFAULTS: PaddleTextRecognizerParams = Object.freeze({
@@ -171,6 +196,7 @@ export const PADDLE_TEXT_RECOGNIZER_DEFAULTS: PaddleTextRecognizerParams = Objec
     lineTolerance: 0,
     boxLevel: 'word' as 'region' | 'word',
     wordGapRatio: 0.15,
+    recBatchSize: 1,
 })
 
 /** Full OCR: image -> Document with text and word-level boxes. */
@@ -181,14 +207,24 @@ export class PaddleTextRecognizer extends Stage<PaddleTextRecognizerParams> {
         super(resolveParams(PADDLE_TEXT_RECOGNIZER_DEFAULTS, options, { preset: validatePreset }))
     }
 
-    override async init(): Promise<void> {
-        await getPaddleService(this.params.preset)
+    override async init(ctx?: InitContext): Promise<void> {
+        await getPaddleService(this.params.preset, this.loadOptions(ctx))
+    }
+
+    /** Every stage on the full service shares its sessions. */
+    override resources(): string[] {
+        // Word-level reading also runs the recognition-only session.
+        return [PADDLE_SERVICE_RESOURCE, PADDLE_RECOGNIZER_RESOURCE]
+    }
+
+    private loadOptions(ctx?: InitContext): PaddleLoadOptions {
+        return { onProgress: ctx?.onProgress, executionProviders: this.runtime.executionProviders }
     }
 
     protected async apply(input: unknown, row: Row, ctx: StageContext): Promise<Document> {
         const { preset, presetCol, keepFormatting, lineTolerance, boxLevel } = this.params
         const chosen = presetForRow(row, presetCol, preset)
-        const service = await getPaddleService(chosen)
+        const service = await getPaddleService(chosen, this.loadOptions())
         const canvas = await toCanvas(input)
 
         const bboxes =
@@ -217,6 +253,7 @@ export class PaddleTextRecognizer extends Stage<PaddleTextRecognizerParams> {
         const result = await service.recognize(canvas as never, {
             flatten: true,
             strategy,
+            recBatchSize: this.params.recBatchSize,
             // ppu caches globally, keyed on pixels. Without this, switching
             // preset returns the *previous* model's result for the same image.
             noCache: true,
@@ -256,7 +293,10 @@ export class PaddleTextRecognizer extends Stage<PaddleTextRecognizerParams> {
         // line's spaces, but ppu already places those from the decode's own
         // geometry; `spaceRecovery` is a separate 0.001-threshold pass that
         // shreds small or noisy text into `s e n s i t i v e`.
-        const recognition = await getPaddleRecognizer(preset)
+        const recognition = await getPaddleRecognizer(preset, {
+            executionProviders: this.runtime.executionProviders,
+            recBatchSize: this.params.recBatchSize,
+        })
         const read = await readRegions(
             recognition,
             canvas,

@@ -16,7 +16,14 @@
 
 import { getConfig } from '../core/config.js'
 import type { ModelSpec } from '../core/model-cache.js'
-import { ensureModelFiles, evict, isCached } from '../core/model-cache.js'
+import {
+    ensureModelFiles,
+    evict,
+    isCached,
+    ProgressHub,
+    type ProgressListener,
+    reportReady,
+} from '../core/model-cache.js'
 import { createSession, loadOrt } from './ort.js'
 import { DEFAULT_OCR_PRESET } from './presets.js'
 
@@ -31,8 +38,20 @@ type PaddleOcrService = InstanceType<PpuWeb['PaddleOcrService']>
  */
 export type PaddleRecognitionService = InstanceType<PpuWeb['RecognitionService']>
 
+/** How a preset's sessions are loaded. */
+export interface PaddleLoadOptions {
+    /** Progress for this caller, in addition to `configure({ onProgress })`. */
+    onProgress?: ProgressListener
+    /**
+     * Execution providers for this preset's sessions, overriding `configure()`.
+     * Part of the cache key: the same preset on another provider is another
+     * pair of sessions.
+     */
+    executionProviders?: readonly string[]
+}
+
 /** Recognition tuning a stage may vary without paying for a second session. */
-export interface PaddleRecognizerOptions {
+export interface PaddleRecognizerOptions extends PaddleLoadOptions {
     /** Crops per batched inference. 1 disables batching. */
     recBatchSize?: number
     /** Recover inter-word spaces the greedy CTC decode drops. */
@@ -80,12 +99,15 @@ async function specForPreset(preset: string): Promise<{ spec: ModelSpec; roles: 
  * Absolute model URLs bypass `modelHost`: ppu-paddle-ocr publishes its own
  * catalogue and the paths are meaningful only against that host.
  */
-async function fetchPresetFiles(preset: string): Promise<Record<string, ArrayBuffer>> {
+async function fetchPresetFiles(
+    preset: string,
+    onProgress?: ProgressListener
+): Promise<Record<string, ArrayBuffer>> {
     const { spec, roles } = await specForPreset(preset)
-    const files = await ensureModelFiles({
-        ...spec,
-        files: spec.files.map((f) => ({ ...f })),
-    })
+    const files = await ensureModelFiles(
+        { ...spec, files: spec.files.map((f) => ({ ...f })) },
+        { onProgress, building: true }
+    )
     const out: Record<string, ArrayBuffer> = {}
     for (const [i, role] of roles.entries()) {
         const path = spec.files[i]?.path
@@ -97,30 +119,45 @@ async function fetchPresetFiles(preset: string): Promise<Record<string, ArrayBuf
 // Keyed by preset: switching language keeps the previous service alive, so
 // toggling back is instant rather than a re-download plus re-init.
 const services = new Map<string, Promise<PaddleOcrService>>()
+const progress = new ProgressHub()
 
-export async function getPaddleService(preset = DEFAULT_OCR_PRESET): Promise<PaddleOcrService> {
-    const existing = services.get(preset)
-    if (existing) return existing
+/** Cache key: the preset alone unless providers are pinned for it. */
+function serviceKey(preset: string, providers?: readonly string[]): string {
+    return providers ? `${preset}@${providers.join(',')}` : preset
+}
 
+export async function getPaddleService(
+    preset = DEFAULT_OCR_PRESET,
+    options: PaddleLoadOptions = {}
+): Promise<PaddleOcrService> {
+    const key = serviceKey(preset, options.executionProviders)
+    const repo = `ppu-paddle-ocr/${preset}`
+    const existing = services.get(key)
+    if (existing) return progress.follow(`service:${key}`, existing, options.onProgress, repo)
+
+    const emit = progress.emitter(`service:${key}`)
     const promise = (async () => {
         const ppu = await loadPpu()
-        const model = await fetchPresetFiles(preset)
+        const model = await fetchPresetFiles(preset, emit)
         const service = new ppu.PaddleOcrService({
             model,
             session: {
-                executionProviders: [...getConfig().executionProviders] as never,
+                executionProviders: [
+                    ...(options.executionProviders ?? getConfig().executionProviders),
+                ] as never,
                 graphOptimizationLevel: 'all',
             },
         })
         await service.initialize()
+        reportReady(repo, emit)
         return service
     })()
 
     // Evict on failure so a transient network error is retried rather than
     // cached as a permanently rejected promise.
-    promise.catch(() => services.delete(preset))
-    services.set(preset, promise)
-    return promise
+    promise.catch(() => services.delete(key))
+    services.set(key, promise)
+    return progress.follow(`service:${key}`, promise, options.onProgress, repo)
 }
 
 /**
@@ -145,10 +182,15 @@ function parseDictionary(source: ArrayBuffer): string[] {
     return new TextDecoder('utf-8').decode(source).split(/\r?\n/)
 }
 
-async function loadRecognitionAssets(preset: string): Promise<{ session: OrtSession; dictionary: string[] }> {
+async function loadRecognitionAssets(
+    preset: string,
+    onProgress?: ProgressListener
+): Promise<{ session: OrtSession; dictionary: string[] }> {
+    const repo = `ppu-paddle-ocr/${preset}`
     const existing = recognitionAssets.get(preset)
-    if (existing) return existing
+    if (existing) return progress.follow(`rec:${preset}`, existing, onProgress, repo)
 
+    const emit = progress.emitter(`rec:${preset}`)
     const promise = (async () => {
         // Nothing below imports ppu, but loading it first keeps the "ORT
         // configured before any session exists" ordering `loadPpu` enforces --
@@ -163,7 +205,10 @@ async function loadRecognitionAssets(preset: string): Promise<{ session: OrtSess
         const wanted = ['recognition', 'charactersDictionary'].map(
             (role) => spec.files[roles.indexOf(role)]?.path ?? ''
         )
-        const files = await ensureModelFiles({ ...spec, files: wanted.map((path) => ({ path })) })
+        const files = await ensureModelFiles(
+            { ...spec, files: wanted.map((path) => ({ path })) },
+            { onProgress: emit, building: true }
+        )
         const model = files[wanted[0] as string]
         const dict = files[wanted[1] as string]
         if (!model || !dict) {
@@ -178,12 +223,14 @@ async function loadRecognitionAssets(preset: string): Promise<{ session: OrtSess
         // convolutions into `com.ms.internal.nhwc` and has no kernel for them,
         // which fails at session creation. `PaddleOcrService` retries on WASM
         // for exactly this, so a session built here has to as well.
-        return { session: await createSession(model, { fallbackToWasm: true }), dictionary }
+        const session = await createSession(model, { fallbackToWasm: true })
+        reportReady(repo, emit)
+        return { session, dictionary }
     })()
 
     promise.catch(() => recognitionAssets.delete(preset))
     recognitionAssets.set(preset, promise)
-    return promise
+    return progress.follow(`rec:${preset}`, promise, onProgress, repo)
 }
 
 /**
@@ -200,7 +247,7 @@ export async function getPaddleRecognizer(
     options: PaddleRecognizerOptions = {}
 ): Promise<PaddleRecognitionService> {
     const ppu = await loadPpu()
-    const { session, dictionary } = await loadRecognitionAssets(preset)
+    const { session, dictionary } = await loadRecognitionAssets(preset, options.onProgress)
     return new ppu.RecognitionService(session, {
         charactersDictionary: dictionary,
         minimumConfidence: 0,
@@ -229,9 +276,11 @@ export async function loadPreset(preset: string): Promise<void> {
 
 export async function removePreset(preset: string): Promise<void> {
     const { spec } = await specForPreset(preset)
-    const service = services.get(preset)
-    services.delete(preset)
-    await service?.then((s) => s.destroy()).catch(() => undefined)
+    for (const [key, service] of [...services]) {
+        if (key !== preset && !key.startsWith(`${preset}@`)) continue
+        services.delete(key)
+        await service.then((s) => s.destroy()).catch(() => undefined)
+    }
     await releaseRecognition(preset)
     await evict(spec)
 }

@@ -26,7 +26,7 @@ import {
     type BaseStageParams,
     resolveParams,
 } from '../core/params.js'
-import { type Row, Stage, type StageContext } from '../core/pipeline.js'
+import { type Row, Stage, type StageContext, type StageScope } from '../core/pipeline.js'
 import type { Document } from '../schemas/document.js'
 import { createNerOutput, type Entity, type NerOutput } from '../schemas/entity.js'
 
@@ -246,6 +246,11 @@ export class NerConsistency extends Stage<NerConsistencyParams> {
                 minScore: (value) => assertInRange('minScore', value, 0, 1),
             })
         )
+    }
+
+    /** Document scope pools every page, so the scheduler must gather them first. */
+    override get scope(): StageScope {
+        return this.params.scope === 'document' ? 'document' : 'row'
     }
 
     /**

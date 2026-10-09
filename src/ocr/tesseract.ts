@@ -129,6 +129,11 @@ export class TesseractOcr extends Stage<TesseractOcrParams> {
         return this.params.lang.join('+')
     }
 
+    /** Clients are cached per language, so every stage on one language shares it. */
+    override resources(): string[] {
+        return [`tesseract:${this.language}`]
+    }
+
     override async init(): Promise<void> {
         await getTesseractClient(this.language)
     }

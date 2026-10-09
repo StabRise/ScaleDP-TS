@@ -233,3 +233,33 @@ describe('assembleDocument', () => {
         expect(document.text.split('\n').length).toBeGreaterThan(1)
     })
 })
+
+describe('dedupeReadings and stray readings', () => {
+    it('keeps lines a much shorter covering reading cannot be repeating', async () => {
+        const { dedupeReadings } = await import('../../src/pdf/merge-text.js')
+        const { createBox } = await import('../../src/schemas/box.js')
+        // A photograph taken for text: one stray letter over the whole picture.
+        const stray = createBox({ text: 'c', x: 0, y: 0, width: 1000, height: 600, score: 0.6 })
+        const line = createBox({
+            text: 'Шаг 1: Извлеките один гениальный мозг',
+            x: 100,
+            y: 100,
+            width: 800,
+            height: 40,
+            score: 0.99,
+        })
+        const word = createBox({ text: 'c', x: 300, y: 300, width: 20, height: 40, score: 0.9 })
+        const kept = dedupeReadings([stray, line, word], 0.5)
+        expect(kept).toContain(line)
+        // A genuine repeat -- same letter under the same letter -- still goes.
+        expect(kept).not.toContain(word)
+    })
+
+    it('still drops a word repeated inside a larger reading of its line', async () => {
+        const { dedupeReadings } = await import('../../src/pdf/merge-text.js')
+        const { createBox } = await import('../../src/schemas/box.js')
+        const whole = createBox({ text: 'Freya Johansson', x: 0, y: 0, width: 400, height: 40, score: 0.9 })
+        const part = createBox({ text: 'Johansson', x: 150, y: 0, width: 250, height: 40, score: 0.8 })
+        expect(dedupeReadings([whole, part], 0.5)).toEqual([whole])
+    })
+})

@@ -53,6 +53,11 @@ export class TesseractScriptDetector extends Stage<TesseractScriptDetectorParams
         )
     }
 
+    /** One tesseract.js OSD worker serves the whole realm. */
+    override resources(): string[] {
+        return ['tesseract:osd']
+    }
+
     override async init(): Promise<void> {
         await loadScriptDetection()
     }

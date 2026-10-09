@@ -7,17 +7,19 @@
  * leaves PdfDataToText in PDF points and scales only in PdfDataToDocument; a
  * single consistent space is more useful and avoids a class of silent mismatch.
  *
- * The output feeds the `bypassCol` optimisation: a page that already has a text
- * layer does not need OCR.
+ * The output is what decides whether a page needs OCR at all: gate the OCR
+ * stages with `when: { not: usableTextLayer() }` and a page with a text layer
+ * never loads an OCR model.
  */
 
+import type { Condition } from '../core/condition.js'
 import { ImageError } from '../core/errors.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import { toBytes } from '../stages/data-to-image.js'
 import { extractTextBoxes } from './extract-text.js'
-import { POINTS_PER_INCH, pageIndexes } from './pdf-to-image.js'
+import { PDF_STAGE_CONCURRENCY, POINTS_PER_INCH, pageIndexes, planPdfPages } from './pdf-to-image.js'
 import { describePdfError, withPdfDocument } from './pdfjs.js'
 import { splitRunsIntoWords } from './split-words.js'
 
@@ -44,6 +46,18 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
 
     constructor(options: Partial<PdfToDocumentParams> = {}) {
         super(resolveParams(PDF_TO_DOCUMENT_DEFAULTS, options))
+    }
+
+    override get maxConcurrency(): number {
+        return PDF_STAGE_CONCURRENCY
+    }
+
+    override async planPages(row: Row): Promise<number[]> {
+        return planPdfPages(row[this.params.inputCol], row, this.params.pageCol, this.params.pageLimit)
+    }
+
+    override writes(): string[] {
+        return [this.params.outputCol, this.params.pageCol]
     }
 
     protected override async expand(input: unknown, row: Row, ctx: StageContext): Promise<Row[]> {
@@ -101,4 +115,18 @@ export class PdfToDocument extends Stage<PdfToDocumentParams> {
 /** True when a page's text layer is substantive enough to skip OCR. */
 export function hasUsableTextLayer(document: Document, minimumBoxes = 1): boolean {
     return document.exception === '' && document.bboxes.length >= minimumBoxes
+}
+
+/**
+ * `hasUsableTextLayer` as a stage condition, for gating OCR in one pipeline:
+ *
+ *   { type: 'PaddleRecognizer', when: { not: usableTextLayer() } }
+ */
+export function usableTextLayer(col = 'document', minimumBoxes = 1): Condition {
+    return {
+        all: [
+            { path: `${col}.exception`, eq: '' },
+            { path: `${col}.bboxes.length`, gte: minimumBoxes },
+        ],
+    }
 }

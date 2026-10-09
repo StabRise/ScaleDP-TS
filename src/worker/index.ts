@@ -24,13 +24,17 @@
  * bundle carries only the engines it actually uses.
  */
 
-export type { ScaleDpWorkerOptions } from './client.js'
+export type { RunHandle, ScaleDpWorkerOptions, WorkerRunOptions } from './client.js'
 export { createScaleDpWorker, ScaleDpWorkerClient } from './client.js'
-export type { StageFactory } from './host.js'
+export type { ScaleDpWorkerHostOptions, StageFactory } from './host.js'
 export { registerStages, startScaleDpWorker } from './host.js'
+export type { ScaleDpWorkerPoolOptions } from './pool.js'
+export { createScaleDpWorkerPool, ScaleDpWorkerPool } from './pool.js'
 export type {
     StageDescriptor,
     TransferableConfig,
+    TransferableRunOptions,
+    WorkerEnvironment,
     WorkerRequest,
     WorkerResponse,
 } from './protocol.js'

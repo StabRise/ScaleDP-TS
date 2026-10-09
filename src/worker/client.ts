@@ -8,10 +8,15 @@
  */
 
 import type { ModelProgress, ScaleDpConfig } from '../core/config.js'
+import { EventStream } from '../core/events.js'
 import type { Row } from '../core/pipeline.js'
+import type { PipelineEvent, RowUpdate } from '../core/run.js'
+import type { RunPlan } from '../core/scheduler.js'
 import type {
     StageDescriptor,
     TransferableConfig,
+    TransferableRunOptions,
+    WorkerEnvironment,
     WorkerRequest,
     WorkerRequestInit,
     WorkerResponse,
@@ -25,16 +30,43 @@ export interface ScaleDpWorkerOptions {
      *   new Worker(new URL('./my-worker.ts', import.meta.url), { type: 'module' })
      */
     worker: Worker
-    onProgress?: (progress: ModelProgress) => void
-    onStage?: (name: string, ms: number, rows: number) => void
+    /** Model progress from `configure({ onProgress })` in the worker, for any request. */
+    onProgress?: (progress: ModelProgress, requestId: number) => void
+    /** Per-stage timing of `transform` requests. */
+    onStage?: (name: string, ms: number, rows: number, requestId: number) => void
+}
+
+/** `run` options as a caller passes them: the transferable part plus the live callbacks. */
+export interface WorkerRunOptions extends TransferableRunOptions {
+    signal?: AbortSignal
+    onEvent?: (event: PipelineEvent) => void
+    onRow?: (update: RowUpdate) => void
+}
+
+/** A run in progress: iterate its events, await its rows, or cancel it. */
+export interface RunHandle extends AsyncIterable<PipelineEvent> {
+    /** Every row, in order, once the run finishes. Rejects with an `AbortError` when cancelled. */
+    readonly result: Promise<Row[]>
+    /** Stop the run -- immediately if it is running, before it starts if it is queued. */
+    cancel(): void
+}
+
+interface Pending {
+    resolve: (value: never) => void
+    reject: (reason: Error) => void
+    onEvent?: (event: PipelineEvent) => void
+    onRow?: (update: RowUpdate) => void
+}
+
+function abortError(message = 'Run cancelled'): Error {
+    return typeof DOMException === 'undefined'
+        ? Object.assign(new Error(message), { name: 'AbortError' })
+        : new DOMException(message, 'AbortError')
 }
 
 export class ScaleDpWorkerClient {
     private nextRequestId = 1
-    private readonly pending = new Map<
-        number,
-        { resolve: (value: never) => void; reject: (reason: Error) => void }
-    >()
+    private readonly pending = new Map<number, Pending>()
 
     // ORT runs one inference at a time, so requests are serialised here as well
     // as in the host -- this keeps the *queueing* observable to callers.
@@ -51,11 +83,19 @@ export class ScaleDpWorkerClient {
         options.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
             const message = event.data
             if (message.type === 'progress') {
-                options.onProgress?.(message.progress)
+                options.onProgress?.(message.progress, message.requestId)
                 return
             }
             if (message.type === 'stage') {
-                options.onStage?.(message.name, message.ms, message.rows)
+                options.onStage?.(message.name, message.ms, message.rows, message.requestId)
+                return
+            }
+            if (message.type === 'event') {
+                this.pending.get(message.requestId)?.onEvent?.(message.event)
+                return
+            }
+            if (message.type === 'row') {
+                this.pending.get(message.requestId)?.onRow?.(message.update)
                 return
             }
 
@@ -63,9 +103,13 @@ export class ScaleDpWorkerClient {
             if (!entry) return
             this.pending.delete(message.requestId)
 
-            if (message.type === 'error') entry.reject(new Error(message.message))
-            else if (message.type === 'result') entry.resolve(message.rows as never)
-            else entry.resolve(undefined as never)
+            if (message.type === 'error') {
+                entry.reject(message.aborted ? abortError(message.message) : new Error(message.message))
+            } else if (message.type === 'result') entry.resolve(message.rows as never)
+            else if (message.type === 'configured') entry.resolve(message.environment as never)
+            else if (message.type === 'planned') {
+                entry.resolve({ pages: message.pages, barriers: message.barriers } as never)
+            } else entry.resolve(undefined as never)
         }
 
         options.worker.onerror = (event) => {
@@ -75,16 +119,28 @@ export class ScaleDpWorkerClient {
         }
     }
 
-    private send<T>(request: WorkerRequestInit): Promise<T> {
+    private send<T>(
+        request: WorkerRequestInit,
+        hooks: Pick<Pending, 'onEvent' | 'onRow'> & {
+            signal?: AbortSignal
+            /** Told the request id once the request is posted. */
+            posted?: (requestId: number) => void
+        } = {}
+    ): Promise<T> {
         const run = async (): Promise<T> => {
             if (this.failure) throw this.failure
+            // Cancelled while queued: never posted at all.
+            if (hooks.signal?.aborted) throw abortError()
             const requestId = this.nextRequestId++
             return new Promise<T>((resolve, reject) => {
                 this.pending.set(requestId, {
                     resolve: resolve as (value: never) => void,
                     reject,
+                    onEvent: hooks.onEvent,
+                    onRow: hooks.onRow,
                 })
                 this.options.worker.postMessage({ ...request, requestId } as WorkerRequest)
+                hooks.posted?.(requestId)
             })
         }
 
@@ -102,13 +158,81 @@ export class ScaleDpWorkerClient {
      * postMessage boundary. Progress is forwarded back through `onProgress` on
      * the client instead.
      */
-    configure(config: TransferableConfig): Promise<void> {
+    configure(config: TransferableConfig): Promise<WorkerEnvironment | undefined> {
         return this.send({ type: 'configure', config: config as Partial<ScaleDpConfig> })
     }
 
-    /** Run a pipeline in the worker. Stages are named, not passed by reference. */
+    /** Run a pipeline in the worker in stage order. Stages are named, not passed by reference. */
     transform(stages: StageDescriptor[], rows: Row[]): Promise<Row[]> {
         return this.send<Row[]>({ type: 'transform', stages, rows })
+    }
+
+    /**
+     * Run a pipeline in the worker, streaming events and row updates as it
+     * goes. The same options as `Pipeline.run`; the callbacks and the signal
+     * stay on this side and the rest crosses over.
+     *
+     *   const run = client.run(stages, [{ contentRef: 'doc', path }], {
+     *     pagesInFlight: 2,
+     *     enabled: { FaceDetector: settings.faces },
+     *     onRow: (update) => show(update),
+     *   })
+     *   cancelButton.onclick = () => run.cancel()
+     *   const rows = await run.result
+     *
+     * Row updates strip binary data by default here (`rowUpdates.stripBinary`),
+     * since every byte of every message is copied.
+     */
+    run(stages: StageDescriptor[], rows: Row[], options: WorkerRunOptions = {}): RunHandle {
+        const { signal, onEvent, onRow, ...transferable } = options
+        const stream = new EventStream<PipelineEvent>()
+        const local = new AbortController()
+        let requestId: number | null = null
+
+        const cancel = () => {
+            if (local.signal.aborted) return
+            local.abort()
+            // Running: tell the worker. Queued: `send` sees the abort and never posts.
+            if (requestId !== null) {
+                this.options.worker.postMessage({
+                    type: 'cancel',
+                    requestId: this.nextRequestId++,
+                    target: requestId,
+                } as WorkerRequest)
+            }
+        }
+        if (signal?.aborted) cancel()
+        signal?.addEventListener('abort', cancel, { once: true })
+
+        const result = this.send<Row[]>(
+            { type: 'run', stages, rows, options: transferable },
+            {
+                signal: local.signal,
+                onEvent: (event) => {
+                    stream.push(event)
+                    onEvent?.(event)
+                },
+                onRow,
+                posted: (id) => {
+                    requestId = id
+                },
+            }
+        )
+        result.then(
+            () => stream.close(),
+            () => stream.close()
+        )
+        result.then(
+            () => signal?.removeEventListener('abort', cancel),
+            () => signal?.removeEventListener('abort', cancel)
+        )
+
+        return Object.assign(stream, { result, cancel }) as RunHandle
+    }
+
+    /** How a run would be laid out -- page split and barriers -- without running it. */
+    plan(stages: StageDescriptor[], rows: Row[], options: TransferableRunOptions = {}): Promise<RunPlan> {
+        return this.send<RunPlan>({ type: 'plan', stages, rows, options })
     }
 
     /**

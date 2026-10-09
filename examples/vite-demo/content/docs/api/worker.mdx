@@ -12,7 +12,12 @@ For the narrative version, see
 import { registerStages, startScaleDpWorker } from '@stabrise/scaledp/worker'
 
 registerStages(stages: Record<string, new (options?: never) => Stage>): void
-startScaleDpWorker(scope: DedicatedWorkerGlobalScope = self as never): void
+startScaleDpWorker(scope?: DedicatedWorkerGlobalScope, options?: ScaleDpWorkerHostOptions): void
+
+interface ScaleDpWorkerHostOptions {
+    maxCachedStages?: number      // live stage instances kept between requests, default 12
+    progressIntervalMs?: number   // throttle for `downloading` progress, default 100
+}
 
 type StageFactory = (descriptor: StageDescriptor) => Stage | undefined
 ```
@@ -21,8 +26,14 @@ Registration is explicit so the worker bundle carries only the engines it uses.
 An unregistered type produces a message naming the fix:
 `Call registerStages({ X }) in the worker entry.`
 
-Requests are serialised through a promise queue, because an onnxruntime-web
-session runs one inference at a time.
+Requests are serialised through a promise queue. Pages *within* a run overlap
+(`pagesInFlight`), and the scheduler knows which stages share a session.
+
+The host caches **stage instances**, keyed by `type`, `options` and `runtime`,
+not whole pipelines. Changing a stage's `id`, `enabled`, `when` or `barrier`
+reuses the live instance and its ONNX session, and editing one stage's options
+rebuilds only that stage. Instances past `maxCachedStages` are disposed, least
+recently used first.
 
 ## Client — on the main thread
 
@@ -31,17 +42,56 @@ import { createScaleDpWorker, ScaleDpWorkerClient } from '@stabrise/scaledp/work
 
 interface ScaleDpWorkerOptions {
     worker: Worker                       // you construct it; only your bundler can resolve the URL
-    onProgress?: (progress: ModelProgress) => void
-    onStage?: (name: string, ms: number, rows: number) => void
+    onProgress?: (progress: ModelProgress, requestId: number) => void
+    onStage?: (name: string, ms: number, rows: number, requestId: number) => void
 }
 
 class ScaleDpWorkerClient {
     constructor(options: ScaleDpWorkerOptions)
-    configure(config: TransferableConfig): Promise<void>
-    transform(stages: StageDescriptor[], rows: Row[]): Promise<Row[]>
+    configure(config: TransferableConfig): Promise<WorkerEnvironment | undefined>
+    transform(stages: StageDescriptor[], rows: Row[]): Promise<Row[]>          // stage order
+    run(stages: StageDescriptor[], rows: Row[], options?: WorkerRunOptions): RunHandle
+    putContent(key: string, content: Uint8Array): Promise<void>
+    dropContent(key: string): Promise<void>
     dispose(): Promise<void>              // sends dispose, then terminates
 }
+
+interface WorkerRunOptions extends TransferableRunOptions {   // RunOptions minus callbacks and signal
+    signal?: AbortSignal
+    onEvent?: (event: PipelineEvent) => void
+    onRow?: (update: RowUpdate) => void
+}
+
+interface RunHandle extends AsyncIterable<PipelineEvent> {
+    result: Promise<Row[]>     // rejects with an AbortError when cancelled
+    cancel(): void             // immediate if running; never posted if still queued
+}
+
+interface WorkerEnvironment {
+    numThreads: number; crossOriginIsolated: boolean; webgpu: boolean; hardwareConcurrency: number
+}
 ```
+
+`run` is [`Pipeline.run`](/docs/concepts/streaming) across the boundary:
+
+```ts
+const run = client.run(stages, [{ contentRef: 'doc', path: file.name }], {
+    pagesInFlight: 2,
+    enabled: { faces: settings.detectFaces },
+    rowUpdates: { stages: ['ocr', 'ner', 'faces'] },
+    onRow: (update) => store.merge(update),
+})
+cancel.onclick = () => run.cancel()
+const rows = await run.result
+```
+
+A cancel is posted straight to the worker rather than queued behind the run it
+cancels. Row updates strip binary data by default here, since every message is
+copied.
+
+`configure` resolves with what the worker actually runs with. Check
+`crossOriginIsolated` rather than assuming threads: onnxruntime-web runs
+single-threaded on a page that is not isolated, whatever `numThreads` says.
 
 ```ts
 type TransferableConfig = Omit<Partial<ScaleDpConfig>, 'auth' | 'onProgress'>
@@ -58,17 +108,24 @@ Correlated by a numeric `requestId`.
 
 ```ts
 type WorkerRequest =
-    | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }
-    | { type: 'transform'; requestId: number; stages: StageDescriptor[]; rows: Row[] }
-    | { type: 'dispose';   requestId: number }
+    | { type: 'configure';   requestId: number; config: Partial<ScaleDpConfig> }
+    | { type: 'transform';   requestId: number; stages: StageDescriptor[]; rows: Row[] }
+    | { type: 'run';         requestId: number; stages: StageDescriptor[]; rows: Row[]; options?: TransferableRunOptions }
+    | { type: 'cancel';      requestId: number; target: number }     // never answered
+    | { type: 'putContent';  requestId: number; key: string; content: Uint8Array }
+    | { type: 'dropContent'; requestId: number; key: string }
+    | { type: 'dispose';     requestId: number }
 
 type WorkerResponse =
     | { type: 'progress';   requestId: number; progress: ModelProgress }
     | { type: 'stage';      requestId: number; name: string; ms: number; rows: number }
+    | { type: 'event';      requestId: number; event: PipelineEvent }
+    | { type: 'row';        requestId: number; update: RowUpdate }
     | { type: 'result';     requestId: number; rows: Row[] }
-    | { type: 'configured'; requestId: number }
+    | { type: 'configured'; requestId: number; environment?: WorkerEnvironment }
+    | { type: 'stored';     requestId: number }
     | { type: 'disposed';   requestId: number }
-    | { type: 'error';      requestId: number; message: string }
+    | { type: 'error';      requestId: number; message: string; aborted?: boolean }
 ```
 
 `StageDescriptor` is re-exported here, since it is the payload the whole protocol

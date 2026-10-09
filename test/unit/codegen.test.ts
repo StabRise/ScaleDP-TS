@@ -107,3 +107,32 @@ const pipeline = new Pipeline([
         expect(code).toContain('new NotAStage({ a: 1 })')
     })
 })
+
+describe('pipelineCode with run settings', () => {
+    it('wraps a stage carrying id, enabled, when or runtime', () => {
+        const code = pipelineCode(
+            [
+                { type: 'PdfToImage', options: { resolution: 200 } },
+                {
+                    type: 'GlinerNer',
+                    id: 'ner',
+                    enabled: false,
+                    when: { path: 'document.text.length', gt: 0 },
+                    runtime: { executionProviders: ['webgpu', 'wasm'] },
+                },
+            ],
+            { imports: false }
+        )
+        expect(code).toBe(
+            `const pipeline = new Pipeline([
+    new PdfToImage({ resolution: 200 }),
+    {
+        stage: new GlinerNer().withRuntime({"executionProviders":["webgpu","wasm"]}),
+        id: 'ner',
+        enabled: false,
+        when: {"path":"document.text.length","gt":0},
+    },
+])`
+        )
+    })
+})

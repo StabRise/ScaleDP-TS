@@ -69,7 +69,11 @@ export {
 } from './paddle.js'
 export type { PaddleRecognizerParams } from './paddle-recognizer.js'
 export { PADDLE_RECOGNIZER_DEFAULTS, PaddleRecognizer } from './paddle-recognizer.js'
-export type { PaddleRecognitionService, PaddleRecognizerOptions } from './paddle-service.js'
+export type {
+    PaddleLoadOptions,
+    PaddleRecognitionService,
+    PaddleRecognizerOptions,
+} from './paddle-service.js'
 export {
     disposePaddleServices,
     getPaddleRecognizer,
@@ -86,6 +90,7 @@ export {
     presetsForScript,
     validatePreset,
 } from './presets.js'
+export { PADDLE_RECOGNIZER_RESOURCE, PADDLE_SERVICE_RESOURCE } from './resources.js'
 export type { DetectedScript, OsdReading, OsdSource } from './script-detect.js'
 export {
     detectOsd,
@@ -101,7 +106,6 @@ export {
 } from './script-detect-stage.js'
 export type { TesseractOcrParams } from './tesseract.js'
 export { DEFAULT_TESSDATA_URL, disposeTesseract, TESSERACT_OCR_DEFAULTS, TesseractOcr } from './tesseract.js'
-
 export type { TesseractRecognizerParams } from './tesseract-recognizer.js'
 export {
     TESSERACT_RECOGNIZER_DEFAULTS,

@@ -22,7 +22,7 @@
  * are reached through dynamic `import()` and stay lazy.
  */
 
-import { Pipeline, type Stage, type StageDescriptor } from '../core/pipeline.js'
+import { Pipeline, type PipelineStage, type Stage, type StageDescriptor } from '../core/pipeline.js'
 import { STAGE_CLASSES, STAGE_SPECS } from './catalog.js'
 
 // Re-exported so a consumer building pipelines as data needs only this subpath.
@@ -58,12 +58,26 @@ export function createStage(descriptor: StageDescriptor): Stage {
             `Unknown stage "${descriptor.type}". See STAGE_SPECS for the stages this build knows about.`
         )
     }
-    return new Ctor(descriptor.options as never)
+    return new Ctor(descriptor.options as never).withRuntime(descriptor.runtime)
 }
 
-/** Build a whole pipeline from its serialised form. */
+/** One descriptor as a pipeline entry: the stage plus how the pipeline runs it. */
+export function pipelineStage(descriptor: StageDescriptor): PipelineStage {
+    return {
+        stage: createStage(descriptor),
+        id: descriptor.id,
+        enabled: descriptor.enabled,
+        when: descriptor.when,
+        barrier: descriptor.barrier,
+    }
+}
+
+/**
+ * Build a whole pipeline from its serialised form, keeping each descriptor's
+ * `id`, `enabled`, `when`, `barrier` and `runtime`.
+ */
 export function pipelineFromDescriptors(descriptors: readonly StageDescriptor[]): Pipeline {
-    return new Pipeline(descriptors.map(createStage))
+    return new Pipeline(descriptors.map(pipelineStage))
 }
 
 /**
@@ -76,7 +90,21 @@ export function describeStage(stage: Stage): StageDescriptor {
     return { type: stage.name, options: { ...stage.params } }
 }
 
-/** The serialised form of a live pipeline. */
+/**
+ * The serialised form of a live pipeline.
+ *
+ * Run settings are written only where they differ from the default -- an id
+ * other than the derived one, a disabled stage, a condition, a barrier -- so a
+ * plain pipeline describes as plain descriptors.
+ */
 export function describePipeline(pipeline: Pipeline): StageDescriptor[] {
-    return pipeline.stages.map(describeStage)
+    return pipeline.entries.map((entry) => {
+        const descriptor = describeStage(entry.stage)
+        if (entry.id !== entry.timingKey) descriptor.id = entry.id
+        if (!entry.enabled) descriptor.enabled = false
+        if (entry.when) descriptor.when = entry.when
+        if (entry.barrier) descriptor.barrier = true
+        if (Object.keys(entry.stage.runtime).length > 0) descriptor.runtime = { ...entry.stage.runtime }
+        return descriptor
+    })
 }

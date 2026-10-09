@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BASE_STAGE_DEFAULTS } from '../../src/core/params.js'
 import { Stage } from '../../src/core/pipeline.js'
-import { registerStages, startScaleDpWorker } from '../../src/worker/host.js'
+import { registerStages, type ScaleDpWorkerHostOptions, startScaleDpWorker } from '../../src/worker/host.js'
 import type {
     StageDescriptor,
     WorkerRequest,
@@ -47,32 +47,52 @@ class Probe extends Stage {
     }
 }
 
-registerStages({ Probe: Probe as never })
+/** Slow, so a run can be caught in flight. */
+class Sleepy extends Stage {
+    readonly name = 'Sleepy'
+    constructor(options?: Record<string, unknown>) {
+        super({ ...BASE_STAGE_DEFAULTS, outputCol: 'slept', ...options })
+    }
+    protected async apply(): Promise<unknown> {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return { image: { data: new Uint8Array(32) } }
+    }
+    protected onError(message: string): unknown {
+        return { exception: message }
+    }
+}
+
+registerStages({ Probe: Probe as never, Sleepy: Sleepy as never })
 
 /** A DedicatedWorkerGlobalScope stand-in, driving the host directly. */
-function stubScope() {
+function stubScope(options: ScaleDpWorkerHostOptions = {}) {
     let nextId = 1
     const settled = new Map<number, (message: WorkerResponse) => void>()
+    const streamed: WorkerResponse[] = []
+    const streaming = new Set(['progress', 'stage', 'event', 'row'])
 
     const scope = {
         onmessage: null as ((event: MessageEvent<WorkerRequest>) => void) | null,
         postMessage(message: WorkerResponse) {
-            if ('requestId' in message && message.type !== 'progress' && message.type !== 'stage') {
-                settled.get(message.requestId)?.(message)
+            if (streaming.has(message.type)) {
+                streamed.push(message)
+                return
             }
+            settled.get(message.requestId)?.(message)
         },
     }
 
-    startScaleDpWorker(scope as never)
+    startScaleDpWorker(scope as never, options)
 
-    const send = (request: WorkerRequestInit) =>
-        new Promise<WorkerResponse>((resolve) => {
-            const requestId = nextId++
-            settled.set(requestId, resolve)
-            scope.onmessage?.({ data: { ...request, requestId } } as never)
-        })
+    const post = (request: WorkerRequestInit) => {
+        const requestId = nextId++
+        const done = new Promise<WorkerResponse>((resolve) => settled.set(requestId, resolve))
+        scope.onmessage?.({ data: { ...request, requestId } } as never)
+        return { requestId, done }
+    }
+    const send = (request: WorkerRequestInit) => post(request).done
 
-    return { send }
+    return { send, post, streamed }
 }
 
 const stages = (outputCol: string): StageDescriptor[] => [{ type: 'Probe', options: { outputCol } }]
@@ -99,15 +119,38 @@ describe('startScaleDpWorker', () => {
         expect(counts.disposed).toBe(0)
     })
 
-    it('rebuilds and disposes when the stages change', async () => {
+    it('rebuilds only the stage whose options changed, and keeps the other cached', async () => {
         const { send } = stubScope()
 
         await send({ type: 'transform', stages: stages('a'), rows: [{}] })
         await send({ type: 'transform', stages: stages('b'), rows: [{}] })
+        await send({ type: 'transform', stages: stages('a'), rows: [{}] })
 
+        // Switching back to `a` finds its instance -- and its session -- alive.
         expect(counts.built).toBe(2)
-        // The superseded pipeline's sessions are released, not leaked.
+        expect(counts.disposed).toBe(0)
+    })
+
+    it('disposes stages it evicts past the cache limit', async () => {
+        const { send } = stubScope({ maxCachedStages: 2 })
+        for (const col of ['a', 'b', 'c']) {
+            await send({ type: 'transform', stages: stages(col), rows: [{}] })
+        }
+        expect(counts.built).toBe(3)
         expect(counts.disposed).toBe(1)
+    })
+
+    it('reuses instances when only id, enabled, when or barrier change', async () => {
+        const { send } = stubScope()
+        const variants: StageDescriptor[][] = [
+            [{ type: 'Probe', options: { outputCol: 'a' } }],
+            [{ type: 'Probe', options: { outputCol: 'a' }, id: 'probe' }],
+            [{ type: 'Probe', options: { outputCol: 'a' }, enabled: false }],
+            [{ type: 'Probe', options: { outputCol: 'a' }, when: { path: 'x', exists: false } }],
+            [{ type: 'Probe', options: { outputCol: 'a' }, barrier: true }],
+        ]
+        for (const variant of variants) await send({ type: 'run', stages: variant, rows: [{}] })
+        expect(counts.built).toBe(1)
     })
 
     it('releases the pipeline on dispose', async () => {
@@ -200,5 +243,59 @@ describe('content handles', () => {
             rows: [{ contentRef: 'doc-2' }],
         })
         expect(afterDispose.type).toBe('error')
+    })
+})
+
+describe('streaming runs', () => {
+    it('posts events and row updates, stripping binary data by default', async () => {
+        const { send, streamed } = stubScope()
+        const result = await send({
+            type: 'run',
+            stages: [{ type: 'Sleepy', id: 'sleep' }],
+            rows: [{ path: 'p' }],
+        })
+        expect(result.type).toBe('result')
+
+        const events = streamed
+            .filter((m) => m.type === 'event')
+            .map((m) => (m as { event: { type: string } }).event)
+        expect(events[0]?.type).toBe('run:start')
+        expect(events.at(-1)?.type).toBe('run:end')
+
+        const rows = streamed.filter((m) => m.type === 'row')
+        expect(rows).toHaveLength(1)
+        expect((rows[0] as { update: { row: unknown } }).update.row).toEqual({
+            slept: { image: { data: { bytes: 32 } } },
+            path: 'p',
+        })
+    })
+
+    it('cancels a running request without waiting behind it', async () => {
+        const { post } = stubScope()
+        const run = post({ type: 'run', stages: [{ type: 'Sleepy' }], rows: [{}, {}, {}, {}] })
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        post({ type: 'cancel', target: run.requestId })
+
+        const response = await run.done
+        expect(response).toMatchObject({ type: 'error', aborted: true })
+    })
+
+    it('cancels a request still queued behind another', async () => {
+        const { post } = stubScope()
+        const first = post({ type: 'run', stages: [{ type: 'Sleepy' }], rows: [{}] })
+        const second = post({ type: 'run', stages: [{ type: 'Sleepy' }], rows: [{}] })
+        post({ type: 'cancel', target: second.requestId })
+
+        expect((await first.done).type).toBe('result')
+        expect(await second.done).toMatchObject({ type: 'error', aborted: true })
+    })
+
+    it('reports the environment it runs in on configure', async () => {
+        const { send } = stubScope()
+        const response = await send({ type: 'configure', config: {} })
+        expect(response).toMatchObject({
+            type: 'configured',
+            environment: { numThreads: expect.any(Number), crossOriginIsolated: expect.any(Boolean) },
+        })
     })
 })

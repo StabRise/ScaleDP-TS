@@ -46,6 +46,16 @@ function changedOptions(descriptor: StageDescriptor): string[] {
         .map((key) => `${key}: ${literal(options[key])}`)
 }
 
+/** `id`, `enabled`, `when` and `barrier`, where set. */
+function runSettings(descriptor: StageDescriptor): string[] {
+    const out: string[] = []
+    if (descriptor.id !== undefined) out.push(`id: ${literal(descriptor.id)}`)
+    if (descriptor.enabled !== undefined) out.push(`enabled: ${literal(descriptor.enabled)}`)
+    if (descriptor.when !== undefined) out.push(`when: ${JSON.stringify(descriptor.when)}`)
+    if (descriptor.barrier !== undefined) out.push(`barrier: ${literal(descriptor.barrier)}`)
+    return out
+}
+
 /**
  * Import lines, grouped by subpath.
  *
@@ -79,18 +89,33 @@ export function pipelineCode(
     const root = STAGE_SPECS.find((spec) => spec.subpath.endsWith('/scaledp'))?.subpath ?? '@stabrise/scaledp'
 
     const stages = descriptors.map((descriptor) => {
-        const entries = changedOptions(descriptor)
-        if (entries.length === 0) return `${pad}new ${descriptor.type}(),`
+        const settings = runSettings(descriptor)
+        const runtime = descriptor.runtime && Object.keys(descriptor.runtime).length > 0
+        const construct = (indent: string) => {
+            const entries = changedOptions(descriptor)
+            const call = (body: string) =>
+                runtime ? `${body}.withRuntime(${literal(descriptor.runtime)})` : body
+            if (entries.length === 0) return call(`new ${descriptor.type}()`)
+            const inline = call(`new ${descriptor.type}({ ${entries.join(', ')} })`)
+            if (indent.length + inline.length <= 100) return inline
+            // One option per line once the call outgrows a sensible line length,
+            // which is what a formatter would do to it anyway.
+            return call(
+                [
+                    `new ${descriptor.type}({`,
+                    ...entries.map((entry) => `${indent}${pad}${entry},`),
+                    `${indent}})`,
+                ].join('\n')
+            )
+        }
 
-        const inline = `${pad}new ${descriptor.type}({ ${entries.join(', ')} }),`
-        if (inline.length <= 100) return inline
-
-        // One option per line once the call outgrows a sensible line length,
-        // which is what a formatter would do to it anyway.
+        if (settings.length === 0) return `${pad}${construct(pad)},`
+        // Run settings wrap the stage in a `PipelineStage`.
         return [
-            `${pad}new ${descriptor.type}({`,
-            ...entries.map((entry) => `${pad}${pad}${entry},`),
-            `${pad}}),`,
+            `${pad}{`,
+            `${pad}${pad}stage: ${construct(pad + pad)},`,
+            ...settings.map((entry) => `${pad}${pad}${entry},`),
+            `${pad}},`,
         ].join('\n')
     })
 

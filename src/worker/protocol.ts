@@ -8,15 +8,56 @@
 
 import type { ModelProgress, ScaleDpConfig } from '../core/config.js'
 import type { Row, StageDescriptor } from '../core/pipeline.js'
+import type { PipelineEvent, RowUpdate, RunOptions } from '../core/run.js'
 
 // The descriptor lives in the core so `/registry` and `/worker` share one
 // definition of the serialised pipeline shape. Re-exported here because the
 // worker protocol is where callers expect to find it.
 export type { StageDescriptor }
 
+/**
+ * Run options minus the callbacks and the signal, which cannot be cloned.
+ * The client turns those into `event` / `row` messages and a `cancel`.
+ */
+export type TransferableRunOptions = Omit<RunOptions, 'signal' | 'onEvent' | 'onRow'>
+
+/**
+ * What the worker actually runs with, reported back from `configure`.
+ *
+ * Thread count in particular is not something to assume: onnxruntime-web only
+ * runs threaded on a cross-origin-isolated page and silently falls back to one
+ * thread otherwise.
+ */
+export interface WorkerEnvironment {
+    /** WASM threads requested from onnxruntime-web. */
+    numThreads: number
+    /** Whether the worker is cross-origin isolated, i.e. whether threads can engage at all. */
+    crossOriginIsolated: boolean
+    /** Whether WebGPU is exposed in the worker. */
+    webgpu: boolean
+    hardwareConcurrency: number
+}
+
 export type WorkerRequest =
     | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }
     | { type: 'transform'; requestId: number; stages: StageDescriptor[]; rows: Row[] }
+    | {
+          type: 'run'
+          requestId: number
+          stages: StageDescriptor[]
+          rows: Row[]
+          options?: TransferableRunOptions
+      }
+    /** Lay a run out without running it: its page split and barriers. Answered with `planned`. */
+    | {
+          type: 'plan'
+          requestId: number
+          stages: StageDescriptor[]
+          rows: Row[]
+          options?: TransferableRunOptions
+      }
+    /** Abort request `target`, whether running or still queued. Never answered. */
+    | { type: 'cancel'; requestId: number; target: number }
     | { type: 'putContent'; requestId: number; key: string; content: Uint8Array }
     | { type: 'dropContent'; requestId: number; key: string }
     | { type: 'dispose'; requestId: number }
@@ -24,11 +65,14 @@ export type WorkerRequest =
 export type WorkerResponse =
     | { type: 'progress'; requestId: number; progress: ModelProgress }
     | { type: 'stage'; requestId: number; name: string; ms: number; rows: number }
+    | { type: 'event'; requestId: number; event: PipelineEvent }
+    | { type: 'row'; requestId: number; update: RowUpdate }
     | { type: 'result'; requestId: number; rows: Row[] }
-    | { type: 'configured'; requestId: number }
+    | { type: 'planned'; requestId: number; pages: (number[] | null)[]; barriers: number[] }
+    | { type: 'configured'; requestId: number; environment?: WorkerEnvironment }
     | { type: 'stored'; requestId: number }
     | { type: 'disposed'; requestId: number }
-    | { type: 'error'; requestId: number; message: string }
+    | { type: 'error'; requestId: number; message: string; aborted?: boolean }
 
 /**
  * The row field naming content held in the worker.

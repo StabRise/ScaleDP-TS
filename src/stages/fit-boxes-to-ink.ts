@@ -31,7 +31,7 @@
 
 import { ImageError, upstreamError } from '../core/errors.js'
 import { boxPoints } from '../core/geometry.js'
-import { decodeImage, toImageData } from '../core/image.js'
+import { context2d, createCanvas, decodeImage } from '../core/image.js'
 import { assertInRange, BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type Row, Stage } from '../core/pipeline.js'
 import { type Box, bbox, isRotated } from '../schemas/box.js'
@@ -63,15 +63,30 @@ export const FIT_BOXES_TO_INK_DEFAULTS: FitBoxesToInkParams = Object.freeze({
     gapRatio: 0.15,
 })
 
-/** A grayscale image: one byte of brightness per pixel, row-major. */
+/**
+ * A grayscale image: one byte of brightness per pixel, row-major.
+ *
+ * It may hold only a region of the page -- `left`/`top` place it, in page
+ * pixels -- since fitting needs the pixels around the boxes and nothing else.
+ * A sample outside the region reads as outside the image.
+ */
 export interface Luma {
     data: Uint8Array
     width: number
     height: number
+    /** Page x of the region's first column. Default 0. */
+    left?: number
+    /** Page y of the region's first row. Default 0. */
+    top?: number
 }
 
-/** Rec. 601 brightness of an RGBA image, with transparent pixels read as white. */
-export function toLuma(image: ImageData): Luma {
+/**
+ * Rec. 601 brightness of an RGBA image, with transparent pixels read as white.
+ *
+ * `left`/`top` say where the image sits on the page, for an image that is a
+ * region of one.
+ */
+export function toLuma(image: ImageData, left = 0, top = 0): Luma {
     const { data, width, height } = image
     const out = new Uint8Array(width * height)
     for (let i = 0, p = 0; p < out.length; i += 4, p++) {
@@ -80,7 +95,7 @@ export function toLuma(image: ImageData): Luma {
             0.299 * (data[i] as number) + 0.587 * (data[i + 1] as number) + 0.114 * (data[i + 2] as number)
         out[p] = Math.round(y * alpha + 255 * (1 - alpha))
     }
-    return { data: out, width, height }
+    return { data: out, width, height, left, top }
 }
 
 export interface FitOptions {
@@ -94,6 +109,19 @@ export interface FitOptions {
      * belongs to another one.
      */
     limits?: { left?: number; right?: number; top?: number; bottom?: number }
+}
+
+/** Scratch counts of byte values, reused by every box. */
+const HISTOGRAM = new Uint32Array(256)
+
+/** The value at 0-based position `n` of the sorted bytes a histogram counts. */
+function nthSmallest(histogram: Uint32Array, n: number): number {
+    let seen = 0
+    for (let value = 0; value < histogram.length; value++) {
+        seen += histogram[value] as number
+        if (seen > n) return value
+    }
+    return histogram.length - 1
 }
 
 /** Pixels of ink a line must hold to count, so a speck of noise does not. */
@@ -121,12 +149,15 @@ export function fitBoxToInk(luma: Luma, box: Box, options: FitOptions = {}): Box
     const cx = box.x + box.width / 2
     const cy = box.y + box.height / 2
 
+    const left = luma.left ?? 0
+    const top = luma.top ?? 0
+    const { data, width: lumaWidth, height: lumaHeight } = luma
     const sample = (u: number, v: number): number => {
         // Floored: a sample at a pixel's centre lands on that pixel.
-        const x = Math.floor(cx + u * along[0] + v * across[0])
-        const y = Math.floor(cy + u * along[1] + v * across[1])
-        if (x < 0 || y < 0 || x >= luma.width || y >= luma.height) return -1
-        return luma.data[y * luma.width + x] as number
+        const x = Math.floor(cx + u * along[0] + v * across[0]) - left
+        const y = Math.floor(cy + u * along[1] + v * across[1]) - top
+        if (x < 0 || y < 0 || x >= lumaWidth || y >= lumaHeight) return -1
+        return data[y * lumaWidth + x] as number
     }
 
     let u0 = -box.width / 2
@@ -144,23 +175,33 @@ export function fitBoxToInk(luma: Luma, box: Box, options: FitOptions = {}): Box
         for (let u = u0 - d; u <= u1 + d; u += stepU) ring.push(sample(u, v0 - d), sample(u, v1 + d))
         for (let v = v0 - d; v <= v1 + d; v += stepV) ring.push(sample(u0 - d, v), sample(u1 + d, v))
     }
-    const outside = ring.filter((value) => value >= 0).sort((a, b) => a - b)
-    if (outside.length === 0) return box
-    const background = outside[outside.length >> 1] as number
+    // Bytes, so the median comes from counting rather than sorting.
+    const histogram = HISTOGRAM.fill(0)
+    let outside = 0
+    for (const value of ring) {
+        if (value < 0) continue
+        histogram[value] = (histogram[value] as number) + 1
+        outside += 1
+    }
+    if (outside === 0) return box
+    const background = nthSmallest(histogram, outside >> 1)
 
     // The ink's contrast from inside the box, on a grid of ~400 samples.
-    const deviations: number[] = []
+    histogram.fill(0)
+    let inside = 0
     const stepU = Math.max(1, box.width / 20)
     const stepV = Math.max(1, height / 20)
     for (let u = u0; u <= u1; u += stepU) {
         for (let v = v0; v <= v1; v += stepV) {
             const value = sample(u, v)
-            if (value >= 0) deviations.push(Math.abs(value - background))
+            if (value < 0) continue
+            const deviation = Math.abs(value - background)
+            histogram[deviation] = (histogram[deviation] as number) + 1
+            inside += 1
         }
     }
-    if (deviations.length === 0) return box
-    deviations.sort((a, b) => a - b)
-    const contrast = deviations[Math.floor(deviations.length * 0.95)] as number
+    if (inside === 0) return box
+    const contrast = nthSmallest(histogram, Math.floor(inside * 0.95))
     if (contrast < MIN_CONTRAST) return box
     const threshold = Math.max(MIN_CONTRAST, contrast / 2)
     const isInk = (value: number) => value >= 0 && Math.abs(value - background) >= threshold
@@ -270,7 +311,6 @@ export function fitBoxToInk(luma: Luma, box: Box, options: FitOptions = {}): Box
     return { ...box, x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
 }
 
-/** Every box, grown to its ink. */
 /** The axis-aligned bounds of a box, rotated or not. */
 function envelope(box: Box): [number, number, number, number] {
     if (!isRotated(box)) return bbox(box)
@@ -282,6 +322,128 @@ function envelope(box: Box): [number, number, number, number] {
     const xs = corners.map(([x]) => x)
     const ys = corners.map(([, y]) => y)
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
+/** Furthest a box's samples can land from its envelope: its growth cap plus the background ring. */
+function reachOf(box: Box, options: FitOptions): number {
+    const along = options.maxGrowAlong ?? FIT_BOXES_TO_INK_DEFAULTS.maxGrowAlong
+    const across = options.maxGrowAcross ?? FIT_BOXES_TO_INK_DEFAULTS.maxGrowAcross
+    // Both caps at once, at a corner -- in a rotated frame they add up on both
+    // page axes. The ring sits 3 px out; one more for flooring a sample.
+    return Math.ceil((along + across) * box.height) + 4
+}
+
+/**
+ * The page region fitting `boxes` can ever sample, clamped to the page:
+ * `[left, top, right, bottom)` in whole pixels, or null when there is none.
+ *
+ * Every sample lies within a box's growth cap, or the 3 px background ring,
+ * of the box -- so a `Luma` of just this region fits the boxes exactly as one
+ * of the whole page would, at a fraction of the cost on a page whose text
+ * covers part of it.
+ */
+export function fitRegion(
+    boxes: readonly Box[],
+    pageWidth: number,
+    pageHeight: number,
+    options: FitOptions = {}
+): [number, number, number, number] | null {
+    let x0 = Number.POSITIVE_INFINITY
+    let y0 = Number.POSITIVE_INFINITY
+    let x1 = Number.NEGATIVE_INFINITY
+    let y1 = Number.NEGATIVE_INFINITY
+    for (const box of boxes) {
+        const [bx0, by0, bx1, by1] = envelope(box)
+        const reach = reachOf(box, options)
+        x0 = Math.min(x0, bx0 - reach)
+        y0 = Math.min(y0, by0 - reach)
+        x1 = Math.max(x1, bx1 + reach)
+        y1 = Math.max(y1, by1 + reach)
+    }
+    const left = Math.max(0, Math.floor(x0))
+    const top = Math.max(0, Math.floor(y0))
+    const right = Math.min(pageWidth, Math.ceil(x1))
+    const bottom = Math.min(pageHeight, Math.ceil(y1))
+    return right > left && bottom > top ? [left, top, right, bottom] : null
+}
+
+/**
+ * The rows of `region` that fitting can sample, as merged `[top, bottom)` bands.
+ *
+ * A page with a header, a photograph and a footer has text at both ends and
+ * none in between; reading only the bands its boxes reach skips the middle,
+ * which a single bounding region would include.
+ */
+export function fitBands(
+    boxes: readonly Box[],
+    region: readonly [number, number, number, number],
+    options: FitOptions = {}
+): [number, number][] {
+    const [, top, , bottom] = region
+    const spans = boxes
+        .map((box): [number, number] => {
+            const [, by0, , by1] = envelope(box)
+            const reach = reachOf(box, options)
+            return [Math.max(top, Math.floor(by0 - reach)), Math.min(bottom, Math.ceil(by1 + reach))]
+        })
+        .filter(([a, b]) => b > a)
+        .sort((a, b) => a[0] - b[0])
+    const bands: [number, number][] = []
+    for (const [a, b] of spans) {
+        const last = bands[bands.length - 1]
+        if (last && a <= last[1]) last[1] = Math.max(last[1], b)
+        else bands.push([a, b])
+    }
+    return bands
+}
+
+/**
+ * Boxes bucketed on a uniform grid, for finding the ones near a point.
+ *
+ * Replaces comparing every box with every other, which on a dense text-layer
+ * page -- two thousand words -- was four million comparisons per page.
+ */
+class BoxGrid {
+    private readonly cells = new Map<number, number[]>()
+    private readonly stamp: Uint32Array
+    private visit = 0
+
+    constructor(
+        frames: readonly [number, number, number, number][],
+        private readonly size: number
+    ) {
+        this.stamp = new Uint32Array(frames.length)
+        frames.forEach((frame, index) => {
+            this.forCells(frame[0], frame[1], frame[2], frame[3], (key) => {
+                const cell = this.cells.get(key)
+                if (cell) cell.push(index)
+                else this.cells.set(key, [index])
+            })
+        })
+    }
+
+    private forCells(x0: number, y0: number, x1: number, y1: number, each: (key: number) => void): void {
+        const cx0 = Math.floor(x0 / this.size)
+        const cy0 = Math.floor(y0 / this.size)
+        const cx1 = Math.floor(x1 / this.size)
+        const cy1 = Math.floor(y1 / this.size)
+        for (let cy = cy0; cy <= cy1; cy++) {
+            // A key unique for any page smaller than 2^20 cells a side.
+            for (let cx = cx0; cx <= cx1; cx++) each((cy + 2 ** 19) * 2 ** 20 + (cx + 2 ** 19))
+        }
+    }
+
+    /** Every box whose frame touches the rectangle, each once. */
+    query(x0: number, y0: number, x1: number, y1: number, each: (index: number) => void): void {
+        this.visit += 1
+        this.forCells(x0, y0, x1, y1, (key) => {
+            for (const index of this.cells.get(key) ?? []) {
+                if (this.stamp[index] === this.visit) continue
+                this.stamp[index] = this.visit
+                each(index)
+            }
+        })
+    }
 }
 
 /**
@@ -296,11 +458,18 @@ function envelope(box: Box): [number, number, number, number] {
  * centre is, so a duplicate stacked on the same spot does not pin the box in
  * place. A rotated box is fitted without neighbour limits, its sides not being
  * the page's -- but it still limits the upright boxes around it.
+ *
+ * Only neighbours within a box's growth cap are looked at: one further away
+ * leaves a gap the cap already stops short of, so it cannot change the result.
  */
 export function fitBoxesToInk(luma: Luma, boxes: readonly Box[], options: FitOptions = {}): Box[] {
     // Every box is a neighbour by the page area it covers -- a rotated one by
     // its axis-aligned envelope -- since a turned word's ink is ink all the same.
     const frames = boxes.map(envelope)
+    const heights = boxes.map((box) => box.height).sort((a, b) => a - b)
+    const typical = heights[heights.length >> 1] ?? 32
+    const grid = new BoxGrid(frames, Math.max(16, Math.ceil(typical * 2)))
+
     return boxes.map((box, index) => {
         if (isRotated(box)) return fitBoxToInk(luma, box, options)
         const [x0, y0, x1, y1] = frames[index] as [number, number, number, number]
@@ -308,9 +477,10 @@ export function fitBoxesToInk(luma: Luma, boxes: readonly Box[], options: FitOpt
         let right = Number.POSITIVE_INFINITY
         let top = Number.POSITIVE_INFINITY
         let bottom = Number.POSITIVE_INFINITY
-        for (const [other, frame] of frames.entries()) {
-            if (other === index) continue
-            const [nx0, ny0, nx1, ny1] = frame
+        const reach = reachOf(box, options)
+        grid.query(x0 - reach, y0 - reach, x1 + reach, y1 + reach, (other) => {
+            if (other === index) return
+            const [nx0, ny0, nx1, ny1] = frames[other] as [number, number, number, number]
             const ncx = (nx0 + nx1) / 2
             const ncy = (ny0 + ny1) / 2
             const sameLine = Math.min(y1, ny1) - Math.max(y0, ny0) >= Math.min(y1 - y0, ny1 - ny0) * 0.5
@@ -319,12 +489,38 @@ export function fitBoxesToInk(luma: Luma, boxes: readonly Box[], options: FitOpt
             if (sameLine && ncx > x1) right = Math.min(right, Math.max(0, nx0 - x1))
             if (sameColumn && ncy < y0) top = Math.min(top, Math.max(0, y0 - ny1))
             if (sameColumn && ncy > y1) bottom = Math.min(bottom, Math.max(0, ny0 - y1))
-        }
+        })
         return fitBoxToInk(luma, box, { ...options, limits: { left, right, top, bottom } })
     })
 }
 
 type WithBoxes = (Document | DetectorOutput) & { bboxes: Box[] }
+
+/**
+ * Brightness of `region`, read band by band.
+ *
+ * Rows outside every band are left unread -- zero, which would look like ink
+ * -- and that is sound only because no box can sample them: `fitBands` is
+ * built from the same reach the sampling is bounded by.
+ */
+function readLuma(
+    bitmap: ImageBitmap,
+    region: readonly [number, number, number, number],
+    bands: readonly [number, number][]
+): Luma {
+    const [left, top, right, bottom] = region
+    const width = right - left
+    const out = new Uint8Array(width * (bottom - top))
+    const canvas = createCanvas(width, bottom - top)
+    const context = context2d(canvas)
+    for (const [bandTop, bandBottom] of bands) {
+        const rows = bandBottom - bandTop
+        context.drawImage(bitmap, left, bandTop, width, rows, 0, bandTop - top, width, rows)
+        const band = toLuma(context.getImageData(0, bandTop - top, width, rows))
+        out.set(band.data, (bandTop - top) * width)
+    }
+    return { data: out, width, height: bottom - top, left, top }
+}
 
 export class FitBoxesToInk extends Stage<FitBoxesToInkParams> {
     readonly name = 'FitBoxesToInk'
@@ -362,18 +558,22 @@ export class FitBoxesToInk extends Stage<FitBoxesToInkParams> {
         }
         if (source.bboxes.length === 0) return source
 
+        const { maxGrowAlong, maxGrowAcross, gapRatio } = this.params
+        const options = { maxGrowAlong, maxGrowAcross, gapRatio }
+
         const bitmap = await decodeImage(image.data)
         let luma: Luma
         try {
-            luma = toLuma(toImageData(bitmap))
+            // Only the pixels the boxes can reach are read and converted: on a
+            // page whose text covers part of it, most of the page is never
+            // looked at, and reading it was most of this stage's time.
+            const region = fitRegion(source.bboxes, bitmap.width, bitmap.height, options)
+            if (!region) return source
+            luma = readLuma(bitmap, region, fitBands(source.bboxes, region, options))
         } finally {
             bitmap.close()
         }
-        const { maxGrowAlong, maxGrowAcross, gapRatio } = this.params
-        return {
-            ...source,
-            bboxes: fitBoxesToInk(luma, source.bboxes, { maxGrowAlong, maxGrowAcross, gapRatio }),
-        }
+        return { ...source, bboxes: fitBoxesToInk(luma, source.bboxes, options) }
     }
 
     protected onError(message: string, row: Row): WithBoxes {

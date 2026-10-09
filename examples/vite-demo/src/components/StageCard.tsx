@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { type CacheState, cacheTarget, probeCache, probeCachedValues } from '../lib/cache'
 import { type Column, writes } from '../lib/columns'
 import { type StageNode, usePipeline } from '../store/pipeline'
-import { useRun } from '../store/run'
+import { type StageLive, useRun } from '../store/run'
 import { useUi } from '../store/ui'
 import { ParamField } from './ParamField'
 
@@ -41,6 +41,7 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
     // re-probe, and skipping the probe mid-run keeps it out of the way of the
     // download it would be asking about.
     const runStatus = useRun((state) => state.status)
+    const live = useRun((state) => state.live[index])
     const target = cacheTarget(stage)
     useEffect(() => {
         if (runStatus === 'running') return
@@ -122,6 +123,15 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
                 {cache && (
                     <span className="ctrl__state" data-state={cache.ready ? 'ready' : 'pending'}>
                         {cache.label}
+                    </span>
+                )}
+                {live && runStatus === 'running' && (
+                    <span
+                        className="ctrl__state"
+                        data-state={live.state === 'done' ? 'ready' : 'pending'}
+                        aria-live="polite"
+                    >
+                        {liveLabel(live)}
                     </span>
                 )}
                 <span className="spacer" />
@@ -229,4 +239,23 @@ export function StageCard({ stage, index, total, columns, dangling, multiplies, 
             )}
         </li>
     )
+}
+
+/** What a stage is doing mid-run, in a few words. */
+function liveLabel(live: StageLive): string {
+    const pages = live.done > 0 ? ` · ${live.done} done` : ''
+    switch (live.state) {
+        case 'loading':
+            return live.percent === undefined ? 'loading model' : `downloading ${live.percent}%`
+        case 'running':
+            return `running${pages}`
+        case 'done':
+            return `done${pages}${live.failed > 0 ? ` · ${live.failed} failed` : ''}`
+        case 'skipped':
+            return 'skipped'
+        case 'disabled':
+            return 'off'
+        default:
+            return 'waiting'
+    }
 }

@@ -1,0 +1,130 @@
+---
+title: Performance and parallelism
+description: Workers, threads and pages in flight — what each one overlaps, what onnxruntime-web allows, and what the measurements say to set.
+---
+
+Work can overlap at three levels. They compose, and each is set explicitly:
+
+| Level | Setting | What it overlaps | Reloads models? |
+| --- | --- | --- | --- |
+| Pages in one pipeline | `pagesInFlight` (run option) | Stages waiting on different things: pdf.js parsing, a network call, a GPU queue | No |
+| One stage | `maxConcurrency` (the stage), `stages[id].maxConcurrency` (run option, lowers it only) | Several calls of a stage that can take them, e.g. a cloud NER | No |
+| Realms | `createScaleDpWorkerPool({ size, threadsPerWorker })` | CPU-bound inference, one worker per core group | Each worker loads its own copy |
+
+Plus the session-level settings, per stage, through
+`StageDescriptor.runtime.executionProviders`, e.g. GLiNER on WebGPU and OCR on
+WASM.
+
+## What onnxruntime-web allows
+
+Some of this is fixed by the runtime, not by this library:
+
+- **One inference per session at a time.** A second `run()` on a busy session
+  fails with "Session already started". Stages holding a session therefore
+  declare `maxConcurrency: 1`, and stages sharing one claim its name through
+  `resources()` (every PaddleOCR stage on the full service shares
+  `ort:paddle`). The scheduler queues them, oldest page first.
+- **`numThreads` is per realm, fixed at the first session.** Two stages in one
+  worker cannot have different thread counts, and changing it later is
+  ignored. A different thread count means a different worker, which is why the
+  pool takes `threadsPerWorker`.
+- **Threads need cross-origin isolation.** Without COOP/COEP headers ORT runs
+  single-threaded and says nothing. `client.configure()` resolves with
+  `{ numThreads, crossOriginIsolated, webgpu }`; check it rather than assume.
+  A site on GitHub Pages cannot set those headers.
+- **In one worker, CPU inference does not overlap.** Two WASM inferences share
+  one thread pool. `pagesInFlight > 1` only gains where a stage waits on
+  something other than that pool.
+
+## Measured
+
+Full results, charted, are on the [Benchmarks](/docs/benchmarks) page.
+`pnpm bench` runs render → DBNet → PaddleRecognizer → FaceDetector over 12
+pages per setting, warmed up first so downloads and session creation are
+excluded, and writes the numbers to `bench/results/`. Apple M5 Pro, 18 cores,
+headless Chromium:
+
+**Not cross-origin isolated** (threads unavailable):
+
+| Workers | Pages in flight | Pages/s | First page | p95 page |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 0.52 | 1.9 s | 1.9 s |
+| 1 | 2 | 0.52 | 2.4 s | 3.9 s |
+| 2 | 1 | 1.00 | 2.0 s | 2.0 s |
+| 4 | 1 | **1.67** | 2.4 s | 2.4 s |
+| 4 | 2 | 1.30 | 3.0 s | 4.9 s |
+
+**Cross-origin isolated:**
+
+| Workers × threads | Pages in flight | Pages/s | First page |
+| ---: | ---: | ---: | ---: |
+| 1 × 1 | 1 | 0.52 | 1.9 s |
+| 1 × 4 | 1 | 1.25 | 0.8 s |
+| 2 × 2 | 1 | 1.52 | 1.3 s |
+| 4 × 1 | 1 | 1.56 | 2.6 s |
+| 2 × 4 | 1 | 1.99 | 1.0 s |
+| 4 × 4 | 1 | **3.30** | 1.2 s |
+| 4 × 4 | 4 | 2.18 | 1.7 s |
+
+What that says:
+
+- **Workers are the lever.** Four workers gave 3.2× without isolation, and
+  with isolation 4 × 4 gave 6.4×.
+- **More workers beat more threads per worker** at the same total thread
+  count (4 × 1 > 2 × 2 > 1 × 4). Each worker owns its sessions, so there is
+  nothing to contend on.
+- **Threads are what bring the first page in sooner:** 1 × 4 returns its
+  first page in 0.8 s against 1.9 s.
+- **Extra pages in flight only cost here.** Every stage is a CPU-bound model,
+  so a second page competes for the same threads. Throughput drops and
+  latency doubles. Raise it only for a pipeline with a stage that waits on
+  the network or the GPU.
+
+Your hardware and pipeline will differ. Run `pnpm bench`, or
+`BENCH_ISOLATED=1 pnpm bench`, on the machines you care about.
+
+## Choosing settings
+
+`resolveParallelism` encodes the measurements:
+
+```ts
+import { probeEnvironment, resolveParallelism } from '@stabrise/scaledp'
+import { createScaleDpWorkerPool } from '@stabrise/scaledp/worker'
+
+const p = resolveParallelism('auto', await probeEnvironment())
+// isolated, 18 cores  -> { workers: 4, threadsPerWorker: 4, pagesInFlight: 1 }
+// not isolated        -> { workers: 4, threadsPerWorker: 1, pagesInFlight: 1 }
+// WebGPU              -> { workers: 1, pagesInFlight: 3, executionProviders: ['webgpu', 'wasm'] }
+
+const pool = createScaleDpWorkerPool({
+    createWorker: () => new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    size: p.workers,
+    threadsPerWorker: p.threadsPerWorker,
+    pagesPerWorker: p.pagesInFlight,
+})
+await pool.configure({ executionProviders: p.executionProviders })
+const rows = await pool.run(stages, [{ contentRef: 'doc', path }]).result
+```
+
+Pin anything with a partial preset: `resolveParallelism({ workers: 2 }, env)`.
+`'conservative'` is one worker and one page.
+
+| Situation | Set |
+| --- | --- |
+| Not isolated (GitHub Pages, embeds) | A pool of `min(4, cores − 1)` workers, 1 thread each, 1 page each |
+| Isolated | A pool of 4 workers, `min(4, (cores − 1) / 4)` threads each |
+| First page as fast as possible | Fewer workers, more threads: 1 × 4 halves time-to-first-page |
+| Cloud NER (a custom network-bound stage) | `maxConcurrency: 4` on it, `resources()` → `[]`, `pagesInFlight` ≥ 3 |
+| WebGPU | One worker; GPU stages via `runtime.executionProviders: ['webgpu', 'wasm']`; `pagesInFlight` 2–3 (not yet benchmarked) |
+| Low memory | Fewer workers — each one loads every model in the pipeline |
+
+## What the pool costs
+
+- **Every worker parses the PDF and loads every model** it reaches. A model a
+  stage never reaches, because it is disabled or no page matches its `when`,
+  is never loaded in any worker.
+- **At a barrier every page comes back to the coordinator** and goes out again
+  after it. Prefer barriers late in the pipeline, after the image columns are
+  dropped (`keepInputData: false`).
+- **`execution_time` is per worker batch.** Use `row_time`, or the
+  `stage:end` events, for per-page timing.

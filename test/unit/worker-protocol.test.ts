@@ -71,7 +71,7 @@ describe('ScaleDpWorkerClient', () => {
 
         await pending
         expect(onProgress).toHaveBeenCalledOnce()
-        expect(onStage).toHaveBeenCalledWith('S', 5, 1)
+        expect(onStage).toHaveBeenCalledWith('S', 5, 1, 1)
     })
 
     it('rejects everything in flight when the worker itself errors', async () => {

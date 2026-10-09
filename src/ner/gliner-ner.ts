@@ -9,9 +9,9 @@
 import { getConfig } from '../core/config.js'
 import { boxesForRange, buildCharToBoxMap } from '../core/entities.js'
 import { NerError, upstreamError } from '../core/errors.js'
-import { ensureModelFiles } from '../core/model-cache.js'
+import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage } from '../core/pipeline.js'
 import type { Document } from '../schemas/document.js'
 import { createNerOutput, type Entity, type NerOutput } from '../schemas/entity.js'
 import type { NerBackend } from './backend.js'
@@ -68,8 +68,9 @@ export const GLINER_NER_DEFAULTS: GlinerNerParams = Object.freeze({
 export class GlinerNer extends Stage<GlinerNerParams> {
     readonly name = 'GlinerNer'
 
-    private backend: NerBackend | null = null
-    private loading: Promise<NerBackend> | null = null
+    private readonly backend = new LazyLoad<NerBackend>(
+        () => getNerModel(this.params.model)?.repo ?? this.params.model
+    )
 
     constructor(options: Partial<GlinerNerParams> = {}) {
         super(
@@ -88,15 +89,12 @@ export class GlinerNer extends Stage<GlinerNerParams> {
         )
     }
 
-    override async init(): Promise<void> {
-        await this.getBackend()
+    override async init(ctx?: InitContext): Promise<void> {
+        await this.getBackend(ctx?.onProgress)
     }
 
-    private getBackend(): Promise<NerBackend> {
-        if (this.backend) return Promise.resolve(this.backend)
-        if (this.loading) return this.loading
-
-        this.loading = (async () => {
+    private getBackend(onProgress?: ProgressListener): Promise<NerBackend> {
+        return this.backend.get(async (emit) => {
             const model = getNerModel(this.params.model)
             if (!model) throw new NerError(`Unknown model ${this.params.model}`, this.name)
             if (model.private && !getConfig().auth) {
@@ -107,23 +105,23 @@ export class GlinerNer extends Stage<GlinerNerParams> {
             }
 
             const [files, tokenizer] = await Promise.all([
-                ensureModelFiles({ repo: model.repo, files: model.files }),
+                ensureModelFiles(
+                    { repo: model.repo, files: model.files },
+                    { onProgress: emit, building: true }
+                ),
                 loadTokenizer(model.repo),
             ])
 
             const backend: NerBackend = model.arch === 'gliner2' ? new Gliner2Backend() : new Gliner1Backend()
             await backend.load(files, {
                 tokenizer,
-                executionProviders: model.executionProviders ?? getConfig().executionProviders,
+                executionProviders:
+                    this.runtime.executionProviders ??
+                    model.executionProviders ??
+                    getConfig().executionProviders,
             })
-            this.backend = backend
             return backend
-        })()
-
-        this.loading.catch(() => {
-            this.loading = null
-        })
-        return this.loading
+        }, onProgress)
     }
 
     protected async apply(input: unknown, row: Row): Promise<NerOutput> {
@@ -184,8 +182,6 @@ export class GlinerNer extends Stage<GlinerNerParams> {
     }
 
     override async dispose(): Promise<void> {
-        await this.backend?.dispose()
-        this.backend = null
-        this.loading = null
+        await this.backend.reset()?.dispose()
     }
 }

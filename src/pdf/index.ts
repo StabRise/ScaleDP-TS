@@ -57,13 +57,16 @@ export {
     hasUsableTextLayer,
     PDF_TO_DOCUMENT_DEFAULTS,
     PdfToDocument,
+    usableTextLayer,
 } from './pdf-to-document.js'
 export type { PdfToImageParams } from './pdf-to-image.js'
 export {
+    PDF_STAGE_CONCURRENCY,
     PDF_TO_IMAGE_DEFAULTS,
     PdfToImage,
     POINTS_PER_INCH,
     pageIndexes,
+    planPdfPages,
     renderPage,
 } from './pdf-to-image.js'
 export {

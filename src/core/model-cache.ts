@@ -254,18 +254,215 @@ export async function evict(spec: ModelSpec): Promise<void> {
     }
 }
 
+export type ProgressListener = (progress: ModelProgress) => void
+
+/**
+ * Fan progress from one load out to everyone waiting on it.
+ *
+ * Model loads are shared -- two stages on one repo, or a second run arriving
+ * while the first is still downloading, join the load already in flight rather
+ * than starting their own -- so progress cannot simply be passed down as a
+ * callback: only the caller that started the load would hear it. Each waiter
+ * registers here instead, and a waiter that arrives after the load finished is
+ * told `ready` straight away.
+ */
+export class ProgressHub {
+    private readonly listeners = new Map<string, Set<ProgressListener>>()
+    private readonly resolved = new WeakSet<Promise<unknown>>()
+    private readonly tracked = new WeakSet<Promise<unknown>>()
+
+    /** The callback a load reports through. */
+    emitter(key: string): ProgressListener {
+        return (progress) => {
+            for (const listener of this.listeners.get(key) ?? []) listener(progress)
+        }
+    }
+
+    /** Wait for `promise`, hearing its progress on `listener`. */
+    follow<T>(key: string, promise: Promise<T>, listener?: ProgressListener, repo = key): Promise<T> {
+        if (!this.tracked.has(promise)) {
+            this.tracked.add(promise)
+            promise.then(
+                () => this.resolved.add(promise),
+                () => undefined
+            )
+        }
+        if (!listener) return promise
+        if (this.resolved.has(promise)) {
+            listener({ repo, file: '', loaded: 0, total: 0, phase: 'ready' })
+            return promise
+        }
+        let set = this.listeners.get(key)
+        if (!set) {
+            set = new Set()
+            this.listeners.set(key, set)
+        }
+        set.add(listener)
+        const remove = () => {
+            set.delete(listener)
+            if (set.size === 0 && this.listeners.get(key) === set) this.listeners.delete(key)
+        }
+        promise.then(remove, remove)
+        return promise
+    }
+}
+
+/**
+ * Report progress to the global `configure({ onProgress })` callback and to a
+ * stage's own listener.
+ */
+export function reportProgress(progress: ModelProgress, local?: ProgressListener): void {
+    getConfig().onProgress?.(progress)
+    local?.(progress)
+}
+
+/** Report that `repo`'s session is built and usable. */
+export function reportReady(repo: string, local?: ProgressListener): void {
+    reportProgress({ repo, file: '', loaded: 0, total: 0, phase: 'ready' }, local)
+}
+
+/**
+ * A value loaded once, on first use, with progress for every waiter.
+ *
+ * What each engine stage holds its ONNX session in. The load is memoised, a
+ * failure is forgotten so the next call retries, and a waiter that asks after
+ * the load finished is told `ready` -- which is how a second run over a reused
+ * stage still reports the model's state to its UI.
+ */
+export class LazyLoad<T> {
+    private value: T | undefined
+    private loaded = false
+    private pending: Promise<T> | null = null
+    private readonly hub = new ProgressHub()
+
+    /** `repo` names the model in the `ready` event. */
+    constructor(private readonly repo: () => string) {}
+
+    get current(): T | undefined {
+        return this.value
+    }
+
+    get(load: (emit: ProgressListener) => Promise<T>, listener?: ProgressListener): Promise<T> {
+        if (this.loaded && !listener) return Promise.resolve(this.value as T)
+        if (!this.pending) {
+            const emit = this.hub.emitter('load')
+            // Started a microtask late, so the caller's listener is registered
+            // before the loader can emit its first event.
+            const pending = Promise.resolve()
+                .then(() => load(emit))
+                .then((value) => {
+                    this.value = value
+                    this.loaded = true
+                    reportReady(this.repo(), emit)
+                    return value
+                })
+            this.pending = pending
+            pending.catch(() => {
+                if (this.pending === pending) this.pending = null
+            })
+        }
+        return this.hub.follow('load', this.pending, listener, this.repo())
+    }
+
+    /** Forget the value, so the next `get` loads again. Returns what was held. */
+    reset(): T | undefined {
+        const value = this.value
+        this.value = undefined
+        this.loaded = false
+        this.pending = null
+        return value
+    }
+}
+
+export interface EnsureModelOptions {
+    /** Stop *waiting* for the files. A download others share is not cancelled. */
+    signal?: AbortSignal
+    /** Progress for this call only, in addition to `configure({ onProgress })`. */
+    onProgress?: ProgressListener
+    /**
+     * The caller is about to build a session from the files. The last event is
+     * then `initializing` rather than `ready`, and the caller reports `ready`
+     * (see `reportReady`) once the session exists -- so a UI never shows a
+     * model as ready while its session is still being created.
+     */
+    building?: boolean
+}
+
+const downloads = new Map<string, Promise<ModelFiles>>()
+const downloadProgress = new ProgressHub()
+
 /**
  * Ensure every file in `spec` is available, downloading and caching what is
  * missing. Returns buffers keyed by repo-relative path.
  *
  * Progress is aggregate across the files still to fetch; already-cached files
- * count as instantly complete.
+ * count as instantly complete. Concurrent calls for the same files share one
+ * load, and each hears its progress.
  */
-export async function ensureModelFiles(spec: ModelSpec, signal?: AbortSignal): Promise<ModelFiles> {
-    const { onProgress } = getConfig()
+export async function ensureModelFiles(
+    spec: ModelSpec,
+    options?: AbortSignal | EnsureModelOptions
+): Promise<ModelFiles> {
+    const { signal, onProgress, building } = isAbortSignal(options) ? { signal: options } : (options ?? {})
+    signal?.throwIfAborted()
+
+    const key = JSON.stringify([
+        spec.repo,
+        spec.revision ?? '',
+        spec.files.map((f) => f.path),
+        Boolean(building),
+    ])
+    let pending = downloads.get(key)
+    if (!pending) {
+        const emit = downloadProgress.emitter(key)
+        // Deferred a microtask so this caller's listener is in place first.
+        pending = Promise.resolve().then(() =>
+            loadModelFiles(spec, building === true, (progress) => reportProgress(progress, emit))
+        )
+        downloads.set(key, pending)
+        // Shared while in flight only: holding the buffers afterwards would
+        // keep hundreds of megabytes alive after the sessions are built.
+        const forget = () => {
+            if (downloads.get(key) === pending) downloads.delete(key)
+        }
+        pending.then(forget, forget)
+    }
+    return raceAbort(downloadProgress.follow(key, pending, onProgress, spec.repo), signal)
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+    return typeof AbortSignal !== 'undefined' && value instanceof AbortSignal
+}
+
+/** Resolve with `promise`, or reject as soon as `signal` aborts. */
+export function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise
+    signal.throwIfAborted()
+    return new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        promise.then(
+            (value) => {
+                signal.removeEventListener('abort', onAbort)
+                resolve(value)
+            },
+            (error) => {
+                signal.removeEventListener('abort', onAbort)
+                reject(error)
+            }
+        )
+    })
+}
+
+async function loadModelFiles(
+    spec: ModelSpec,
+    building: boolean,
+    emit: ProgressListener
+): Promise<ModelFiles> {
     const usable = cacheAvailable()
     const result: ModelFiles = {}
     const missing: ModelFile[] = []
+    const finalPhase = building ? 'initializing' : 'ready'
 
     for (const file of spec.files) {
         const hit = usable
@@ -278,7 +475,7 @@ export async function ensureModelFiles(spec: ModelSpec, signal?: AbortSignal): P
     }
 
     if (missing.length === 0) {
-        onProgress?.({ repo: spec.repo, file: '', loaded: 0, total: 0, phase: 'ready' })
+        emit({ repo: spec.repo, file: '', loaded: 0, total: 0, phase: finalPhase })
         return result
     }
 
@@ -302,21 +499,12 @@ export async function ensureModelFiles(spec: ModelSpec, signal?: AbortSignal): P
 
     let loaded = 0
     for (const file of missing) {
-        const blob = await fetchWithProgress(
-            fileUrl(spec, file.path),
-            headers,
-            (bytes) => {
-                loaded += bytes
-                onProgress?.({
-                    repo: spec.repo,
-                    file: file.path,
-                    loaded,
-                    total,
-                    phase: 'downloading',
-                })
-            },
-            signal
-        )
+        // No signal: the download is shared, so one caller giving up must not
+        // cancel it for the others. It finishes into the cache regardless.
+        const blob = await fetchWithProgress(fileUrl(spec, file.path), headers, (bytes) => {
+            loaded += bytes
+            emit({ repo: spec.repo, file: file.path, loaded, total, phase: 'downloading' })
+        })
         // Stored before it is materialised, so the write never coincides with
         // the caller's copy of the same several hundred megabytes.
         if (usable) {
@@ -325,7 +513,7 @@ export async function ensureModelFiles(spec: ModelSpec, signal?: AbortSignal): P
         result[file.path] = await blob.arrayBuffer()
     }
 
-    onProgress?.({ repo: spec.repo, file: '', loaded: total, total, phase: 'initializing' })
+    emit({ repo: spec.repo, file: '', loaded: total, total, phase: finalPhase })
     return result
 }
 

@@ -1,0 +1,162 @@
+---
+title: Streaming runs
+description: One pipeline per document, with results arriving page by page, stages switched per run, and models loaded only for the pages that need them.
+---
+
+`transform` runs in Python's order: every row through stage 1, then every row
+through stage 2. Nothing is ready until everything is. `run` takes the same
+pipeline and streams it instead. Once a document is split into pages, each
+page walks the remaining stages on its own, and its results are reported as
+soon as they exist.
+
+```ts
+const rows = await pipeline.run(file, {
+    pagesInFlight: 2,
+    onEvent: (event) => status.update(event),
+    onRow: (update) => overlay.draw(update.unit.page, update.row),
+})
+```
+
+Both orders return **the same rows in the same order**. A test feeds random
+pipelines to both orders and checks that they agree.
+
+## Events
+
+`onEvent` receives a `PipelineEvent`. Every event about a page carries
+`unit: { key, input, page, path }`, so events arriving out of order (several
+pages in flight) can still be attributed.
+
+| Event | When |
+| --- | --- |
+| `run:start` | Once. Lists every stage with its `id`, `enabled` and `scope`, and the segments between barriers. |
+| `stage:init` | A stage starts, finishes or fails loading its model (`phase: 'start' \| 'end' \| 'error'`). |
+| `model:progress` | Download / session progress, attributed to the stage (`stageId`). |
+| `stage:start` / `stage:end` | One stage over one page. `end` has `ms`, `waitMs`, `matched`, `failed`. |
+| `stage:skip` | `reason: 'disabled'` (once per run), `'when'` (no row of the page matched) or `'no-rows'`. |
+| `stage:row-error` | A row came out of a stage with a real `exception` (`phase: 'init' \| 'apply'`, `upstream`). |
+| `unit:start` / `unit:end` | A page enters or leaves a segment. |
+| `barrier:wait` | Every page arrived at a barrier. |
+| `run:end` | Once. `status: 'done' \| 'aborted' \| 'failed'`. |
+
+`pipeline.events(input, options)` is the same thing as an async iterable:
+
+```ts
+const run = pipeline.events(file)
+for await (const event of run) show(event)
+const rows = await run.result
+```
+
+## Row updates
+
+`onRow` is called for every row a stage produces, per page. By default the
+update carries only what that stage wrote, plus `path` and `page`
+(`rowUpdates.payload: 'delta'`). A UI showing OCR words, entities and faces as
+they arrive needs nothing more.
+
+```ts
+rowUpdates: {
+    payload: 'delta' | 'full' | 'none',
+    stages: ['ocr', 'ner', 'faces'],   // only these
+    stripBinary: true,                 // images become { bytes: n }
+}
+```
+
+`stripBinary` defaults to `false` in the same realm, because nothing is copied
+there. Through the worker it defaults to `true`, because every message is a
+structured clone.
+
+## Switching stages per run
+
+Give a stage an `id` and turn it off for one run. Its model is never touched,
+and the pipeline is not rebuilt, so every other stage keeps its session.
+
+```ts
+const pipeline = pipelineFromDescriptors([
+    { type: 'PdfToImage' },
+    { type: 'FaceDetector', id: 'faces' },
+    { type: 'GlinerNer', id: 'ner' },
+])
+
+await pipeline.run(file, { enabled: { faces: settings.detectFaces } })
+```
+
+`enabled` is keyed by id or by stage name. `StageDescriptor.enabled: false`
+makes a stage off by default.
+
+## Running a stage on some pages only
+
+`when` is a per-row condition. A row that does not match passes through
+untouched, with no column written and no time charged. A stage that no row
+matches never initialises, so its model is never downloaded.
+
+```ts
+import { usableTextLayer } from '@stabrise/scaledp/pdf'
+
+const ocr = { not: usableTextLayer() }
+
+const pipeline = pipelineFromDescriptors([
+    { type: 'PdfToDocument', options: { resolution: 144 } },
+    { type: 'PdfToImage', options: { resolution: 144, keepInputData: true }, when: ocr },
+    { type: 'DbnetOnnxDetector', options: { inputCol: 'image', outputCol: 'regions' }, when: ocr },
+    { type: 'PaddleRecognizer', options: { inputCols: ['image', 'regions'], outputCol: 'document' }, when: ocr },
+])
+```
+
+The grammar is plain JSON so it crosses the worker boundary:
+
+```ts
+type Condition =
+    | { all: Condition[] } | { any: Condition[] } | { not: Condition }
+    | ({ path: string } | { var: string }) & {
+          exists?: boolean; truthy?: boolean; eq?: Json; ne?: Json; in?: Json[]
+          gt?: number; gte?: number; lt?: number; lte?: number
+      }
+```
+
+- **`path`** reads the row: dotted, numeric segments index arrays, and
+  `.length` works on arrays and strings.
+- **`var`** reads `RunOptions.vars`, so one pipeline can be steered per run,
+  e.g. `{ any: [ocr, { var: 'forceOcr', truthy: true }] }`.
+- **A missing value** fails every test except `exists: false`.
+- **A malformed condition** fails when the pipeline is built, naming the stage.
+
+## Barriers
+
+A stage whose `scope` is `document` needs every row of the run. The scheduler
+waits for all pages to arrive before running it, then carries on per page. The
+scopes:
+
+- `NerConsistency` at document scope is a barrier.
+- `PdfMergeImageText` grouped by page is `group` scope: it sees one page's rows
+  together and keeps streaming.
+- `barrier: true` on any descriptor forces a barrier. For example, it can finish
+  the cheap text-layer pass on every page before the embedded-image OCR starts.
+
+## Lazy loading, inside the error contract
+
+`init()` is called just before the first row that actually reaches a stage,
+not before the stage's turn. A failed `init` (a model that will not download)
+is recorded on that stage's rows like any other failure, and the rest of the
+pipeline completes. With `initRetry: 'run'`, the default, it is not retried
+for every page of the same run; the next run retries.
+`propagateError: true` still throws.
+
+## Order and timing
+
+`execution_time.stages` is each stage's busy time summed over every page.
+`total` is wall-clock time. With several pages in flight, the stages can
+therefore add up to more than the total. `row_time` is unchanged: it is what
+each stage cost this row, excluding time spent waiting for a busy stage, which
+`stage:end` reports separately as `waitMs`.
+
+<Callout title="Timings are wall-clock">
+A stage's time runs from its start to its end, awaits included. Anything else
+the same thread does in between is billed to that stage, and rendering
+results inside `onRow` is the usual culprit. In the demo, repainting the page
+after every stage made a 20 ms `FitBoxesToInk` read as 900 ms. Repaint per
+page (`unit:end`) rather than per stage, or run the pipeline in a worker,
+where nothing else shares its thread.
+</Callout>
+
+How many pages are in flight, and how that maps onto CPU threads and workers,
+is covered in [Performance and parallelism](/docs/guides/performance).

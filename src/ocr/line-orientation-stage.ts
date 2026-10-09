@@ -17,7 +17,7 @@
 import { DetectionError, upstreamError } from '../core/errors.js'
 import { context2d, createCanvas, cropBox, decodeImage, encodeImage } from '../core/image.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage, type StageContext } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { type Box, isRotated } from '../schemas/box.js'
 import type { DetectorOutput } from '../schemas/detector-output.js'
 import type { Document } from '../schemas/document.js'
@@ -93,8 +93,9 @@ export class LineOrientationDetector extends Stage<LineOrientationDetectorParams
         )
     }
 
-    override async init(): Promise<void> {
+    override async init(ctx?: InitContext): Promise<void> {
         this.classifier ??= new LineOrientationClassifier(this.params.model)
+        await this.classifier.load(ctx?.onProgress)
     }
 
     /** One row in, one row out -- but two columns written, so expand not apply. */

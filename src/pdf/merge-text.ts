@@ -147,6 +147,24 @@ export function mergeBoxSets(
  * about a spot, a stamp over a scan, are both kept. Larger first, then the more
  * confident, so it is always the fragment that goes. Order is preserved.
  */
+/**
+ * Whether `outer`, a larger reading over `inner`'s place, already says what
+ * `inner` says.
+ *
+ * `textsAgree` with a direction. A covering reading much *shorter* than the
+ * one it covers cannot be a repeat of it, however well its few letters match
+ * somewhere inside: a detector that took a photograph for a text region reads
+ * it as one stray letter -- `c` over a box the size of the picture -- and that
+ * letter is within one edit of every line beneath it. Treated as agreement, it
+ * deleted those lines.
+ */
+function repeats(inner: string, outer: string): boolean {
+    const a = foldText(inner)
+    const b = foldText(outer)
+    if (a.length > 0 && b.length + Math.max(1, Math.floor(a.length / 3)) < a.length) return false
+    return textsAgree(inner, outer)
+}
+
 export function dedupeReadings(boxes: readonly Box[], threshold: number, matchText = true): Box[] {
     const order = boxes
         .map((_, index) => index)
@@ -160,8 +178,7 @@ export function dedupeReadings(boxes: readonly Box[], threshold: number, matchTe
     for (const index of order) {
         const box = boxes[index] as Box
         const duplicate = kept.some(
-            (other) =>
-                boxCoverage(box, other) >= threshold && (!matchText || textsAgree(box.text, other.text))
+            (other) => boxCoverage(box, other) >= threshold && (!matchText || repeats(box.text, other.text))
         )
         if (duplicate) continue
         kept.push(box)

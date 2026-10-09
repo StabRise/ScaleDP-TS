@@ -26,7 +26,7 @@ import { createImage, type ImageFormat, type ScaleDpImage } from '../schemas/ima
 import { toBytes } from '../stages/data-to-image.js'
 import { type EmbeddedImage, extractEmbeddedImages, type ImagePlacement } from './extract-images.js'
 import { coveringBoxes } from './merge-text.js'
-import { POINTS_PER_INCH, pageIndexes } from './pdf-to-image.js'
+import { PDF_STAGE_CONCURRENCY, POINTS_PER_INCH, pageIndexes, planPdfPages } from './pdf-to-image.js'
 import { describePdfError, withPdfDocument } from './pdfjs.js'
 
 export interface PdfEmbeddedImagesParams extends BaseStageParams {
@@ -104,6 +104,18 @@ export class PdfEmbeddedImages extends Stage<PdfEmbeddedImagesParams> {
                 },
             })
         )
+    }
+
+    override get maxConcurrency(): number {
+        return PDF_STAGE_CONCURRENCY
+    }
+
+    override async planPages(row: Row): Promise<number[]> {
+        return planPdfPages(row[this.params.inputCol], row, this.params.pageCol, this.params.pageLimit)
+    }
+
+    override writes(): string[] {
+        return [this.params.outputCol, this.params.placementCol, this.params.pageCol]
     }
 
     protected override async expand(input: unknown, row: Row, ctx: StageContext): Promise<Row[]> {

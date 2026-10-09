@@ -25,9 +25,17 @@ interface RuntimeStore {
      * synchronisation costs more than the parallelism wins on these model sizes.
      */
     threadCount: number
+    /**
+     * Pages walking the pipeline at once. More than one overlaps stages that
+     * do not compete -- one page in OCR while the previous is in NER -- and
+     * costs memory, since every page in flight holds its images. Takes effect
+     * on the next run, no reload.
+     */
+    pagesInFlight: number
     setEngine: (engine: Engine) => void
     setThreads: (threads: boolean) => void
     setThreadCount: (threadCount: number) => void
+    setPagesInFlight: (pagesInFlight: number) => void
 }
 
 export const useRuntime = create<RuntimeStore>()(
@@ -36,9 +44,11 @@ export const useRuntime = create<RuntimeStore>()(
             engine: 'auto',
             threads: true,
             threadCount: 0,
+            pagesInFlight: 1,
             setEngine: (engine) => set({ engine }),
             setThreads: (threads) => set({ threads }),
             setThreadCount: (threadCount) => set({ threadCount }),
+            setPagesInFlight: (pagesInFlight) => set({ pagesInFlight }),
         }),
         { name: 'scaledp-demo-runtime' }
     )

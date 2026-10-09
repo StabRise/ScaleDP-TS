@@ -2,6 +2,7 @@
     "title": "Concepts",
     "pages": [
         "pipelines-and-rows",
+        "streaming",
         "columns",
         "stages",
         "error-contract",

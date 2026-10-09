@@ -11,9 +11,9 @@
 import { getConfig } from '../core/config.js'
 import { DetectionError, upstreamError } from '../core/errors.js'
 import { decodeImage, letterbox, toImageData, toNchwFloat32 } from '../core/image.js'
-import { ensureModelFiles } from '../core/model-cache.js'
+import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { type Row, Stage } from '../core/pipeline.js'
+import { type InitContext, type Row, Stage } from '../core/pipeline.js'
 import { createSession } from '../ocr/ort.js'
 import { type Box, boxFromBBox } from '../schemas/box.js'
 import { createDetectorOutput, type DetectorOutput } from '../schemas/detector-output.js'
@@ -157,8 +157,9 @@ export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
     // and FaceDetector can narrow it to their own names.
     readonly name: string = 'YoloOnnxDetector'
 
-    private session: import('onnxruntime-web').InferenceSession | null = null
-    private loading: Promise<import('onnxruntime-web').InferenceSession> | null = null
+    private readonly session = new LazyLoad<import('onnxruntime-web').InferenceSession>(
+        () => this.params.model
+    )
     private inputSize = DEFAULT_YOLO_INPUT
 
     constructor(options: Partial<YoloOnnxDetectorParams> = {}) {
@@ -171,42 +172,31 @@ export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
         )
     }
 
-    override async init(): Promise<void> {
-        await this.getSession()
+    override async init(ctx?: InitContext): Promise<void> {
+        await this.getSession(ctx?.onProgress)
     }
 
-    private getSession(): Promise<import('onnxruntime-web').InferenceSession> {
-        if (this.session) return Promise.resolve(this.session)
-        if (this.loading) return this.loading
-
-        this.loading = (async () => {
+    private getSession(onProgress?: ProgressListener): Promise<import('onnxruntime-web').InferenceSession> {
+        return this.session.get(async (emit) => {
             const { model } = this.params
             const spec = /^https?:\/\//.test(model)
                 ? { repo: 'yolo', files: [{ path: model }] }
                 : { repo: model, files: [{ path: 'model.onnx' }] }
 
-            const files = await ensureModelFiles(spec)
+            const files = await ensureModelFiles(spec, { onProgress: emit, building: true })
             const bytes = files[spec.files[0]?.path ?? '']
             if (!bytes) throw new DetectionError(`Model ${model} not found`, this.name)
 
             const session = await createSession(bytes, {
-                executionProviders: getConfig().executionProviders,
+                executionProviders: this.runtime.executionProviders ?? getConfig().executionProviders,
             })
             this.inputSize = readInputSize(session)
-            this.session = session
             return session
-        })()
-
-        this.loading.catch(() => {
-            this.loading = null
-        })
-        return this.loading
+        }, onProgress)
     }
 
     override async dispose(): Promise<void> {
-        await this.session?.release()
-        this.session = null
-        this.loading = null
+        await this.session.reset()?.release()
     }
 
     protected async apply(input: unknown, row: Row): Promise<DetectorOutput> {

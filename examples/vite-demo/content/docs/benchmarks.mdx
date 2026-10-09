@@ -1,0 +1,181 @@
+---
+title: Benchmarks
+description: Measured throughput of a document pipeline across workers, threads and pages in flight, with and without cross-origin isolation.
+---
+
+How fast a pipeline runs depends less on the library than on how it is spread
+over the machine. These numbers measure that spread, on one representative
+pipeline, so the defaults in `resolveParallelism` rest on measurements rather
+than intuition. How to act on them is in
+[Performance and parallelism](/docs/guides/performance).
+
+## What was measured
+
+- **Pipeline.** Each page is rendered at 144 DPI (`PdfToImage`). Text regions
+  are found (`DbnetOnnxDetector`) and read (`PaddleRecognizer`), and faces are
+  detected (`FaceDetector`). Every stage is a CPU-bound ONNX model on WASM.
+- **Input.** 12 pages per run: copies of a one-page sample PDF, registered once
+  with `putContent` and referenced by every row.
+- **Method.** Each setting runs once as a warm-up, so model downloads and
+  session creation are excluded, and is then timed. The figures are
+  steady-state throughput.
+- **Harness.** `pnpm bench`, in headless Chromium through
+  `createScaleDpWorkerPool`. A run is rejected if any stage recorded a failure:
+  failing stages return instantly, and would otherwise look fast.
+- **Environments.** Not cross-origin isolated, where onnxruntime-web is
+  single-threaded, as on GitHub Pages. And isolated with COOP/COEP, where WASM
+  threads engage.
+
+The baseline, one worker with one thread and one page at a time, is how the
+library ran before parallelism was configurable.
+
+## Without cross-origin isolation
+
+Threads are unavailable, so the worker pool is the only CPU parallelism.
+
+<BenchmarkChart mode="not-isolated" pagesInFlight={1} />
+
+More pages in flight per worker, for comparison:
+
+<BenchmarkChart mode="not-isolated" pagesInFlight={2} />
+
+## With cross-origin isolation
+
+Threads engage, and combine with workers. Shown with one page in flight per
+worker, which was the fastest on this workload:
+
+<BenchmarkChart mode="isolated" pagesInFlight={1} />
+
+The same settings with more pages in flight per worker, on the same scale.
+Throughput holds level at best, and falls for every multi-threaded setting:
+
+<BenchmarkChart mode="isolated" pagesInFlight={2} />
+
+<BenchmarkChart mode="isolated" pagesInFlight={4} />
+
+## Reading the results
+
+- **Workers are the lever.** Without isolation, four workers ran 3.2× the
+  baseline. With isolation, four workers of four threads each ran 6.4×.
+- **More workers beat more threads per worker.** At the same total thread
+  count, four workers of one thread outran two of two, which outran one of
+  four. Every worker owns its sessions, so nothing is shared to contend on.
+- **Threads shorten the wait for the first page.** One worker of four threads
+  returned its first page in under a second, against about two for one
+  thread.
+- **More pages in flight cost throughput here.** With every stage a CPU-bound
+  model, a second page in one worker only competes for the same threads, and
+  page latency roughly doubles. Pages in flight pay off where a stage waits on
+  something else, such as a cloud NER call or a WebGPU queue, and this
+  workload has neither.
+- **Memory is the price.** Every worker holds its own copy of each model it
+  loads. The `auto` preset caps workers by `navigator.deviceMemory` for that
+  reason.
+
+These are one machine and one pipeline. A GPU stage or a network-bound stage
+changes the picture, and WebGPU has not been benchmarked yet.
+
+## Text detection by provider
+
+`DbnetOnnxDetector` on a 200 DPI page (1700×2200, padded to the model's
+1280×1280 input). Each configuration ran in its own worker, cross-origin
+isolated, in a visible Chromium window so WebGPU got the real GPU. Apple M5
+Pro, 2026-10-09:
+
+| Provider | Median per call | Boxes |
+| --- | ---: | ---: |
+| WASM, 1 thread | 475 ms | 17 |
+| WASM, 4 threads | 195 ms | 17 |
+| WASM, 8 threads | 132 ms | 17 |
+| WebGPU (Apple Metal) | 151 ms | 17 |
+
+Every configuration finds the same boxes. For reference, ScaleDP in Python
+takes about 200 ms per call on CPU.
+
+- **Each call costs a full 1280×1280 inference,** whatever the picture's size.
+  A pipeline running DBNet over each embedded picture pays per picture: three
+  small pictures on one page cost three calls.
+- **By default DBNet runs only the picture's own shape** (`squareInput:
+  false`), padded to a multiple of 32. A 1000×300 crop takes 115 ms instead of
+  450. The model was trained on padded squares, so some boxes differ from
+  ScaleDP's; `squareInput: true` reproduces them exactly, at the full square's
+  cost. The table above used the square.
+- **Headless Chromium only offers SwiftShader,** a software WebGPU adapter.
+  Timed there, WebGPU took 15.7 s per call, which measures the emulator, not
+  the GPU. `BENCH_HEADED=1` gets the real adapter.
+
+```bash
+BENCH_ISOLATED=1 BENCH_HEADED=1 npx vitest run --project bench bench/dbnet.bench.test.ts --reporter=verbose
+```
+
+## Text recognition
+
+`PaddleRecognizer` reading the 26 lines DBNet found in a scanned Russian page,
+line orientation on. Nearly all of its time is the recognition model itself:
+cropping, the orientation check and word splitting take 25–60 ms per page.
+
+**By provider** (`v6-small`, each configuration in its own worker, isolated):
+
+| Provider | 26 lines | Per line |
+| --- | ---: | ---: |
+| WASM, 1 thread | 2487 ms | 96 ms |
+| WASM, 4 threads | 1054 ms | 41 ms |
+| WASM, 8 threads | 705 ms | 27 ms |
+| WebGPU | 2734 ms | 105 ms |
+
+WebGPU cannot build PP-OCR's recognition graph in onnxruntime-web 1.29: a
+kernel type mismatch by default, and a `Conv` failure with
+`preferredLayout: 'NCHW'`. The session falls back to WASM, single-threaded in a
+WebGPU-configured worker. Threads are the lever, which on a page that is not
+cross-origin isolated means a worker pool.
+
+**By preset** (single-threaded):
+
+| Preset | English scan | Russian scan | Russian read as |
+| --- | ---: | ---: | --- |
+| `v6-small` (default) | 1254 ms | 2356 ms | Latin only; the Cyrillic is lost |
+| `v6-tiny` | 264 ms | 504 ms | transliterated noise |
+| `v5-eslav-mobile` | 794 ms | 1572 ms | correct Cyrillic |
+
+The model choice moves time and accuracy more than any setting. The default
+is the slowest of the three and cannot read Cyrillic, while the script's own
+model is both right and faster. Pick the model from the page's script
+(`TesseractScriptDetector` with `presetCol`) rather than leaving the default.
+
+**Batch size: one line per inference is faster and more accurate.** A batch
+pads every line to the widest in it, and the recogniser mixes information
+along the whole line, so the padding corrupts the shorter ones. On the Russian
+scan with `v5-eslav-mobile`:
+
+| `recBatchSize` | 1 thread | 8 threads | The address line |
+| ---: | ---: | ---: | --- |
+| 1 (default) | 1266 ms | 335 ms | "Aдpec: 10X Impact Steet, Space Base, RedPlanet" |
+| 6 | 1551 ms | 409 ms | read as nothing |
+
+The tables above were measured at the previous default of 6.
+
+```bash
+BENCH_ISOLATED=1 BENCH_HEADED=1 npx vitest run --project bench bench/paddle-recognizer.bench.test.ts --reporter=verbose
+```
+
+## Run it yourself
+
+```bash
+pnpm bench                       # not isolated: workers only
+BENCH_ISOLATED=1 pnpm bench      # isolated: workers and threads
+VITE_BENCH_PAGES=24 pnpm bench   # more pages per run
+```
+
+Each run prints a table and writes `bench/results/<date>-<cpu>-<mode>.json`.
+This page reads those files, so a new result appears here without editing it.
+
+## All measurements
+
+<Accordions>
+<Accordion title="Not cross-origin isolated">
+<BenchmarkTable mode="not-isolated" />
+</Accordion>
+<Accordion title="Cross-origin isolated">
+<BenchmarkTable mode="isolated" />
+</Accordion>
+</Accordions>

@@ -170,3 +170,44 @@ describe('pipelineFromDescriptors', () => {
         expect(pipeline.stages[0]?.params.outputCol).toBe('image')
     })
 })
+
+describe('descriptors carry run settings', () => {
+    it('round-trips id, enabled, when, barrier and runtime', async () => {
+        const { describePipeline, pipelineFromDescriptors } = await import('../../src/registry/index.js')
+        const descriptors = [
+            { type: 'DataToImage' },
+            {
+                type: 'ImageDrawBoxes',
+                id: 'draw',
+                enabled: false,
+                when: { path: 'image.width', gt: 0 },
+                barrier: true,
+                runtime: { executionProviders: ['wasm'] },
+            },
+        ]
+        const described = describePipeline(pipelineFromDescriptors(descriptors))
+        expect(described[0]).not.toHaveProperty('id')
+        expect(described[1]).toMatchObject({
+            type: 'ImageDrawBoxes',
+            id: 'draw',
+            enabled: false,
+            when: { path: 'image.width', gt: 0 },
+            barrier: true,
+            runtime: { executionProviders: ['wasm'] },
+        })
+    })
+
+    it('gives every page-scoped stage a way to plan its pages', async () => {
+        const { STAGE_CLASSES, STAGE_SPECS } = await import('../../src/registry/index.js')
+        const { Stage } = await import('../../src/core/pipeline.js')
+        const pageScoped = STAGE_SPECS.filter((spec) => spec.pageScoped)
+        expect(pageScoped.length).toBeGreaterThan(0)
+        for (const spec of pageScoped) {
+            const Ctor = STAGE_CLASSES[spec.type] as unknown as { prototype: object }
+            // Without it the scheduler cannot split a document before the
+            // stage runs, and page 1 waits for the whole document.
+            expect(Object.getOwnPropertyDescriptor(Ctor.prototype, 'planPages'), spec.type).toBeDefined()
+            expect(Ctor.prototype).toBeInstanceOf(Stage)
+        }
+    })
+})

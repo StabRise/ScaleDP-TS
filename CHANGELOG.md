@@ -1,5 +1,120 @@
 # Changelog
 
+## [Unreleased]
+
+One pipeline per document: streamed page by page, with stages switched per run,
+models loaded only for the pages that need them, and configurable parallelism.
+
+### 💥 Behaviour changes
+
+- **`DbnetOnnxDetector` runs the picture's own shape by default**
+  (`squareInput: false`). It pads to the next multiple of 32 instead of to the
+  full 1280×1280 square. That is up to 4× faster on a small or wide picture
+  (450 → 115 ms for a 1000×300 crop) and about 1.3× on a page. The model was
+  trained on padded squares, so some boxes differ from ScaleDP's;
+  `squareInput: true` restores exact parity. `bench/dbnet.bench.test.ts` times
+  DBNet per provider and thread count.
+- **Paddle recognition reads one line per inference** (`recBatchSize: 1`,
+  was 6 in `PaddleRecognizer` and ppu's 6 in `PaddleTextRecognizer`, which
+  now has the parameter too). Batching pads each line to the widest in its
+  batch, and the padding corrupted the shorter lines' reading. On a scanned
+  Russian page a batch of 6 read an address line as nothing and garbled an
+  e-mail address and a name; a batch of 1 read all three. A batch of 1 is
+  also about 20% faster (1266 vs 1551 ms single-threaded, 335 vs 409 ms on 8
+  threads), since the padding was computed for nothing.
+- **A stage's `init()` failure no longer throws out of `transform`.** It is
+  recorded on that stage's rows like any other failure (`exception`), and the
+  rest of the pipeline completes. `propagateError: true` still throws.
+- **`init()` is called lazily**, just before the first row that actually reaches
+  the stage, rather than before the stage's turn. A stage no row reaches never
+  initialises.
+- **`ensureModelFiles` ends with `ready`** after a download as well as on a cache
+  hit. Engine stages instead pass `building: true`, end the download on
+  `initializing`, and report `ready` once the session exists, so a model is no
+  longer shown as ready while its session is still being built.
+- **Concurrent loads of the same model files share one download.** Aborting one
+  caller's signal stops it waiting; the shared download finishes into the cache.
+- **The worker host caches stage instances, not pipelines.** Changing stages no
+  longer disposes the previous ones at once. They are kept, up to
+  `maxCachedStages` (default 12), and disposed least recently used first.
+- **Worker results carry `contentRef` back** instead of a structured-cloned copy
+  of the file on every page row, for rows that were sent by reference.
+- `ScaleDpWorkerOptions.onProgress` / `onStage` receive a trailing `requestId`.
+
+### 🚀 Features
+
+- **`Pipeline.run`** streams by page. Once a document is split into pages, each
+  page walks the remaining stages on its own. The result has the same rows in
+  the same order as `transform`, which stays in Python's stage order.
+  - **Events** (`onEvent`, or `pipeline.events()` as an async iterable):
+    `run:start`, `stage:init`, `model:progress` (attributed to a stage),
+    `stage:start` / `stage:end`, `stage:skip`, `stage:row-error`, `unit:*`,
+    `barrier:wait`, `run:end`. Every page event carries
+    `unit: { key, input, page, path }`.
+  - **Row updates** (`onRow`): each stage's rows per page, as a delta of what the
+    stage wrote, or `full`, with optional `stripBinary`.
+- **Per-run stage toggles.** `StageDescriptor.id` / `enabled`, plus
+  `RunOptions.enabled` by id or name. No rebuild, no reload, and a disabled
+  stage never touches its model.
+- **`when` conditions.** A serialisable per-row condition (`path` / `var`, `eq`,
+  `in`, `gte`, …, `all` / `any` / `not`). Non-matching rows pass through
+  untouched. `usableTextLayer()` (`/pdf`) is `hasUsableTextLayer` as a
+  condition, so text-layer-or-OCR is one pipeline.
+- **Barriers.** Stages with `scope: 'document'` (document-scope
+  `NerConsistency`) wait for every page; `barrier: true` forces one.
+  `PdfMergeImageText` grouped by page streams (`scope: 'group'`).
+- **Parallelism, at three levels:**
+  - `pagesInFlight`, with priority locks so the oldest page gets a free stage
+    first. Stages declare `maxConcurrency` and the shared sessions they hold
+    (`resources()`); PaddleOCR stages on one preset share a lock.
+  - `StageDescriptor.runtime.executionProviders` per stage.
+  - **`createScaleDpWorkerPool`** (`/worker`): pages spread over several
+    workers, with barriers gathered and redistributed, and events re-keyed so
+    the pool looks like one worker. On a page that is not cross-origin
+    isolated this is the only CPU parallelism.
+- **`resolveParallelism('auto' | 'conservative' | partial, probeEnvironment())`**
+  picks workers, threads per worker, pages in flight and providers for the
+  machine. `pnpm bench` measures throughput across settings and records it in
+  `bench/results/`.
+- **Worker:** `client.run()` returns a `RunHandle` (async iterable, `result`,
+  `cancel()`). A `cancel` message bypasses the queue. `configure` resolves with
+  the worker's effective environment (`numThreads`, `crossOriginIsolated`,
+  `webgpu`). Progress messages are throttled.
+- `planPages` on `PdfToDocument`, `PdfToImage` and `PdfEmbeddedImages`, so a
+  document is split before the first PDF stage runs rather than after it has
+  rendered every page.
+- **`DbnetOnnxDetector` `pack`** (opt-in): detects several of a page's
+  pictures in one 1280×1280 inference, separated by white gutters, with the
+  upscale capped at `packMaxScale`. A picture alone on its input comes out
+  exactly as unpacked; pictures sharing one can read differently, since the
+  network sees its neighbours.
+- `LazyLoad`, `ProgressHub`, `reportProgress` / `reportReady`: the load-once,
+  progress-for-every-waiter helpers the engine stages use.
+- **Benchmarks.** `pnpm bench` (throughput across workers, threads and pages in
+  flight), plus per-stage benchmarks for DBNet, PaddleRecognizer and
+  FitBoxesToInk under `bench/`. Results are published on the docs site's
+  Benchmarks page, read straight from `bench/results/`.
+
+### 🐛 Fixes
+
+- **`PdfMergeImageText` no longer lets a stray reading delete real lines.** A
+  detector that takes a photograph for text can read it as one letter (`c`)
+  over the whole picture. Within one edit of every line beneath it, that
+  letter counted as a repeat of them, and those lines were dropped. A
+  covering reading much shorter than the one it covers is no longer treated
+  as a repeat of it.
+
+### ⚡ Performance
+
+- **`FitBoxesToInk` is faster, with identical output.** It reads and converts
+  only the bands of the page its boxes can reach, instead of the whole page.
+  Neighbours come from a spatial grid instead of comparing every pair of boxes,
+  and the per-box background and contrast come from byte histograms instead of
+  sorts. On a 300 DPI page with header and footer text it takes about 25 ms,
+  down from 48 ms; fitting 2000 boxes takes 27 ms, down from 62 ms. Tests check
+  it box for box against the previous algorithm. New helpers: `fitRegion` and
+  `fitBands`. `Luma` may now hold a region of the page (`left`, `top`).
+
 ## [0.5.0] - 06.10.2026
 
 ### 💥 Behaviour changes

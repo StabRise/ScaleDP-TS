@@ -167,6 +167,7 @@ you are debugging why a language change did nothing.
 | `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
 | `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
 | `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+| `recBatchSize` | `number` | `1` | Lines per recognition inference. 1 reads each line on its own: batching pads lines to the widest in the batch, which corrupts the shorter ones’ reading and costs more time than it saves. |
 
 </Accordion>
 </Accordions>

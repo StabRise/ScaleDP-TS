@@ -1,0 +1,119 @@
+---
+title: One pipeline per document
+description: Text layer or OCR, embedded scans, faces and PII, as one streamed pipeline in a worker, with results on screen page by page.
+---
+
+A redaction tool needs every page read (text layer where there is one, OCR
+where there is not, and the scans pasted inside typed pages), entities found
+on that text, and faces found on the rendered page. All of it should arrive in
+the UI as each page is done, with the user able to switch detectors off.
+
+That is one descriptor list. Branching per page is `when`, switching detectors
+is `enabled`, and waiting for the whole document is a barrier.
+
+```ts
+import { usableTextLayer } from '@stabrise/scaledp/pdf'
+
+const needsOcr = { any: [{ not: usableTextLayer() }, { var: 'forceOcr', truthy: true }] }
+const hasLayer = usableTextLayer()
+
+export const documentStages = [
+    // 1. Text layer, split into pages before anything else runs.
+    { type: 'PdfToDocument', id: 'text', options: { resolution: 144 } },
+
+    // 2. OCR, only on pages the text layer cannot read.
+    { type: 'PdfToImage', id: 'render', options: { resolution: 144, keepInputData: true } },
+    { type: 'DbnetOnnxDetector', id: 'ocr.detect', when: needsOcr,
+      options: { inputCol: 'image', outputCol: 'regions' } },
+    { type: 'PaddleRecognizer', id: 'ocr.read', when: needsOcr,
+      options: { inputCols: ['image', 'regions'], outputCol: 'document', keepInputData: true } },
+
+    // 3. Faces, on the page as rendered.
+    { type: 'FaceDetector', id: 'faces' },
+
+    // 4. Scans inside typed pages, read and folded back into the page.
+    { type: 'PdfEmbeddedImages', id: 'embedded', when: hasLayer,
+      options: { resolution: 144, outputCol: 'embedded_image' } },
+    { type: 'PaddleTextRecognizer', id: 'embedded.read', when: hasLayer,
+      options: { inputCol: 'embedded_image', outputCol: 'image_text' } },
+    { type: 'PdfMergeImageText', id: 'merge', when: hasLayer },
+
+    // 5. Entities on the page's final text.
+    { type: 'GlinerNer', id: 'ner', options: { inputCol: 'document', outputCol: 'ner' } },
+
+    // 6. Every page's entities, applied to every page: waits for all of them.
+    { type: 'NerConsistency', id: 'consistency',
+      options: { scope: 'document', inputCols: ['ner', 'document'], outputCol: 'ner' } },
+]
+```
+
+`PdfToImage` runs on every page here because `FaceDetector` needs the
+rendered page. In an app with faces switched off, gate it as well:
+`when: { any: [needsOcr, { var: 'faces', truthy: true }] }`.
+
+## Run it in a worker
+
+```ts
+import { createScaleDpWorker } from '@stabrise/scaledp/worker'
+
+const client = createScaleDpWorker({ worker: new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }) })
+await client.putContent(docId, bytes)
+
+const run = client.run(documentStages, [{ contentRef: docId, path: file.name }], {
+    pagesInFlight: 2,
+    enabled: { faces: settings.detectFaces, consistency: settings.consistency },
+    vars: { forceOcr: settings.forceOcr, faces: settings.detectFaces },
+    rowUpdates: { stages: ['text', 'ocr.read', 'merge', 'faces', 'ner', 'consistency'] },
+    onRow: ({ stageId, unit, row }) => {
+        switch (stageId) {
+            case 'text':
+            case 'ocr.read':
+            case 'merge':       return ui.setWords(unit.page, row.document)
+            case 'faces':       return ui.setFaces(unit.page, row.faces)
+            case 'ner':         return ui.setEntities(unit.page, row.ner, { final: false })
+            case 'consistency': return ui.setEntities(unit.page, row.ner, { final: true })
+        }
+    },
+    onEvent: (event) => ui.progress(event),
+})
+
+cancelButton.onclick = () => run.cancel()
+await run.result
+```
+
+The UI fills in as pages finish:
+
+- **Words** arrive as soon as the text layer, or OCR, has read the page.
+- **Faces** arrive as soon as `FaceDetector` has seen the rendered page.
+- **Entities** arrive per page, before the consistency barrier has seen the
+  whole document, and are replaced once it has.
+
+## What does not get loaded
+
+- With `faces: false`, `FaceDetector` emits one `stage:skip` and never
+  downloads its model.
+- A born-digital PDF never matches `needsOcr`, so DBNet and the recognizer
+  never load.
+- A scanned PDF never matches `hasLayer`, so the embedded-image readers never
+  load.
+- A model that fails to download marks its stage's rows with an `exception`
+  and the document still completes: `stage:row-error` with `phase: 'init'`
+  tells the UI which detector is missing.
+
+## Making it faster
+
+- **`pagesInFlight: 2`** lets page 2 render while page 1 is in NER.
+- **A cloud NER stage** is network-bound. Declare
+  `get maxConcurrency() { return 4 }` and `resources() { return [] }` on it, and
+  several pages' requests overlap.
+- **`createScaleDpWorkerPool`** spreads pages over several workers. It has the
+  same `run` API and, on a page that is not cross-origin isolated, is the only
+  way to use more than one core.
+
+See [Performance and parallelism](/docs/guides/performance).
+
+## Prioritising the cheap pass
+
+A barrier can make every page's text layer and entities arrive before any
+embedded scan is read. Put `barrier: true` on `embedded` and the expensive OCR
+starts only once every page has been through steps 1–3.

@@ -29,6 +29,8 @@ export function Rail({ report, onEngineChange }: { report: RuntimeReport; onEngi
     const setEngine = useRuntime((state) => state.setEngine)
     const setThreads = useRuntime((state) => state.setThreads)
     const setThreadCount = useRuntime((state) => state.setThreadCount)
+    const pagesInFlight = useRuntime((state) => state.pagesInFlight)
+    const setPagesInFlight = useRuntime((state) => state.setPagesInFlight)
     const [pendingReload, setPendingReload] = useState(false)
 
     const chooseEngine = (next: Engine) => {
@@ -132,6 +134,23 @@ export function Rail({ report, onEngineChange }: { report: RuntimeReport; onEngi
                     </button>
                 )}
             </div>
+
+            <div className="rail__group">
+                <span className="rail__key">pages</span>
+                <select
+                    className="rail__select"
+                    aria-label="Pages in flight"
+                    value={String(pagesInFlight)}
+                    title={PAGES_HELP}
+                    onChange={(event) => setPagesInFlight(Number(event.target.value))}
+                >
+                    {[1, 2, 3, 4].map((count) => (
+                        <option value={String(count)} key={count}>
+                            {count} at a time
+                        </option>
+                    ))}
+                </select>
+            </div>
         </header>
     )
 }
@@ -140,3 +159,8 @@ const THREAD_HELP =
     'WASM threads need SharedArrayBuffer, which needs COOP/COEP response headers. ' +
     'The dev server sets them; GitHub Pages cannot, so the deployed site is always single-threaded. ' +
     'WebGPU is unaffected either way.'
+
+const PAGES_HELP =
+    'Pages walking the pipeline at once. With more than one, a page can be in OCR while ' +
+    'the previous one is in NER. A model still runs one page at a time; this overlaps ' +
+    'different stages, and every page in flight holds its images in memory.'

@@ -42,6 +42,10 @@ ever leaves the browser**, which is the point for anything sensitive.
 - Load PDFs and images from a `File`, `Blob`, `ArrayBuffer` or URL
 - Render PDF pages, or read an existing text layer and skip OCR entirely
 - Word-level bounding boxes throughout, so every result maps back to the page
+- Stream one pipeline per document: results arrive page by page, stages switch
+  on and off per run, and a model loads only if a page actually needs it
+- Configurable parallelism: pages in flight, threads per worker, and a worker
+  pool for machines where threads are unavailable
 
 ### OCR
 
@@ -150,6 +154,28 @@ const rows = await pipeline.transform(file)
 const needsOcr = rows.filter((r) => !hasUsableTextLayer(r.document))
 ```
 
+Or put the branch inside one pipeline and stream it. Pages with a text layer
+never load an OCR model:
+
+```ts
+import { pipelineFromDescriptors } from '@stabrise/scaledp/registry'
+import { usableTextLayer } from '@stabrise/scaledp/pdf'
+
+const ocr = { not: usableTextLayer() }
+const pipeline = pipelineFromDescriptors([
+  { type: 'PdfToDocument', options: { resolution: 300 } },
+  { type: 'PdfToImage', options: { resolution: 300, keepInputData: true }, when: ocr },
+  { type: 'PaddleTextRecognizer', options: { outputCol: 'document' }, when: ocr },
+  { type: 'FaceDetector', id: 'faces' },
+])
+
+await pipeline.run(file, {
+  pagesInFlight: 2,
+  enabled: { faces: false },             // never downloads the face model
+  onRow: ({ stageId, unit, row }) => show(stageId, unit.page, row),
+})
+```
+
 ### Run off the main thread
 
 ```ts
@@ -175,6 +201,10 @@ const rows = await client.transform(
   [{ type: 'PdfToImage' }, { type: 'PaddleTextRecognizer' }],
   [{ content: bytes, path: 'invoice.pdf' }]
 )
+
+// Or stream it, cancellably; `createScaleDpWorkerPool` has the same `run`.
+const run = client.run(stages, rows, { onRow: show })
+cancel.onclick = () => run.cancel()
 ```
 
 ## Errors never abort a pipeline

@@ -16,6 +16,17 @@ export interface Timing {
 
 export type RunStatus = 'idle' | 'running' | 'done' | 'error'
 
+/** One stage's state during the current run, from the pipeline's events. */
+export interface StageLive {
+    state: 'waiting' | 'loading' | 'running' | 'done' | 'skipped' | 'disabled'
+    /** Units (pages) the stage has finished. */
+    done: number
+    /** Rows it recorded a real failure on. */
+    failed: number
+    /** Model download percentage while loading, when known. */
+    percent?: number
+}
+
 interface RunStore {
     status: RunStatus
     /** The file most recently read, kept so a param change can be re-applied to it. */
@@ -38,8 +49,13 @@ interface RunStore {
     /** Set when the pipeline changed after the result on screen was produced. */
     stale: string
     controller: AbortController | null
+    /** Per-stage state, by position in the pipeline. */
+    live: Record<number, StageLive>
 
     start: (file: File, controller: AbortController) => void
+    /** Rows as they stand mid-run, shown before the run finishes. */
+    stream: (rows: Row[]) => void
+    setLive: (index: number, patch: Partial<StageLive>) => void
     finish: (rows: Row[], timings: Timing[]) => void
     select: (index: number) => void
     setTraceMode: (mode: 'page' | 'run') => void
@@ -59,6 +75,7 @@ export const useRun = create<RunStore>()((set, get) => ({
     note: '',
     stale: '',
     controller: null,
+    live: {},
 
     start: (file, controller) =>
         set({
@@ -70,13 +87,24 @@ export const useRun = create<RunStore>()((set, get) => ({
             rows: [],
             selected: 0,
             timings: [],
+            live: {},
+        }),
+
+    // The selection is kept: a reader looking at page 1 while page 5 arrives
+    // should not be thrown back to page 1 of a list that grew under them.
+    stream: (rows) => set({ rows }),
+
+    setLive: (index, patch) =>
+        set((state) => {
+            const current = state.live[index] ?? { state: 'waiting', done: 0, failed: 0 }
+            return { live: { ...state.live, [index]: { ...current, ...patch } } }
         }),
 
     finish: (rows, timings) =>
         set({
             status: 'done',
             rows,
-            selected: 0,
+            selected: Math.min(get().selected, Math.max(0, rows.length - 1)),
             timings,
             controller: null,
             note: rows.length > 0 ? '' : 'No rows were produced. Check the first stage matches the file.',

@@ -15,7 +15,14 @@
  */
 
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
-import { EXECUTION_TIME_COL, ROW_TIME_COL, type Row, Stage, type StageContext } from '../core/pipeline.js'
+import {
+    EXECUTION_TIME_COL,
+    ROW_TIME_COL,
+    type Row,
+    Stage,
+    type StageContext,
+    type StageScope,
+} from '../core/pipeline.js'
 import type { Box } from '../schemas/box.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import { boxToPage, type ImagePlacement } from './extract-images.js'
@@ -118,6 +125,14 @@ export class PdfMergeImageText extends Stage<PdfMergeImageTextParams> {
                 },
             })
         )
+    }
+
+    /**
+     * Grouped by page, the stage needs only one page's rows at a time, so pages
+     * keep streaming through it. Grouped by anything coarser it needs them all.
+     */
+    override get scope(): StageScope {
+        return this.params.groupByCols.includes(this.params.pageCol) ? 'group' : 'document'
     }
 
     /**

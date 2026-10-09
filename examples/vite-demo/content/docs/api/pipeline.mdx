@@ -7,9 +7,22 @@ description: The two classes everything else is built on.
 
 ```ts
 class Pipeline {
-    constructor(readonly stages: Stage[])
-    transform(input: PipelineInput, options?: PipelineOptions): Promise<Row[]>
+    constructor(stages: (Stage | PipelineStage)[])
+    readonly stages: Stage[]
+    readonly entries: PipelineEntry[]          // each stage with its id, enabled, when, barrier
+
+    transform(input: PipelineInput, options?: PipelineOptions & RunOptions): Promise<Row[]>  // stage order
+    run(input: PipelineInput, options?: RunOptions): Promise<Row[]>                          // page order
+    events(input: PipelineInput, options?: RunOptions): AsyncIterable<PipelineEvent> & { result: Promise<Row[]> }
     dispose(): Promise<void>
+}
+
+interface PipelineStage {
+    stage: Stage
+    id?: string          // default: the stage name, or `Name#index` when it repeats
+    enabled?: boolean    // default true; RunOptions.enabled overrides per run
+    when?: Condition     // run on matching rows only
+    barrier?: boolean    // wait for every page before this stage
 }
 ```
 
@@ -18,11 +31,26 @@ interface PipelineOptions {
     signal?: AbortSignal
     onStage?: (name: string, ms: number, rows: number) => void
 }
+
+interface RunOptions {
+    order?: 'page' | 'stage'                      // run(): 'page', transform(): 'stage'
+    signal?: AbortSignal
+    pagesInFlight?: number                        // default 1
+    enabled?: Record<string, boolean>             // by stage id or name
+    vars?: Record<string, Json>                   // for `{ var }` conditions
+    stages?: Record<string, { maxConcurrency?: number }>  // can only lower a stage's own
+    initRetry?: 'run' | 'row'                     // default 'run'
+    rowUpdates?: { payload?: 'delta' | 'full' | 'none'; stages?: string[]; stripBinary?: boolean }
+    onEvent?: (event: PipelineEvent) => void
+    onRow?: (update: RowUpdate) => void
+}
 ```
 
-`transform` normalises the input, then for each stage: checks the signal, awaits
-`init()`, runs `transform` over the rows, and records elapsed milliseconds. Every
-returned row gets `execution_time`.
+Both orders return the same rows in the same order; every returned row gets
+`execution_time`. A stage is initialised lazily, just before the first row that
+reaches it, and a failed `init` lands on that stage's rows rather than throwing.
+See [Streaming runs](/docs/concepts/streaming) for events, row updates, `when`
+and barriers.
 
 `stages` is a plain array and is not frozen — pushing an `ImageDrawBoxes` onto an
 existing pipeline is a supported way to add an annotation pass.
@@ -34,13 +62,22 @@ abstract class Stage<P extends BaseStageParams = BaseStageParams> {
     abstract readonly name: string
     constructor(readonly params: P)
 
-    async init(): Promise<void>
+    async init(ctx?: InitContext): Promise<void>   // lazy, idempotent; ctx.onProgress for this stage
     protected abstract apply(input, row, ctx): Promise<unknown>
     protected expand(input, row, ctx): Promise<Row[] | null>
     protected abstract onError(message: string, row: Row): unknown
     async dispose(): Promise<void>
 
-    transform(rows: Row[], ctx: StageContext): Promise<Row[]>   // final
+    transform(rows: Row[], ctx: StageContext): Promise<Row[]>
+
+    // Scheduling hooks, all with safe defaults
+    get scope(): 'row' | 'group' | 'document'   // 'row'; 'document' makes the stage a barrier
+    get maxConcurrency(): number                // 1; raise for pure or network-bound stages
+    resources(): ResourceClaim[]                // []; shared sessions a call holds
+    planPages(row, ctx): Promise<number[] | null>   // null; PDF stages list their pages
+    writes(): string[]                          // [outputCol]; what a row update carries
+    runtime: StageRuntime                       // { executionProviders? }
+    withRuntime(runtime): this
 }
 ```
 
@@ -56,7 +93,8 @@ type Row = Record<string, unknown>
 type PipelineInput =
     | Uint8Array | ArrayBuffer | Blob | File | string | Row | Row[]
 
-interface StageContext { index: number; signal?: AbortSignal }
+interface InitContext { stageId?: string; signal?: AbortSignal; onProgress?: (p: ModelProgress) => void }
+interface StageContext extends InitContext { index: number; runId?: string }
 ```
 
 ```ts

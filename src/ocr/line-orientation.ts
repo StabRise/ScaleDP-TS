@@ -18,7 +18,7 @@ import {
     toImageData,
     toNchwFloat32,
 } from '../core/image.js'
-import { ensureModelFiles } from '../core/model-cache.js'
+import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
 import { createSession } from './ort.js'
 
 export const DEFAULT_ORIENTATION_MODEL = 'StabRise/line_orientation_detection_v0.1'
@@ -31,33 +31,27 @@ export type LineOrientation = '0_degree' | '180_degree'
 const LABELS: readonly LineOrientation[] = ['0_degree', '180_degree']
 
 export class LineOrientationClassifier {
-    private session: import('onnxruntime-web').InferenceSession | null = null
-    private loading: Promise<import('onnxruntime-web').InferenceSession> | null = null
+    private readonly session = new LazyLoad<import('onnxruntime-web').InferenceSession>(() => this.model)
 
     constructor(readonly model: string = DEFAULT_ORIENTATION_MODEL) {}
 
-    private getSession(): Promise<import('onnxruntime-web').InferenceSession> {
-        if (this.session) return Promise.resolve(this.session)
-        if (this.loading) return this.loading
+    /** Load the model now rather than on the first line. */
+    async load(onProgress?: ProgressListener): Promise<void> {
+        await this.getSession(onProgress)
+    }
 
-        this.loading = (async () => {
-            const files = await ensureModelFiles({
-                repo: this.model,
-                files: [{ path: 'model.onnx' }],
-            })
+    private getSession(onProgress?: ProgressListener): Promise<import('onnxruntime-web').InferenceSession> {
+        return this.session.get(async (emit) => {
+            const files = await ensureModelFiles(
+                { repo: this.model, files: [{ path: 'model.onnx' }] },
+                { onProgress: emit, building: true }
+            )
             const bytes = files['model.onnx']
             if (!bytes) {
                 throw new DetectionError(`Model ${this.model} has no model.onnx`, 'LineOrientation')
             }
-            const session = await createSession(bytes)
-            this.session = session
-            return session
-        })()
-
-        this.loading.catch(() => {
-            this.loading = null
-        })
-        return this.loading
+            return createSession(bytes)
+        }, onProgress)
     }
 
     async classify(source: ImageBitmap | OffscreenCanvas): Promise<LineOrientation> {
@@ -100,8 +94,6 @@ export class LineOrientationClassifier {
     }
 
     async dispose(): Promise<void> {
-        await this.session?.release()
-        this.session = null
-        this.loading = null
+        await this.session.reset()?.release()
     }
 }
