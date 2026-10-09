@@ -16,12 +16,14 @@ models loaded only for the pages that need them, and configurable parallelism.
   DBNet per provider and thread count.
 - **Paddle recognition reads one line per inference** (`recBatchSize: 1`,
   was 6 in `PaddleRecognizer` and ppu's 6 in `PaddleTextRecognizer`, which
-  now has the parameter too). Batching pads each line to the widest in its
-  batch, and the padding corrupted the shorter lines' reading. On a scanned
-  Russian page a batch of 6 read an address line as nothing and garbled an
-  e-mail address and a name; a batch of 1 read all three. A batch of 1 is
-  also about 20% faster (1266 vs 1551 ms single-threaded, 335 vs 409 ms on 8
-  threads), since the padding was computed for nothing.
+  now has the parameter too). A batch pads shorter lines to the widest, and
+  ppu pads with the line's last column -- white paper -- where PaddleOCR,
+  whose preprocessing the models were trained on, pads with zeros. The
+  models misread that white: on the sample scans a batch of 6 garbled 8 of 22
+  and 10 of 16 lines (an address read as nothing, `info@stabrise.com` as
+  `YananGc`), and zero padding garbled none. A batch of 1 has no padding at
+  all and is also about 20% faster (1266 vs 1551 ms single-threaded, 335 vs
+  409 ms on 8 threads).
 - **A stage's `init()` failure no longer throws out of `transform`.** It is
   recorded on that stage's rows like any other failure (`exception`), and the
   rest of the pipeline completes. `propagateError: true` still throws.
@@ -83,6 +85,14 @@ models loaded only for the pages that need them, and configurable parallelism.
 - `planPages` on `PdfToDocument`, `PdfToImage` and `PdfEmbeddedImages`, so a
   document is split before the first PDF stage runs rather than after it has
   rendered every page.
+- **PaddleOCR runs on WebGPU.** ppu catalogues its v6 models as `.ort`
+  files, whose kernel table has no WebGPU NHWC convolution, so every session
+  failed on WebGPU and fell back to WASM. The library now fetches the `.onnx`
+  twin each `.ort` model has in the same repository (`portableModelUrl`).
+  On WASM the output is bit-identical at the same speed. On WebGPU,
+  recognising 26 lines takes 275 ms instead of 1945 (`v6-small`), and
+  detection 60 ms instead of 442. The models download once more under their
+  new URLs.
 - **`DbnetOnnxDetector` `pack`** (opt-in): detects several of a page's
   pictures in one 1280×1280 inference, separated by white gutters, with the
   upscale capped at `packMaxScale`. A picture alone on its input comes out

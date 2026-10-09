@@ -916,7 +916,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 min: 1,
                 step: 1,
                 advanced: true,
-                help: 'Lines per recognition inference. 1 reads each line on its own: batching pads lines to the widest in the batch, which corrupts the shorter ones’ reading and costs more time than it saves.',
+                help: 'Lines per recognition inference. 1 reads each line unpadded. A batch pads shorter lines with white, which PP-OCR models were never trained on — they misread or drop those lines — and it is no faster on WASM.',
             },
             {
                 key: 'strategy',
@@ -1014,7 +1014,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 min: 1,
                 step: 1,
                 advanced: true,
-                help: 'Lines per recognition inference. 1 reads each line on its own: batching pads lines to the widest in the batch, which corrupts the shorter ones’ reading and costs more time than it saves.',
+                help: 'Lines per recognition inference. 1 reads each line unpadded. A batch pads shorter lines with white, which PP-OCR models were never trained on — they misread or drop those lines — and it is no faster on WASM.',
             },
             {
                 key: 'boxLevel',

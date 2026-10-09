@@ -55,9 +55,10 @@ export interface RuntimeReport {
  * Turn the stored preference into the two config fields that carry it.
  *
  * WASM stays behind WebGPU in the list even when WebGPU was asked for by name:
- * a model WebGPU has no kernel for -- PP-OCR's recognition graph is one --
- * fails at session creation, and the fallback is what keeps that a slower run
- * rather than a broken one.
+ * a model WebGPU has no kernel for fails at session creation, and the
+ * fallback is what keeps that a slower run rather than a broken one. (PP-OCR
+ * was the case until the library fetched its `.onnx` builds instead of the
+ * `.ort` ones, which carry no WebGPU kernels.)
  */
 function resolve(engine: Engine, threads: boolean, threadCount: number, webgpu: boolean, isolated: boolean) {
     const useGpu = engine === 'webgpu' || (engine === 'auto' && webgpu)

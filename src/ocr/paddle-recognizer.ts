@@ -96,14 +96,16 @@ export interface PaddleRecognizerParams extends BaseStageParams {
     spaceRecovery: boolean
     /**
      * Lines per recognition inference. 1 (the default) reads each line on its
-     * own.
+     * own, unpadded.
      *
-     * Batching pads every line to the widest in its batch, and the recogniser
-     * mixes information along the whole line, so the padding corrupts the
-     * reading of the shorter ones -- a whole address line read as nothing, an
-     * e-mail address garbled. On a scanned Russian page a batch of 6 lost
-     * three lines that a batch of 1 read, and was ~20% *slower* for computing
-     * the padding (1551 vs 1266 ms single-threaded, 409 vs 335 ms on 8).
+     * A batch pads every line to the widest in it, and ppu pads by repeating
+     * the line's last column -- on a document, white paper. PP-OCR's models
+     * were trained on PaddleOCR's own preprocessing, which pads with zeros
+     * (mid-grey once normalised), and a wide band of white is outside anything
+     * they saw: they invent characters in it (`cY`, `cYGl`) or lose the line.
+     * On the sample scans a batch of 6 garbled 8 of 22 and 10 of 16 lines;
+     * zero padding garbled none. Batching is not faster on WASM either -- the
+     * padding is computed like any other pixel -- so there is nothing to win.
      */
     recBatchSize: number
     /**

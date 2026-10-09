@@ -17,10 +17,10 @@ configure({ pdf: { workerSrc: '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs
 
 const RUNS = 4
 const configurations = [
-    { label: 'wasm, 1 thread', executionProviders: ['wasm'], numThreads: 1, recBatchSize: 1 },
-    { label: 'wasm, 1 thread', executionProviders: ['wasm'], numThreads: 1, recBatchSize: 6 },
-    { label: 'wasm, 8 threads', executionProviders: ['wasm'], numThreads: 8, recBatchSize: 1 },
-    { label: 'wasm, 8 threads', executionProviders: ['wasm'], numThreads: 8, recBatchSize: 6 },
+    { label: 'wasm, 1 thread', executionProviders: ['wasm'], numThreads: 1, preset: 'v6-small' },
+    { label: 'webgpu', executionProviders: ['webgpu', 'wasm'], numThreads: 1, preset: 'v6-small' },
+    { label: 'wasm, 1 thread', executionProviders: ['wasm'], numThreads: 1, preset: 'v5-eslav-mobile' },
+    { label: 'webgpu', executionProviders: ['webgpu', 'wasm'], numThreads: 1, preset: 'v5-eslav-mobile' },
 ]
 
 describe('PaddleRecognizer', () => {
@@ -48,8 +48,7 @@ describe('PaddleRecognizer', () => {
                         inputCols: ['embedded', 'detected'],
                         outputCol: 'text',
                         detectLineOrientation: true,
-                        preset: 'v5-eslav-mobile',
-                        recBatchSize: config.recBatchSize,
+                        preset: config.preset,
                     },
                 },
             ]
@@ -64,7 +63,7 @@ describe('PaddleRecognizer', () => {
             await client.dispose()
             times.sort((a, b) => a - b)
             console.log(
-                `RECBENCH ${JSON.stringify({ label: config.label, recBatchSize: config.recBatchSize, lines, medianMs: Math.round(times[times.length >> 1] ?? 0), text: text.slice(0, 160) })}`
+                `RECBENCH ${JSON.stringify({ label: config.label, preset: config.preset, lines, medianMs: Math.round(times[times.length >> 1] ?? 0), text: text.slice(0, 110) })}`
             )
             expect(times).toHaveLength(RUNS)
         }

@@ -121,13 +121,21 @@ cropping, the orientation check and word splitting take 25–60 ms per page.
 | WASM, 1 thread | 2487 ms | 96 ms |
 | WASM, 4 threads | 1054 ms | 41 ms |
 | WASM, 8 threads | 705 ms | 27 ms |
-| WebGPU | 2734 ms | 105 ms |
+| WebGPU (`.ort` model, fell back to WASM) | 2734 ms | 105 ms |
 
-WebGPU cannot build PP-OCR's recognition graph in onnxruntime-web 1.29: a
-kernel type mismatch by default, and a `Conv` failure with
-`preferredLayout: 'NCHW'`. The session falls back to WASM, single-threaded in a
-WebGPU-configured worker. Threads are the lever, which on a page that is not
-cross-origin isolated means a worker pool.
+That WebGPU row was not the GPU. ppu catalogues its v6 models in ORT format
+(`.ort`), onnxruntime's pre-optimised format, which records only the kernels
+the model needed when it was converted, for the CPU. WebGPU rewrites every
+`Conv` into `com.ms.internal.nhwc:Conv` at session creation, finds no such
+kernel in the file, and the stage falls back to WASM. The same models are
+published as `.onnx`, and the library now fetches those. On WASM they give
+bit-identical output at the same speed, and on WebGPU recognition runs on the
+GPU:
+
+| Preset | WASM, 1 thread | WebGPU (Apple Metal) | Text |
+| --- | ---: | ---: | --- |
+| `v6-small` | 1945 ms | 275 ms | identical |
+| `v5-eslav-mobile` | 1327 ms | 161 ms | identical |
 
 **By preset** (single-threaded):
 
@@ -143,9 +151,11 @@ model is both right and faster. Pick the model from the page's script
 (`TesseractScriptDetector` with `presetCol`) rather than leaving the default.
 
 **Batch size: one line per inference is faster and more accurate.** A batch
-pads every line to the widest in it, and the recogniser mixes information
-along the whole line, so the padding corrupts the shorter ones. On the Russian
-scan with `v5-eslav-mobile`:
+pads every line to the widest in it. ppu pads with the line's last column,
+which is white paper, but PP-OCR's models were trained on PaddleOCR's zero
+padding (mid-grey once normalised). They misread the white: on the sample
+scans a batch of 6 garbled 8 of 22 and 10 of 16 lines, and zero padding
+garbled none. On the Russian scan with `v5-eslav-mobile`:
 
 | `recBatchSize` | 1 thread | 8 threads | The address line |
 | ---: | ---: | ---: | --- |

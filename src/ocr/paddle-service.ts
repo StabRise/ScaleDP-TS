@@ -90,9 +90,32 @@ async function specForPreset(preset: string): Promise<{ spec: ModelSpec; roles: 
     // ppu gives absolute URLs; the cache keys on repo-relative paths, so the
     // full URL doubles as the key and `modelHost` is bypassed for these.
     return {
-        spec: { repo: `ppu-paddle-ocr/${preset}`, files: roles.map((r) => ({ path: urls[r] })) },
+        spec: {
+            repo: `ppu-paddle-ocr/${preset}`,
+            files: roles.map((r) => ({ path: portableModelUrl(urls[r]) })),
+        },
         roles: [...roles],
     }
+}
+
+/**
+ * The plain-ONNX twin of a model ppu catalogues in ORT format.
+ *
+ * ppu points its v6 presets at `.ort` files: onnxruntime's pre-optimised
+ * format, which records the kernels the model needed *when it was converted*
+ * -- for the CPU. WebGPU runs convolutions channel-last and rewrites every
+ * `Conv` into `com.ms.internal.nhwc:Conv` at session creation; that kernel is
+ * not in the file's table, so the session fails before it runs once, and the
+ * stage falls back to WASM. The same repository publishes every one of these
+ * models as `.onnx` too, beside the `ort/` folder. Those load on WebGPU --
+ * v6-small recognition in 9 ms rather than 87 on WASM, detection in 60 rather
+ * than 442 -- and on WASM give bit-identical output to the `.ort` files at
+ * the same speed. So the `.onnx` is fetched whatever the provider.
+ */
+export function portableModelUrl(url: string): string {
+    // Either inside an `ort/` folder beside its twin's, or beside it directly.
+    const match = /^(.*?)(\/ort)?\/([^/]+)\.ort$/.exec(url)
+    return match ? `${match[1]}/${match[3]}.onnx` : url
 }
 
 /**
@@ -219,10 +242,10 @@ async function loadRecognitionAssets(
         if (dictionary.length === 0) {
             throw new Error(`PaddleOCR preset "${preset}" has an empty character dictionary.`)
         }
-        // WebGPU cannot run PP-OCR's recognition graph -- it rewrites the
-        // convolutions into `com.ms.internal.nhwc` and has no kernel for them,
-        // which fails at session creation. `PaddleOcrService` retries on WASM
-        // for exactly this, so a session built here has to as well.
+        // A model WebGPU has no kernel for fails at session creation, not at
+        // inference -- the `.ort` builds ppu catalogues did (see
+        // `portableModelUrl`). `PaddleOcrService` retries on WASM for exactly
+        // this, so a session built here does too.
         const session = await createSession(model, { fallbackToWasm: true })
         reportReady(repo, emit)
         return { session, dictionary }

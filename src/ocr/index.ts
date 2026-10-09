@@ -80,6 +80,7 @@ export {
     getPaddleService,
     isPresetCached,
     loadPreset,
+    portableModelUrl,
     removePreset,
 } from './paddle-service.js'
 export type { OcrPreset } from './presets.js'
