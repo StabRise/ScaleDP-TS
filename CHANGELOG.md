@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 12.10.2026
 
 One pipeline per document: streamed page by page, with stages switched per run,
 models loaded only for the pages that need them, and configurable parallelism.
