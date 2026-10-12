@@ -48,14 +48,18 @@ export * from './core/geometry.js'
 export * from './core/image.js'
 export type { Priority, ResourceClaim } from './core/locks.js'
 export type {
+    CachedFile,
     EnsureModelOptions,
     ModelFile,
     ModelFiles,
+    ModelRequirement,
     ModelSpec,
     ProgressListener,
 } from './core/model-cache.js'
 export {
+    cachedFiles,
     cacheKey,
+    downloadSize,
     ensureModelFiles,
     evict,
     fileUrl,
@@ -109,6 +113,13 @@ export type { CountryMatch } from './stages/countries.js'
 export { countryLocalesSupported, findCountries, ISO_COUNTRIES } from './stages/countries.js'
 export type { DataToImageParams } from './stages/data-to-image.js'
 export { DATA_TO_IMAGE_DEFAULTS, DataToImage, toBytes } from './stages/data-to-image.js'
+export type { DocumentDeltaParams } from './stages/document-delta.js'
+export {
+    boxIdentity,
+    DOCUMENT_DELTA_DEFAULTS,
+    DocumentDelta,
+    documentDelta,
+} from './stages/document-delta.js'
 export type { FitBoxesToInkParams, FitOptions, Luma } from './stages/fit-boxes-to-ink.js'
 export {
     FIT_BOXES_TO_INK_DEFAULTS,
@@ -136,6 +147,14 @@ export {
     NER_CONSISTENCY_DEFAULTS,
     NerConsistency,
 } from './stages/ner-consistency.js'
+export type { NerMergeDedupe, NerMergerParams } from './stages/ner-merger.js'
+export {
+    dedupeEntities,
+    NER_MERGE_DEDUPE,
+    NER_MERGER_DEFAULTS,
+    NerMerger,
+    rebaseEntities,
+} from './stages/ner-merger.js'
 export type {
     FindPatternOptions,
     LibraryMatch,

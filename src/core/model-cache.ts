@@ -29,6 +29,19 @@ export interface ModelSpec {
 
 export type ModelFiles = Record<string, ArrayBuffer>
 
+/**
+ * A model a stage will download when it first runs.
+ *
+ * What `Stage.requiredModels()` returns: enough to show a user what a
+ * pipeline will fetch, check it against the cache, prefetch it, or delete it,
+ * without running anything.
+ */
+export interface ModelRequirement {
+    /** A name for people: the model, not its files. */
+    label: string
+    spec: ModelSpec
+}
+
 function openDb(name: string): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(name, DB_VERSION)
@@ -235,6 +248,60 @@ async function contentLength(
         return Number(response.headers.get('content-length') ?? 0) || fallback
     } catch {
         return fallback
+    }
+}
+
+/**
+ * Bytes a model's download comes to: each file's declared `approxBytes`, or
+ * its `content-length` from a HEAD request where none is declared. 0 for a
+ * file whose size neither gives.
+ */
+export async function downloadSize(spec: ModelSpec): Promise<number> {
+    const headers = await authHeaders(spec.repo)
+    const sizes = await Promise.all(
+        spec.files.map((file) =>
+            file.approxBytes ? file.approxBytes : contentLength(fileUrl(spec, file.path), headers, 0)
+        )
+    )
+    return sizes.reduce((sum, size) => sum + size, 0)
+}
+
+/** One entry of the model cache. */
+export interface CachedFile {
+    /** The cache key: `repo@revision/path`, see `cacheKey`. */
+    key: string
+    bytes: number
+}
+
+/**
+ * Everything in the model cache, with sizes: what a settings panel lists, and
+ * what to sum to say how much space models take. Empty when the cache is
+ * unavailable.
+ */
+export async function cachedFiles(): Promise<CachedFile[]> {
+    if (!cacheAvailable()) return []
+    const db = await openDb(getConfig().cacheDbName).catch(() => null)
+    if (!db) return []
+    try {
+        return await new Promise<CachedFile[]>((resolve, reject) => {
+            const out: CachedFile[] = []
+            const request = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor()
+            request.onerror = () => reject(request.error)
+            request.onsuccess = () => {
+                const cursor = request.result
+                if (!cursor) return resolve(out)
+                const value = cursor.value as Blob | ArrayBuffer
+                out.push({
+                    key: String(cursor.key),
+                    bytes: value instanceof Blob ? value.size : value.byteLength,
+                })
+                cursor.continue()
+            }
+        })
+    } catch {
+        return []
+    } finally {
+        db.close()
     }
 }
 
@@ -454,6 +521,96 @@ export function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise
     })
 }
 
+/** Minimum interval between progress broadcasts for one file. */
+const BROADCAST_INTERVAL_MS = 100
+
+interface ProgressBroadcast {
+    key: string
+    loaded: number
+}
+
+function webLocks(): LockManager | undefined {
+    return typeof navigator !== 'undefined' ? navigator.locks : undefined
+}
+
+function progressChannel(): BroadcastChannel | undefined {
+    return typeof BroadcastChannel === 'undefined'
+        ? undefined
+        : new BroadcastChannel(`scaledp-model-progress:${getConfig().cacheDbName}`)
+}
+
+/**
+ * Download one file -- once per origin, not once per realm.
+ *
+ * The cache is IndexedDB, which the main thread and every worker of an
+ * origin share, but each realm only knows its own downloads in flight. Two
+ * workers of a pool starting cold, or a worker starting while the main thread
+ * prefetches, would each fetch the same few hundred megabytes. So a file is
+ * fetched under a Web Lock named after its cache key: the first realm to take
+ * it downloads and stores; the rest wait, and on getting the lock find the file
+ * in the cache and read it from there.
+ *
+ * A realm that is waiting still sees progress: the downloading realm
+ * broadcasts its running total on a BroadcastChannel, and waiters report it as
+ * their own, so every worker's UI shows the one download moving.
+ *
+ * Without Web Locks or a usable cache there is nothing to share, and the file
+ * is simply downloaded.
+ */
+async function fetchOnce(
+    spec: ModelSpec,
+    file: ModelFile,
+    headers: HeadersInit | undefined,
+    usable: boolean,
+    report: (loadedInFile: number) => void
+): Promise<Blob | ArrayBuffer> {
+    const key = cacheKey(spec, file.path)
+    const locks = usable ? webLocks() : undefined
+    const channel = locks ? progressChannel() : undefined
+
+    const download = async (): Promise<Blob> => {
+        let got = 0
+        let sent = Number.NEGATIVE_INFINITY
+        // No signal: the download is shared, so one caller giving up must not
+        // cancel it for the others. It finishes into the cache regardless.
+        const blob = await fetchWithProgress(fileUrl(spec, file.path), headers, (bytes) => {
+            got += bytes
+            report(got)
+            const now = Date.now()
+            if (channel && now - sent >= BROADCAST_INTERVAL_MS) {
+                sent = now
+                channel.postMessage({ key, loaded: got } satisfies ProgressBroadcast)
+            }
+        })
+        // Stored before it is materialised, so the write never coincides with
+        // the caller's copy of the same several hundred megabytes.
+        if (usable) await tryStore('readwrite', (store) => store.put(blob, key))
+        return blob
+    }
+
+    if (!locks) return download()
+
+    const listen = (event: MessageEvent<ProgressBroadcast>) => {
+        if (event.data?.key === key) report(event.data.loaded)
+    }
+    channel?.addEventListener('message', listen)
+    try {
+        return await locks.request(`scaledp-model:${getConfig().cacheDbName}:${key}`, async () => {
+            channel?.removeEventListener('message', listen)
+            // Another realm may have stored it while this one waited.
+            const hit = await tryStore<Blob | ArrayBuffer | undefined>('readonly', (store) => store.get(key))
+            if (hit) {
+                report(hit instanceof Blob ? hit.size : hit.byteLength)
+                return hit
+            }
+            return download()
+        })
+    } finally {
+        channel?.removeEventListener('message', listen)
+        channel?.close()
+    }
+}
+
 async function loadModelFiles(
     spec: ModelSpec,
     building: boolean,
@@ -497,20 +654,17 @@ async function loadModelFiles(
     )
     const total = sizes.reduce((sum, size) => sum + size, 0)
 
-    let loaded = 0
+    // Bytes so far per file. A file another realm is downloading reports its
+    // own running total, so totals are kept per file and summed.
+    const perFile = new Map<string, number>()
     for (const file of missing) {
-        // No signal: the download is shared, so one caller giving up must not
-        // cancel it for the others. It finishes into the cache regardless.
-        const blob = await fetchWithProgress(fileUrl(spec, file.path), headers, (bytes) => {
-            loaded += bytes
+        const blob = await fetchOnce(spec, file, headers, usable, (got) => {
+            perFile.set(file.path, got)
+            let loaded = 0
+            for (const bytes of perFile.values()) loaded += bytes
             emit({ repo: spec.repo, file: file.path, loaded, total, phase: 'downloading' })
         })
-        // Stored before it is materialised, so the write never coincides with
-        // the caller's copy of the same several hundred megabytes.
-        if (usable) {
-            await tryStore('readwrite', (s) => s.put(blob, cacheKey(spec, file.path)))
-        }
-        result[file.path] = await blob.arrayBuffer()
+        result[file.path] = await toBuffer(blob)
     }
 
     emit({ repo: spec.repo, file: '', loaded: total, total, phase: finalPhase })

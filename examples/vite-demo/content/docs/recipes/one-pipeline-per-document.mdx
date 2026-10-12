@@ -112,6 +112,34 @@ The UI fills in as pages finish:
 
 See [Performance and parallelism](/docs/guides/performance).
 
+## Reading the text layer first, then only what the pictures add
+
+Above, NER reads each page once, after the embedded scans are merged in. To
+show entities from the text layer at once, and still not send the text layer
+to NER twice, read the page in two passes. Keep the text layer in `document`,
+write the merged page to `merged`, and run the second NER only on the text the
+merge added:
+
+```ts
+{ type: 'GlinerNer', id: 'ner', options: { inputCol: 'document', outputCol: 'ner' } },
+
+{ type: 'PdfEmbeddedImages', id: 'embedded', when: hasLayer, options: { resolution: 144, outputCol: 'embedded_image' } },
+{ type: 'PaddleTextRecognizer', id: 'embedded.read', when: hasLayer, options: { inputCol: 'embedded_image', outputCol: 'image_text' } },
+{ type: 'PdfMergeImageText', id: 'merge', when: hasLayer, options: { outputCol: 'merged' } },
+
+{ type: 'DocumentDelta', id: 'delta', options: { inputCols: ['document', 'merged'], outputCol: 'delta' } },
+{ type: 'GlinerNer', id: 'ner.delta', when: { path: 'delta.bboxes.length', gt: 0 },
+  options: { inputCol: 'delta', outputCol: 'delta_ner' } },
+{ type: 'NerMerger', id: 'ner.merged', options: { inputCols: ['ner', 'delta_ner'], documentCol: 'merged' } },
+{ type: 'NerConsistency', id: 'consistency',
+  options: { scope: 'document', inputCols: ['ner', 'merged'], outputCol: 'ner' } },
+```
+
+`onRow` from `ner` gives the text layer's entities first. `ner.merged` then
+gives the page's full set, with offsets into the merged text, which is what
+`NerConsistency` needs. A page whose pictures added nothing skips `ner.delta`
+and costs one NER call.
+
 ## Prioritising the cheap pass
 
 A barrier can make every page's text layer and entities arrive before any

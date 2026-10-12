@@ -16,6 +16,7 @@
 
 import { DetectionError, upstreamError } from '../core/errors.js'
 import { context2d, createCanvas, cropBox, decodeImage, encodeImage } from '../core/image.js'
+import type { ModelRequirement } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { type Box, isRotated } from '../schemas/box.js'
@@ -26,6 +27,7 @@ import {
     DEFAULT_ORIENTATION_MODEL,
     type LineOrientation,
     LineOrientationClassifier,
+    orientationRequirement,
 } from './line-orientation.js'
 
 export interface LineOrientationDetectorParams extends BaseStageParams {
@@ -91,6 +93,10 @@ export class LineOrientationDetector extends Stage<LineOrientationDetectorParams
                 },
             })
         )
+    }
+
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return [orientationRequirement(this.params.model)]
     }
 
     override async init(ctx?: InitContext): Promise<void> {

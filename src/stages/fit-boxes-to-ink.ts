@@ -311,17 +311,43 @@ export function fitBoxToInk(luma: Luma, box: Box, options: FitOptions = {}): Box
     return { ...box, x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
 }
 
-/** The axis-aligned bounds of a box, rotated or not. */
-function envelope(box: Box): [number, number, number, number] {
-    if (!isRotated(box)) return bbox(box)
-    const corners = boxPoints({
+/** A box's four corners on the page. */
+function cornersOf(box: Box): readonly (readonly [number, number])[] {
+    if (!isRotated(box)) {
+        const [x0, y0, x1, y1] = bbox(box)
+        return [
+            [x0, y0],
+            [x1, y0],
+            [x1, y1],
+            [x0, y1],
+        ]
+    }
+    return boxPoints({
         center: [box.x + box.width / 2, box.y + box.height / 2],
         size: [box.width, box.height],
         angle: box.angle,
     })
+}
+
+/** The axis-aligned bounds of a box, rotated or not. */
+function envelope(box: Box): [number, number, number, number] {
+    if (!isRotated(box)) return bbox(box)
+    const corners = cornersOf(box)
     const xs = corners.map(([x]) => x)
     const ys = corners.map(([, y]) => y)
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
+/**
+ * How much of the gap to a neighbour a box may grow into: half.
+ *
+ * Both sides of a gap grow towards each other, so letting each take all of it
+ * let two boxes meet in the middle and overlap by the gap's width -- three
+ * pixels between two words of a turned name, drawn as one box sticking into
+ * the next. Half each and they can at most touch.
+ */
+function share(gap: number): number {
+    return Math.max(0, gap) / 2
 }
 
 /** Furthest a box's samples can land from its envelope: its growth cap plus the background ring. */
@@ -452,12 +478,12 @@ class BoxGrid {
  * Without that guard a box takes its neighbour's ink for its own: in a PDF
  * text layer each word's box runs to the next word's start, so the gap between
  * them is a few pixels, well within the letter-gap tolerance, and every word
- * would grow into the next. So each edge may move at most to the nearest box
- * beyond it -- along the line for left and right, among boxes overlapping it
+ * would grow into the next. So each edge may move at most halfway to the
+ * nearest box beyond it -- along the line for left and right, among boxes overlapping it
  * horizontally for top and bottom. A box counts as beyond an edge only when its
  * centre is, so a duplicate stacked on the same spot does not pin the box in
- * place. A rotated box is fitted without neighbour limits, its sides not being
- * the page's -- but it still limits the upright boxes around it.
+ * place. A rotated box gets the same limits, measured along and across its own
+ * text rather than the page's axes.
  *
  * Only neighbours within a box's growth cap are looked at: one further away
  * leaves a gap the cap already stops short of, so it cannot change the result.
@@ -470,8 +496,60 @@ export function fitBoxesToInk(luma: Luma, boxes: readonly Box[], options: FitOpt
     const typical = heights[heights.length >> 1] ?? 32
     const grid = new BoxGrid(frames, Math.max(16, Math.ceil(typical * 2)))
 
+    /**
+     * The same limits for a turned box, measured in its own frame.
+     *
+     * Each neighbour's corners are projected onto the box's axes -- `u` along
+     * its text, `v` across it -- and the upright rules apply there unchanged:
+     * a neighbour on the same line stops the ends, one in the same column the
+     * sides. Without this a quarter-turned "Yamamoto" grew straight across the
+     * three-pixel word gap into "Freya" below it, and a stacked letter into the
+     * next. Upright boxes keep the page-axis code above, so their fits are
+     * exactly what they were.
+     */
+    const turnedLimits = (box: Box, index: number): NonNullable<FitOptions['limits']> => {
+        const rad = (box.angle * Math.PI) / 180
+        const cos = Math.cos(rad)
+        const sin = Math.sin(rad)
+        const cx = box.x + box.width / 2
+        const cy = box.y + box.height / 2
+        const [u0, u1, v0, v1] = [-box.width / 2, box.width / 2, -box.height / 2, box.height / 2]
+        const limits = {
+            left: Number.POSITIVE_INFINITY,
+            right: Number.POSITIVE_INFINITY,
+            top: Number.POSITIVE_INFINITY,
+            bottom: Number.POSITIVE_INFINITY,
+        }
+        const [x0, y0, x1, y1] = frames[index] as [number, number, number, number]
+        const reach = reachOf(box, options)
+        grid.query(x0 - reach, y0 - reach, x1 + reach, y1 + reach, (other) => {
+            if (other === index) return
+            let nu0 = Number.POSITIVE_INFINITY
+            let nu1 = Number.NEGATIVE_INFINITY
+            let nv0 = Number.POSITIVE_INFINITY
+            let nv1 = Number.NEGATIVE_INFINITY
+            for (const [px, py] of cornersOf(boxes[other] as Box)) {
+                const u = (px - cx) * cos + (py - cy) * sin
+                const v = -(px - cx) * sin + (py - cy) * cos
+                nu0 = Math.min(nu0, u)
+                nu1 = Math.max(nu1, u)
+                nv0 = Math.min(nv0, v)
+                nv1 = Math.max(nv1, v)
+            }
+            const ncu = (nu0 + nu1) / 2
+            const ncv = (nv0 + nv1) / 2
+            const sameLine = Math.min(v1, nv1) - Math.max(v0, nv0) >= Math.min(v1 - v0, nv1 - nv0) * 0.5
+            const sameColumn = Math.min(u1, nu1) - Math.max(u0, nu0) > 0
+            if (sameLine && ncu < u0) limits.left = Math.min(limits.left, share(u0 - nu1))
+            if (sameLine && ncu > u1) limits.right = Math.min(limits.right, share(nu0 - u1))
+            if (sameColumn && ncv < v0) limits.top = Math.min(limits.top, share(v0 - nv1))
+            if (sameColumn && ncv > v1) limits.bottom = Math.min(limits.bottom, share(nv0 - v1))
+        })
+        return limits
+    }
+
     return boxes.map((box, index) => {
-        if (isRotated(box)) return fitBoxToInk(luma, box, options)
+        if (isRotated(box)) return fitBoxToInk(luma, box, { ...options, limits: turnedLimits(box, index) })
         const [x0, y0, x1, y1] = frames[index] as [number, number, number, number]
         let left = Number.POSITIVE_INFINITY
         let right = Number.POSITIVE_INFINITY
@@ -485,10 +563,10 @@ export function fitBoxesToInk(luma: Luma, boxes: readonly Box[], options: FitOpt
             const ncy = (ny0 + ny1) / 2
             const sameLine = Math.min(y1, ny1) - Math.max(y0, ny0) >= Math.min(y1 - y0, ny1 - ny0) * 0.5
             const sameColumn = Math.min(x1, nx1) - Math.max(x0, nx0) > 0
-            if (sameLine && ncx < x0) left = Math.min(left, Math.max(0, x0 - nx1))
-            if (sameLine && ncx > x1) right = Math.min(right, Math.max(0, nx0 - x1))
-            if (sameColumn && ncy < y0) top = Math.min(top, Math.max(0, y0 - ny1))
-            if (sameColumn && ncy > y1) bottom = Math.min(bottom, Math.max(0, ny0 - y1))
+            if (sameLine && ncx < x0) left = Math.min(left, share(x0 - nx1))
+            if (sameLine && ncx > x1) right = Math.min(right, share(nx0 - x1))
+            if (sameColumn && ncy < y0) top = Math.min(top, share(y0 - ny1))
+            if (sameColumn && ncy > y1) bottom = Math.min(bottom, share(ny0 - y1))
         })
         return fitBoxToInk(luma, box, { ...options, limits: { left, right, top, bottom } })
     })

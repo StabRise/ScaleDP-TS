@@ -144,3 +144,47 @@ describe('ScaleDpWorkerClient.run', () => {
         await expect(second.result).rejects.toMatchObject({ name: 'AbortError' })
     })
 })
+
+describe('auth relayed to the main thread', () => {
+    it('gives a stage in the worker the client’s token', async () => {
+        const { getConfig } = await import('../../src/core/config.js')
+        class NeedsToken extends Stage {
+            readonly name = 'NeedsToken'
+            constructor() {
+                super(resolveParams<BaseStageParams>(BASE_STAGE_DEFAULTS, { outputCol: 'token' }))
+            }
+            protected async apply(): Promise<string> {
+                return String(await getConfig().auth?.('StabRise/private'))
+            }
+            protected onError(message: string): { exception: string } {
+                return { exception: message }
+            }
+        }
+        registerStages({ NeedsToken: NeedsToken as never })
+
+        const asked: string[] = []
+        const scope = {
+            onmessage: null as ((event: MessageEvent<WorkerRequest>) => void) | null,
+            postMessage: (message: WorkerResponse) =>
+                queueMicrotask(() => worker.onmessage?.({ data: structuredClone(message) } as never)),
+        }
+        const worker = {
+            onmessage: null as ((event: MessageEvent<WorkerResponse>) => void) | null,
+            onerror: null,
+            postMessage: (message: WorkerRequest) =>
+                queueMicrotask(() => scope.onmessage?.({ data: structuredClone(message) } as never)),
+            terminate: () => undefined,
+        }
+        startScaleDpWorker(scope as never)
+        const client = new ScaleDpWorkerClient({
+            worker: worker as never,
+            auth: (repo) => {
+                asked.push(repo)
+                return 'secret-token'
+            },
+        })
+        const [row] = await client.transform([{ type: 'NeedsToken' }], [{}])
+        expect(row?.token).toBe('secret-token')
+        expect(asked).toEqual(['StabRise/private'])
+    })
+})

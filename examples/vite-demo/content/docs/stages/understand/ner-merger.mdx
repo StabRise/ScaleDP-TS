@@ -1,0 +1,80 @@
+---
+title: NerMerger
+description: Merge several NER readings of a page into one, with every entity's offsets pointing into the page as it finally stands.
+---
+
+<StageMeta type="NerMerger" />
+
+Two kinds of pipeline end up with more than one NER result for a page:
+
+- **Two passes over a page.** NER reads the text layer first, so entities
+  appear at once, then reads only the text an embedded-image pass added (see
+  [DocumentDelta](/docs/stages/transform/document-delta)). Each reading's
+  offsets point into the document *it* read, and neither is the merged page.
+- **Two recognisers over one text.** `GlinerNer` and `RegexNer` both find an
+  e-mail address, and the page should carry it once.
+
+`NerMerger` puts every entity's `start`/`end` into `documentCol`'s coordinates,
+then keeps an entity found twice (same span, same label) once, at its best
+score.
+
+```ts
+import { DocumentDelta, NerMerger, Pipeline } from '@stabrise/scaledp'
+
+const pipeline = new Pipeline([
+    // ... text layer into `document`, merged page into `merged`, NER on `document` into `ner`
+    new DocumentDelta({ inputCols: ['document', 'merged'], outputCol: 'delta' }),
+    { stage: new GlinerNer({ inputCol: 'delta', outputCol: 'delta_ner' }), when: { path: 'delta.bboxes.length', gt: 0 } },
+    new NerMerger({ inputCols: ['ner', 'delta_ner'], documentCol: 'merged' }),
+    new NerConsistency({ inputCols: ['ner', 'merged'], scope: 'document' }),
+])
+```
+
+## Why offsets have to be rebased
+
+`NerConsistency` matches the entities it already has against the spans it is
+about to propagate by `start` and `end`, and skips a propagation that overlaps
+one. An entity whose offsets point into some other document overlaps the wrong
+span, and the pass tags a name twice or not at all.
+
+Entities are placed by their **boxes**, not by searching for their text. The
+same name usually occurs several times on a page, and an entity's boxes say
+which occurrence it is. Boxes are absolute page coordinates, so they survive
+every pass unchanged. An entity whose boxes are not on the document falls back
+to the first occurrence of its word, and failing that keeps its offsets. A
+wrong offset costs a propagation, never a redaction, because the boxes are
+what get drawn.
+
+## Missing and failed inputs
+
+A column no stage wrote, because a `when` skipped it, counts as no entities.
+One failed reading does not cost the page the others: the delta pass over a
+picture can fail while the text layer's entities stand. Only when every input
+failed does the output carry an `exception`.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (1+) | `['ner', 'delta_ner']` | The NER outputs to merge. A column a skipped stage never wrote counts as no entities. |
+| `documentCol` | `string` | `'merged'` | The Document the merged offsets point into — the merged page. Empty keeps every entity’s offsets as they came. |
+| `dedupe` | `'span'` \| `'none'` | `'span'` | Keep an entity two inputs both found once, at its higher score, or keep every reading. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'ner'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'ner'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

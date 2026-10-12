@@ -98,6 +98,37 @@ models loaded only for the pages that need them, and configurable parallelism.
   upscale capped at `packMaxScale`. A picture alone on its input comes out
   exactly as unpacked; pictures sharing one can read differently, since the
   network sees its neighbours.
+- **`NerMerger`** (`@stabrise/scaledp`): several NER readings of a page
+  merged into one, with every entity's offsets rebased onto one document by
+  its boxes, as `NerConsistency` needs. An entity two readings both found
+  (same span and label) is kept once, at its best score. A column a skipped
+  stage never wrote counts as no entities, and one failed reading does not
+  cost the page the others.
+- **`DocumentDelta`** (`@stabrise/scaledp`): the boxes a later reading of a
+  page added (the text-layer page merged with its pictures' text), as a
+  `Document` of their own. A second NER pass then reads only what is new;
+  gated with `when` on `delta.bboxes.length`, a page whose pictures added
+  nothing costs one NER call. Together with `NerMerger`, this replaces
+  pdf-redaction's `deltaDocument` / `mergeNerOutputs` with stages that run
+  inside one pipeline.
+- **Model management** (`/registry`): `pipelineModels(descriptors, { enabled })`
+  lists the models a pipeline will download, merged across stages that share
+  them. `modelStatus` reports which are cached and how large each is,
+  `prefetchModels` downloads them ahead of time with per-model progress, and
+  `evictModels` deletes them. Stages report their own models through
+  `Stage.requiredModels()`. Core adds `cachedFiles()` (the cache's contents and
+  sizes) and `downloadSize(spec)`. The stage modules export their spec
+  builders (`yoloSpec`, `dbnetSpec`, `orientationSpec`, `presetModelSpec`), and
+  `loadPreset(preset, { onProgress })` takes its own progress callback.
+- **One download per origin.** Each model file is fetched under a Web Lock
+  named after its cache key. The page and every worker share IndexedDB, so a
+  realm that finds the lock taken waits and then reads the file from the
+  cache, instead of downloading it again. Waiting realms see the download's
+  progress, relayed on a `BroadcastChannel`.
+- **`auth` relayed from the main thread.** `createScaleDpWorker({ auth })`
+  and `createScaleDpWorkerPool({ auth })` answer the worker's token requests
+  over its message channel, so a worker entry no longer needs its own copy of
+  the token logic.
 - `LazyLoad`, `ProgressHub`, `reportProgress` / `reportReady`: the load-once,
   progress-for-every-waiter helpers the engine stages use.
 - **Benchmarks.** `pnpm bench` (throughput across workers, threads and pages in
@@ -114,15 +145,25 @@ models loaded only for the pages that need them, and configurable parallelism.
   covering reading much shorter than the one it covers is no longer treated
   as a repeat of it.
 
+- **`FitBoxesToInk` no longer grows boxes into each other.** A turned box was
+  fitted with no neighbour limits, so a quarter-turned word grew across a
+  3 px word gap into the next one (a turned "Yamamoto" into "Freya"), and
+  stacked letters into each other. Turned boxes now get the same limits as
+  upright ones, measured along and across their own text. Each box also takes
+  at most half the gap to its neighbour, where it used to take all of it, so
+  two boxes growing towards each other can touch but not overlap. On the
+  extraction-conditions benchmark page fitting used to create 17 overlapping
+  pairs; it now creates none.
+
 ### ⚡ Performance
 
-- **`FitBoxesToInk` is faster, with identical output.** It reads and converts
+- **`FitBoxesToInk` is faster.** It reads and converts
   only the bands of the page its boxes can reach, instead of the whole page.
   Neighbours come from a spatial grid instead of comparing every pair of boxes,
   and the per-box background and contrast come from byte histograms instead of
   sorts. On a 300 DPI page with header and footer text it takes about 25 ms,
   down from 48 ms; fitting 2000 boxes takes 27 ms, down from 62 ms. Tests check
-  it box for box against the previous algorithm. New helpers: `fitRegion` and
+  it box for box against a straightforward all-pairs, whole-page version. New helpers: `fitRegion` and
   `fitBands`. `Luma` may now hold a region of the page (`left`, `top`).
 
 ## [0.5.0] - 06.10.2026

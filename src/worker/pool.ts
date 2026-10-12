@@ -26,7 +26,7 @@
  * worker except by the speed.
  */
 
-import type { ModelProgress } from '../core/config.js'
+import type { ModelProgress, ScaleDpConfig } from '../core/config.js'
 import { EventStream } from '../core/events.js'
 import { comparePriority } from '../core/locks.js'
 import type { Row, StageDescriptor } from '../core/pipeline.js'
@@ -53,6 +53,8 @@ export interface ScaleDpWorkerPoolOptions {
      */
     pagesPerWorker?: number
     onProgress?: (progress: ModelProgress, worker: number) => void
+    /** Token supplier for private repos, relayed to every worker. */
+    auth?: ScaleDpConfig['auth']
 }
 
 /** Transient column that tells the coordinator which unit a returned row belongs to. */
@@ -99,6 +101,7 @@ export class ScaleDpWorkerPool {
             (_, index) =>
                 new ScaleDpWorkerClient({
                     worker: options.createWorker(index),
+                    auth: options.auth,
                     onProgress: options.onProgress && ((progress) => options.onProgress?.(progress, index)),
                 })
         )

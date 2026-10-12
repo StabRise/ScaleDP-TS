@@ -18,7 +18,13 @@ import {
     toImageData,
     toNchwFloat32,
 } from '../core/image.js'
-import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
+import {
+    ensureModelFiles,
+    LazyLoad,
+    type ModelRequirement,
+    type ModelSpec,
+    type ProgressListener,
+} from '../core/model-cache.js'
 import { createSession } from './ort.js'
 
 export const DEFAULT_ORIENTATION_MODEL = 'StabRise/line_orientation_detection_v0.1'
@@ -29,6 +35,16 @@ export const ORIENTATION_INPUT = { width: 160, height: 80 } as const
 export type LineOrientation = '0_degree' | '180_degree'
 
 const LABELS: readonly LineOrientation[] = ['0_degree', '180_degree']
+
+/** The files a line-orientation `model` param names. */
+export function orientationSpec(model: string): ModelSpec {
+    return { repo: model, files: [{ path: 'model.onnx' }] }
+}
+
+/** The orientation model as a stage reports it in `requiredModels()`. */
+export function orientationRequirement(model: string): ModelRequirement {
+    return { label: `${model} (line orientation)`, spec: orientationSpec(model) }
+}
 
 export class LineOrientationClassifier {
     private readonly session = new LazyLoad<import('onnxruntime-web').InferenceSession>(() => this.model)
@@ -42,10 +58,10 @@ export class LineOrientationClassifier {
 
     private getSession(onProgress?: ProgressListener): Promise<import('onnxruntime-web').InferenceSession> {
         return this.session.get(async (emit) => {
-            const files = await ensureModelFiles(
-                { repo: this.model, files: [{ path: 'model.onnx' }] },
-                { onProgress: emit, building: true }
-            )
+            const files = await ensureModelFiles(orientationSpec(this.model), {
+                onProgress: emit,
+                building: true,
+            })
             const bytes = files['model.onnx']
             if (!bytes) {
                 throw new DetectionError(`Model ${this.model} has no model.onnx`, 'LineOrientation')

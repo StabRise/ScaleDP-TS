@@ -1,1 +1,9 @@
-{ "title": "Understand", "pages": ["gliner-ner", "regex-ner", "ner-consistency"] }
+{
+    "title": "Understand",
+    "pages": [
+        "gliner-ner",
+        "regex-ner",
+        "ner-consistency",
+        "ner-merger"
+    ]
+}

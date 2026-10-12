@@ -13,6 +13,7 @@ import type { ModelProgress } from './config.js'
 import { formatException } from './errors.js'
 import { EventStream } from './events.js'
 import type { ResourceClaim } from './locks.js'
+import type { ModelRequirement } from './model-cache.js'
 import type { BaseStageParams } from './params.js'
 import type { PipelineEvent, RunOptions } from './run.js'
 import { compilePlan, type PipelineEntry, runPlan } from './scheduler.js'
@@ -193,6 +194,16 @@ export abstract class Stage<P extends BaseStageParams = BaseStageParams> {
      */
     async planPages(_row: Row, _ctx: StageContext): Promise<number[] | null> {
         return null
+    }
+
+    /**
+     * The model files this stage will download when it first runs, as its
+     * params stand. Nothing is fetched: this is for showing, checking and
+     * prefetching what a pipeline needs before it runs. Engine-free stages
+     * need nothing.
+     */
+    async requiredModels(): Promise<ModelRequirement[]> {
+        return []
     }
 
     /** Columns this stage writes; what a row update carries. */

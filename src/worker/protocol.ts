@@ -39,7 +39,18 @@ export interface WorkerEnvironment {
 }
 
 export type WorkerRequest =
-    | { type: 'configure'; requestId: number; config: Partial<ScaleDpConfig> }
+    | {
+          type: 'configure'
+          requestId: number
+          config: Partial<ScaleDpConfig>
+          /**
+           * The client holds an `auth` callback: ask it for tokens (an `auth`
+           * message) instead of needing one configured in the worker entry.
+           */
+          relayAuth?: boolean
+      }
+    /** The client's answer to an `auth` message; `requestId` is the one that message carried. */
+    | { type: 'authToken'; requestId: number; token?: string }
     | { type: 'transform'; requestId: number; stages: StageDescriptor[]; rows: Row[] }
     | {
           type: 'run'
@@ -66,6 +77,8 @@ export type WorkerResponse =
     | { type: 'progress'; requestId: number; progress: ModelProgress }
     | { type: 'stage'; requestId: number; name: string; ms: number; rows: number }
     | { type: 'event'; requestId: number; event: PipelineEvent }
+    /** The worker needs a token for a private repo; answered with `authToken`. */
+    | { type: 'auth'; requestId: number; repo: string }
     | { type: 'row'; requestId: number; update: RowUpdate }
     | { type: 'result'; requestId: number; rows: Row[] }
     | { type: 'planned'; requestId: number; pages: (number[] | null)[]; barriers: number[] }

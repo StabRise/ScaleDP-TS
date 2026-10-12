@@ -1,0 +1,131 @@
+---
+title: Managing models
+description: Show what a pipeline will download, prefetch it with live progress, share one download between the page and its workers, and list or delete what is cached.
+---
+
+Every engine stage downloads its model the first time a row reaches it. That
+is the right default for a pipeline, and the wrong experience for a user who
+clicks "Scan" and waits a minute on a progress bar they did not expect. This
+page covers what an application builds around downloads: an up-front "this
+will download 349 MB", a Settings panel listing what is on disk, a prefetch
+with real progress, and a worker that does not fetch again what the page just
+fetched.
+
+## What a pipeline needs
+
+Each stage reports the model files it will download, as its params stand
+(`Stage.requiredModels()`). `pipelineModels` gathers those for a pipeline,
+leaves out disabled stages and merges stages that share a model:
+
+```ts
+import { modelStatus, pipelineModels } from '@stabrise/scaledp/registry'
+
+const models = await pipelineModels(documentStages, { enabled: { faces: settings.faces } })
+for (const model of await modelStatus(models)) {
+    console.log(model.label, model.cached ? 'cached' : `downloads ${model.bytes} bytes`, model.stages)
+}
+// PaddleOCR v6-small  downloads 31208814 bytes  ['ocr.detect', 'ocr.read']
+// StabRise/face_detection  cached  ['faces']
+```
+
+`PaddleRecognizer` needs only a preset's recogniser and dictionary, while
+`PaddleTextDetector` also needs its detector. On one preset they are one
+model, because they read the same cache keys. A stage gated by `when` is
+included, since whether any page will match is not known before the run.
+
+<Callout title="Not every download is a model file">
+Tesseract's language data is fetched by tesseract-wasm into its own cache, and
+GLiNER's tokenizer by transformers.js into its own. Neither is reported here.
+Both are small next to the models.
+</Callout>
+
+## Prefetch, with progress
+
+```ts
+import { prefetchModels } from '@stabrise/scaledp/registry'
+
+const results = await prefetchModels(models, {
+    onProgress: (model, { loaded, total, phase }) => ui.downloads.set(model.key, { loaded, total, phase }),
+    signal: controller.signal,
+})
+for (const { model, ok, error } of results) if (!ok) ui.warn(model.label, error)
+```
+
+- **Progress is per model,** not through the global `configure({ onProgress })`,
+  so two panels downloading different models never hear each other's.
+- **Every download ends with `ready`.** There is no need for a timer to clear a
+  bar.
+- **A failure is a result, not a throw.** A private repo with no signed-in
+  user is a normal state to show.
+- **`signal` stops waiting.** A download another caller shares carries on into
+  the cache.
+
+During a run, the same progress arrives per stage as `model:progress` events,
+whether the stage runs on this thread, in a worker or across a pool. When a
+stage builds its session, the event sequence ends `initializing`, then
+`ready`. See [Streaming runs](/docs/concepts/streaming).
+
+## One download per origin
+
+The cache is IndexedDB, shared by the page and every worker of an origin. A
+realm only knows its own downloads in flight, so before this, the page
+prefetching while a worker started a run, or a pool of four workers starting
+cold, fetched the same file once per realm.
+
+Each file is now fetched under a [Web Lock](https://developer.mozilla.org/docs/Web/API/Web_Locks_API)
+named after its cache key:
+
+- **The first realm downloads and stores the file.** The others wait for the
+  lock, then find the file in the cache.
+- **Waiting realms still see the download move.** The downloading realm
+  broadcasts its progress on a `BroadcastChannel`, and waiters report it as
+  their own, so a stage waiting in a worker shows the bar the page started.
+- **Without Web Locks or IndexedDB nothing is shared,** and each realm simply
+  downloads, as before.
+
+A test drives the page and a worker at the same model at the same instant and
+counts one fetch between them.
+
+<Callout title="Sessions cannot be shared, downloads can">
+An ONNX session lives in one realm's memory, so every worker that runs a model
+builds its own session from the bytes, and holds its own copy. What is shared
+is the download and the cache. Size a pool against the models it runs; see
+[Performance and parallelism](/docs/guides/performance).
+</Callout>
+
+## Tokens for private models, from the main thread
+
+`configure({ auth })` holds a function, and functions cannot cross
+`postMessage`, so a worker used to need its own copy of the app's token logic
+in its entry file. Give the client the callback instead, and the worker asks
+for tokens over its message channel:
+
+```ts
+const client = createScaleDpWorker({
+    worker: new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    auth: async (repo) => (repo.startsWith('StabRise/') ? await session.hfToken() : undefined),
+})
+```
+
+`createScaleDpWorkerPool({ auth })` relays it to every worker. The main thread,
+where the session and its cookies live, stays the only place that knows how to
+get a token.
+
+## What is on disk
+
+```ts
+import { cachedFiles, requestPersistentStorage } from '@stabrise/scaledp'
+import { evictModels } from '@stabrise/scaledp/registry'
+
+const files = await cachedFiles()      // [{ key: 'repo@main/path', bytes }]
+const used = files.reduce((sum, f) => sum + f.bytes, 0)
+
+await evictModels([model])             // free one model's space
+await requestPersistentStorage()       // ask the browser not to evict the origin
+```
+
+For a single model without a pipeline, the lower-level calls take a
+`ModelSpec`: `isCached`, `downloadSize`, `ensureModelFiles(spec, { onProgress })`
+and `evict`. Stage modules export the spec builders they use (`yoloSpec`,
+`dbnetSpec`, `orientationSpec`, `presetModelSpec`), so an app never hardcodes a
+repo a stage already knows.

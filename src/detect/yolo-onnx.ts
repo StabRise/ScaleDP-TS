@@ -11,7 +11,13 @@
 import { getConfig } from '../core/config.js'
 import { DetectionError, upstreamError } from '../core/errors.js'
 import { decodeImage, letterbox, toImageData, toNchwFloat32 } from '../core/image.js'
-import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
+import {
+    ensureModelFiles,
+    LazyLoad,
+    type ModelRequirement,
+    type ModelSpec,
+    type ProgressListener,
+} from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage } from '../core/pipeline.js'
 import { createSession } from '../ocr/ort.js'
@@ -152,6 +158,13 @@ export function decodeYoloOutput(
     return out
 }
 
+/** The files a YOLO `model` param names: a repo's `model.onnx`, or a URL. */
+export function yoloSpec(model: string): ModelSpec {
+    return /^https?:\/\//.test(model)
+        ? { repo: 'yolo', files: [{ path: model }] }
+        : { repo: model, files: [{ path: 'model.onnx' }] }
+}
+
 export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
     // Annotated as string rather than inferred as a literal, so SignatureDetector
     // and FaceDetector can narrow it to their own names.
@@ -176,12 +189,14 @@ export class YoloOnnxDetector extends Stage<YoloOnnxDetectorParams> {
         await this.getSession(ctx?.onProgress)
     }
 
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return [{ label: this.params.model, spec: yoloSpec(this.params.model) }]
+    }
+
     private getSession(onProgress?: ProgressListener): Promise<import('onnxruntime-web').InferenceSession> {
         return this.session.get(async (emit) => {
             const { model } = this.params
-            const spec = /^https?:\/\//.test(model)
-                ? { repo: 'yolo', files: [{ path: model }] }
-                : { repo: model, files: [{ path: 'model.onnx' }] }
+            const spec = yoloSpec(model)
 
             const files = await ensureModelFiles(spec, { onProgress: emit, building: true })
             const bytes = files[spec.files[0]?.path ?? '']

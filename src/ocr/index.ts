@@ -28,6 +28,7 @@ export {
     DBNET_INPUT_SIZE,
     DbnetOnnxDetector,
     DEFAULT_DBNET_MODEL,
+    dbnetSpec,
 } from './dbnet-onnx.js'
 export type { DetectorKind, DetectorModel } from './detector-registry.js'
 export {
@@ -40,6 +41,8 @@ export {
     DEFAULT_ORIENTATION_MODEL,
     LineOrientationClassifier,
     ORIENTATION_INPUT,
+    orientationRequirement,
+    orientationSpec,
 } from './line-orientation.js'
 export type { LineOrientationDetectorParams } from './line-orientation-stage.js'
 export {
@@ -71,6 +74,7 @@ export type { PaddleRecognizerParams } from './paddle-recognizer.js'
 export { PADDLE_RECOGNIZER_DEFAULTS, PaddleRecognizer } from './paddle-recognizer.js'
 export type {
     PaddleLoadOptions,
+    PaddlePresetRole,
     PaddleRecognitionService,
     PaddleRecognizerOptions,
 } from './paddle-service.js'
@@ -81,6 +85,7 @@ export {
     isPresetCached,
     loadPreset,
     portableModelUrl,
+    presetModelSpec,
     removePreset,
 } from './paddle-service.js'
 export type { OcrPreset } from './presets.js'

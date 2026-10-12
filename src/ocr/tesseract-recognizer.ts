@@ -11,6 +11,7 @@
 import { OcrError, upstreamError } from '../core/errors.js'
 import type { Point } from '../core/geometry.js'
 import { cropBox, cropGeometry, decodeImage, rotate180, toImageData } from '../core/image.js'
+import type { ModelRequirement } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
@@ -19,7 +20,11 @@ import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
 import { dropNestedRegions, extendAlongText } from './extend-regions.js'
-import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-orientation.js'
+import {
+    DEFAULT_ORIENTATION_MODEL,
+    LineOrientationClassifier,
+    orientationRequirement,
+} from './line-orientation.js'
 import { getTesseractClient } from './tesseract.js'
 
 export interface TesseractRecognizerParams extends BaseStageParams {
@@ -124,6 +129,14 @@ export class TesseractRecognizer extends Stage<TesseractRecognizerParams> {
 
     private get language(): string {
         return this.params.lang.join('+')
+    }
+
+    /**
+     * The orientation model, when used. Tesseract's own traineddata is fetched
+     * by tesseract-wasm into its own cache and is not reported here.
+     */
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return this.params.detectLineOrientation ? [orientationRequirement(this.params.oriModel)] : []
     }
 
     /** Clients are cached per language, so every stage on one language shares it. */

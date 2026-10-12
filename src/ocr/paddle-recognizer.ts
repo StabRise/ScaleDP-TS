@@ -14,6 +14,7 @@
 
 import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage } from '../core/image.js'
+import type { ModelRequirement } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
@@ -22,7 +23,11 @@ import type { DetectorOutput } from '../schemas/detector-output.js'
 import { createDocument, type Document } from '../schemas/document.js'
 import type { ScaleDpImage } from '../schemas/image.js'
 import { dropNestedRegions, extendAlongText } from './extend-regions.js'
-import { DEFAULT_ORIENTATION_MODEL, LineOrientationClassifier } from './line-orientation.js'
+import {
+    DEFAULT_ORIENTATION_MODEL,
+    LineOrientationClassifier,
+    orientationRequirement,
+} from './line-orientation.js'
 import { getPaddleRecognizer } from './paddle-service.js'
 import { readRegions } from './paddle-words.js'
 import { DEFAULT_OCR_PRESET, presetForRow, validatePreset } from './presets.js'
@@ -189,6 +194,22 @@ export class PaddleRecognizer extends Stage<PaddleRecognizerParams> {
 
     override resources(): string[] {
         return [PADDLE_RECOGNIZER_RESOURCE]
+    }
+
+    /**
+     * The configured preset's recogniser and dictionary -- not its detector,
+     * which this stage never loads -- and the orientation model when used.
+     */
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        const { preset, detectLineOrientation, oriModel } = this.params
+        // Imported here, not at the top: only this needs it, and a test that
+        // stands in for paddle-service need not provide it.
+        const { presetModelSpec } = await import('./paddle-service.js')
+        const recognition = await presetModelSpec(preset, ['recognition', 'charactersDictionary'])
+        return [
+            { label: `PaddleOCR ${preset} (recognition)`, spec: recognition },
+            ...(detectLineOrientation ? [orientationRequirement(oriModel)] : []),
+        ]
     }
 
     override async init(ctx?: InitContext): Promise<void> {

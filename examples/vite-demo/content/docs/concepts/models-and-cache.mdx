@@ -82,6 +82,10 @@ boundary corrupts data rather than erroring.
 
 ## Managing the cache
 
+For what a whole pipeline needs, and for prefetching, progress, sharing one
+download across workers, and listing or deleting cached models, see
+[Managing models](/docs/guides/managing-models). The per-model calls:
+
 ```ts
 import { isCached, evict } from '@stabrise/scaledp'
 import { getNerModel, modelSizeBytes } from '@stabrise/scaledp/ner'
@@ -92,7 +96,7 @@ if (model && !(await isCached({ repo: model.repo, files: model.files }))) {
     warnAbout(modelSizeBytes(model))     // before a 580 MB download
 }
 
-await loadPreset('v6-small')     // pre-warm, so the first OCR is instant
+await loadPreset('v6-small', { onProgress })  // pre-warm, so the first OCR is instant
 await removePreset('v6-medium')  // free the space
 ```
 

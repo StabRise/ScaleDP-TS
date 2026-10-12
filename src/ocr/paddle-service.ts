@@ -118,6 +118,24 @@ export function portableModelUrl(url: string): string {
     return match ? `${match[1]}/${match[3]}.onnx` : url
 }
 
+/** A part of a PaddleOCR preset: its detector, recogniser or character dictionary. */
+export type PaddlePresetRole = 'detection' | 'recognition' | 'charactersDictionary'
+
+/**
+ * The files a preset needs for the given roles, as the cache keys them.
+ *
+ * What `requiredModels()` reports for the Paddle stages, and what
+ * `loadPreset` and the stages themselves fetch -- one definition, so a
+ * prefetch lands on exactly the keys a run later reads.
+ */
+export async function presetModelSpec(
+    preset: string,
+    roles: readonly PaddlePresetRole[] = ['detection', 'recognition', 'charactersDictionary']
+): Promise<ModelSpec> {
+    const { spec, roles: all } = await specForPreset(preset)
+    return { ...spec, files: roles.map((role) => spec.files[all.indexOf(role)] as { path: string }) }
+}
+
 /**
  * Absolute model URLs bypass `modelHost`: ppu-paddle-ocr publishes its own
  * catalogue and the paths are meaningful only against that host.
@@ -292,9 +310,13 @@ export async function isPresetCached(preset: string): Promise<boolean> {
     return isCached(spec)
 }
 
-/** Pre-warm a preset so the first OCR call does not pay the download. */
-export async function loadPreset(preset: string): Promise<void> {
-    await getPaddleService(preset)
+/**
+ * Pre-warm a preset so the first OCR call does not pay the download: fetch
+ * its files and build its sessions. To download without building sessions,
+ * pass `presetModelSpec(preset)` to `ensureModelFiles` instead.
+ */
+export async function loadPreset(preset: string, options: PaddleLoadOptions = {}): Promise<void> {
+    await getPaddleService(preset, options)
 }
 
 export async function removePreset(preset: string): Promise<void> {

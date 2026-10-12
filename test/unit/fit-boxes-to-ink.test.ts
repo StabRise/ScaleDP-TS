@@ -154,7 +154,7 @@ describe('FitBoxesToInk', () => {
  * replaced, on random pages. They must agree box for box, bit for bit.
  */
 describe('fitBoxesToInk, optimised', () => {
-    /** The original: every pair compared, over a luma of the whole page. */
+    /** The straightforward version: every pair compared, over a luma of the whole page. */
     function reference(luma: Luma, boxes: readonly Box[]): Box[] {
         const frame = (b: Box): [number, number, number, number] => {
             if (!isRotated(b)) return bbox(b)
@@ -181,10 +181,10 @@ describe('fitBoxesToInk, optimised', () => {
                 const ncy = (ny0 + ny1) / 2
                 const sameLine = Math.min(y1, ny1) - Math.max(y0, ny0) >= Math.min(y1 - y0, ny1 - ny0) * 0.5
                 const sameColumn = Math.min(x1, nx1) - Math.max(x0, nx0) > 0
-                if (sameLine && ncx < x0) left = Math.min(left, Math.max(0, x0 - nx1))
-                if (sameLine && ncx > x1) right = Math.min(right, Math.max(0, nx0 - x1))
-                if (sameColumn && ncy < y0) top = Math.min(top, Math.max(0, y0 - ny1))
-                if (sameColumn && ncy > y1) bottom = Math.min(bottom, Math.max(0, ny0 - y1))
+                if (sameLine && ncx < x0) left = Math.min(left, Math.max(0, x0 - nx1) / 2)
+                if (sameLine && ncx > x1) right = Math.min(right, Math.max(0, nx0 - x1) / 2)
+                if (sameColumn && ncy < y0) top = Math.min(top, Math.max(0, y0 - ny1) / 2)
+                if (sameColumn && ncy > y1) bottom = Math.min(bottom, Math.max(0, ny0 - y1) / 2)
             }
             return fitBoxToInk(luma, b, { limits: { left, right, top, bottom } })
         })
@@ -236,7 +236,15 @@ describe('fitBoxesToInk, optimised', () => {
             }
             const regional: Luma = { data: crop, width: right - left, height: bottom - top, left, top }
 
-            expect(fitBoxesToInk(regional, boxes), `trial ${trial}`).toEqual(reference(page, boxes))
+            // Turned boxes take their limits along their own text, which the
+            // page-axis reference does not model; the upright ones must match it.
+            const fast = fitBoxesToInk(regional, boxes)
+            const slow = reference(page, boxes)
+            const upright = boxes.map((box, i) => (isRotated(box) ? -1 : i)).filter((i) => i >= 0)
+            expect(
+                upright.map((i) => fast[i]),
+                `trial ${trial}`
+            ).toEqual(upright.map((i) => slow[i]))
         }
     })
 
@@ -255,5 +263,104 @@ describe('fitBoxesToInk, optimised', () => {
                 0.114 * (pixels[i + 2] as number)
             expect(luma.data[p]).toBe(Math.round(y * alpha + 255 * (1 - alpha)))
         }
+    })
+})
+
+describe('fitBoxesToInk never makes boxes overlap', () => {
+    /** True when two boxes' rotated rectangles intersect (separating-axis test). */
+    function overlap(a: Box, b: Box): boolean {
+        const corners = (box: Box) =>
+            boxPoints({
+                center: [box.x + box.width / 2, box.y + box.height / 2],
+                size: [box.width, box.height],
+                angle: box.angle,
+            })
+        const pa = corners(a)
+        const pb = corners(b)
+        for (const poly of [pa, pb]) {
+            for (let i = 0; i < 4; i++) {
+                const [x1, y1] = poly[i] as [number, number]
+                const [x2, y2] = poly[(i + 1) % 4] as [number, number]
+                const nx = y2 - y1
+                const ny = x1 - x2
+                const project = (pts: readonly (readonly [number, number])[]) =>
+                    pts.map(([x, y]) => x * nx + y * ny)
+                const A = project(pa)
+                const B = project(pb)
+                // Touching edges, within half a pixel, are not an overlap.
+                const tolerance = 0.5 * Math.hypot(nx, ny)
+                if (
+                    Math.max(...A) <= Math.min(...B) + tolerance ||
+                    Math.max(...B) <= Math.min(...A) + tolerance
+                ) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Glyphs drawn along each word on white: 8 px strokes with 2 px letter
+     * gaps, running 2 px past each end of the word's box -- the shortfall a
+     * text layer or detector leaves, and the reason a box grows at all.
+     */
+    function inked(words: { box: Box; vertical: boolean }[]): Luma {
+        const width = 400
+        const height = 400
+        const data = new Uint8Array(width * height).fill(250)
+        const paint = (x: number, y: number) => {
+            if (x >= 0 && y >= 0 && x < width && y < height) data[y * width + x] = 20
+        }
+        for (const { box, vertical } of words) {
+            const cx = box.x + box.width / 2
+            const cy = box.y + box.height / 2
+            const half = box.width / 2 + 2
+            for (let t = -half; t < half; t++) {
+                if (Math.floor(t + half) % 10 >= 8) continue // letter gap
+                for (let k = -box.height / 2 + 4; k < box.height / 2 - 4; k++) {
+                    if (vertical) paint(Math.floor(cx + k), Math.floor(cy + t))
+                    else paint(Math.floor(cx + t), Math.floor(cy + k))
+                }
+            }
+        }
+        return { data, width, height }
+    }
+
+    it("keeps a turned name's two words apart across a 3 px gap", () => {
+        // "Yamamoto" above "Freya", both quarter-turned, as a PDF text layer gives them.
+        const yamamoto = createBox({
+            text: 'Yamamoto',
+            x: 87,
+            y: 100,
+            width: 153,
+            height: 33,
+            angle: 90,
+            score: 1,
+        })
+        const freya = createBox({ text: 'Freya', x: 121, y: 226, width: 85, height: 33, angle: 90, score: 1 })
+        expect(overlap(yamamoto, freya)).toBe(false)
+        const page = inked([
+            { box: yamamoto, vertical: true },
+            { box: freya, vertical: true },
+        ])
+        const [a, b] = fitBoxesToInk(page, [yamamoto, freya]) as [Box, Box]
+        // Both still grow to their ink...
+        expect(a.width).toBeGreaterThan(yamamoto.width)
+        expect(b.width).toBeGreaterThan(freya.width)
+        // ...but not into each other.
+        expect(overlap(a, b)).toBe(false)
+    })
+
+    it('keeps upright words on a line apart too', () => {
+        const one = createBox({ text: 'Freya', x: 50, y: 100, width: 80, height: 30, score: 1 })
+        const two = createBox({ text: 'Yamamoto', x: 138, y: 100, width: 120, height: 30, score: 1 })
+        const page = inked([
+            { box: one, vertical: false },
+            { box: two, vertical: false },
+        ])
+        const [a, b] = fitBoxesToInk(page, [one, two]) as [Box, Box]
+        expect(a.width).toBeGreaterThan(one.width)
+        expect(overlap(a, b)).toBe(false)
     })
 })

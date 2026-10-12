@@ -30,6 +30,11 @@ export interface ScaleDpWorkerOptions {
      *   new Worker(new URL('./my-worker.ts', import.meta.url), { type: 'module' })
      */
     worker: Worker
+    /**
+     * Token supplier for private model repos, called on this thread when the
+     * worker needs one. The worker entry no longer needs its own `auth`.
+     */
+    auth?: ScaleDpConfig['auth']
     /** Model progress from `configure({ onProgress })` in the worker, for any request. */
     onProgress?: (progress: ModelProgress, requestId: number) => void
     /** Per-stage timing of `transform` requests. */
@@ -90,6 +95,10 @@ export class ScaleDpWorkerClient {
                 options.onStage?.(message.name, message.ms, message.rows, message.requestId)
                 return
             }
+            if (message.type === 'auth') {
+                void this.answerAuth(message.requestId, message.repo)
+                return
+            }
             if (message.type === 'event') {
                 this.pending.get(message.requestId)?.onEvent?.(message.event)
                 return
@@ -112,11 +121,25 @@ export class ScaleDpWorkerClient {
             } else entry.resolve(undefined as never)
         }
 
+        // With `auth` the worker must be told to relay before its first
+        // request; queued first, so it is.
+        if (options.auth) void this.configure({}).catch(() => undefined)
+
         options.worker.onerror = (event) => {
             this.failure = new Error(`Worker failed: ${event.message}`)
             for (const [, entry] of this.pending) entry.reject(this.failure)
             this.pending.clear()
         }
+    }
+
+    private async answerAuth(requestId: number, repo: string): Promise<void> {
+        let token: string | undefined
+        try {
+            token = (await this.options.auth?.(repo)) ?? undefined
+        } catch {
+            token = undefined // fetched anonymously, as with no auth at all
+        }
+        this.options.worker.postMessage({ type: 'authToken', requestId, token } as WorkerRequest)
     }
 
     private send<T>(
@@ -159,7 +182,11 @@ export class ScaleDpWorkerClient {
      * the client instead.
      */
     configure(config: TransferableConfig): Promise<WorkerEnvironment | undefined> {
-        return this.send({ type: 'configure', config: config as Partial<ScaleDpConfig> })
+        return this.send({
+            type: 'configure',
+            config: config as Partial<ScaleDpConfig>,
+            relayAuth: this.options.auth !== undefined,
+        })
     }
 
     /** Run a pipeline in the worker in stage order. Stages are named, not passed by reference. */

@@ -2,6 +2,7 @@
     "title": "Operating it",
     "pages": [
         "performance",
+        "managing-models",
         "self-hosting-models",
         "private-models-and-auth",
         "troubleshooting"

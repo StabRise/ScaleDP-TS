@@ -1,0 +1,60 @@
+---
+title: DocumentDelta
+description: The text a later reading of a page added, as a document of its own, so a second NER pass reads only what is new.
+---
+
+<StageMeta type="DocumentDelta" />
+
+A PDF page is often read twice: its text layer first, so results come in at
+once, then again with the text found inside its embedded images merged in by
+[PdfMergeImageText](/docs/stages/transform/pdf-merge-image-text). Running NER
+on the merged page a second time re-analyses every word the first pass already
+read. With a cloud NER service, it also pays for them twice.
+
+With `strategy: 'text-layer-wins'` the merge only ever adds boxes, so the
+difference between the two readings is exactly the new text. `DocumentDelta`
+writes that difference as a `Document`:
+
+```ts
+import { DocumentDelta } from '@stabrise/scaledp'
+import { PdfMergeImageText } from '@stabrise/scaledp/pdf'
+
+new PdfMergeImageText({ outputCol: 'merged' }),          // keep `document` as the text layer
+new DocumentDelta({ inputCols: ['document', 'merged'], outputCol: 'delta' }),
+```
+
+When the later reading added nothing (the page had no readable picture, or
+the text layer covered everything in it), the delta is an empty document.
+That is the common case on a born-digital PDF. Gate the NER that reads it with
+`when: { path: 'delta.bboxes.length', gt: 0 }` and that page costs nothing.
+
+Merge the two NER readings back with [NerMerger](/docs/stages/understand/ner-merger).
+
+Boxes are matched by their text and rounded position, so a box that made a
+round trip through a service as JSON is still recognised. A first reading that
+failed counts as having read nothing, and the whole merged page is new.
+
+{/* generated:params */}
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCols` | `string[]` (2) | `['document', 'merged']` | The first reading, then the reading that may have added to it — the text layer, then the page merged with its pictures’ text. |
+
+<Accordions>
+<Accordion title="Column wiring and error handling">
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `inputCol` | `string` | `'document'` | Inherited but unused: this stage reads the columns listed in inputCols. |
+| `outputCol` | `string` | `'delta'` | Output column |
+| `pathCol` | `string` | `'path'` | Row field holding the source path, copied onto the output. |
+| `pageCol` | `string` | `'page'` | Row field holding the page index for multi-page inputs. |
+| `keepInputData` | `boolean` | `true` | Keep the input column in the output rows instead of dropping it. |
+| `propagateError` | `boolean` | `false` | Throw instead of recording the failure in the output’s exception field. |
+
+</Accordion>
+</Accordions>
+
+{/* /generated:params */}

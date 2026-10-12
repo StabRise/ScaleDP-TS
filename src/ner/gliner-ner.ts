@@ -9,7 +9,12 @@
 import { getConfig } from '../core/config.js'
 import { boxesForRange, buildCharToBoxMap } from '../core/entities.js'
 import { NerError, upstreamError } from '../core/errors.js'
-import { ensureModelFiles, LazyLoad, type ProgressListener } from '../core/model-cache.js'
+import {
+    ensureModelFiles,
+    LazyLoad,
+    type ModelRequirement,
+    type ProgressListener,
+} from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage } from '../core/pipeline.js'
 import type { Document } from '../schemas/document.js'
@@ -91,6 +96,15 @@ export class GlinerNer extends Stage<GlinerNerParams> {
 
     override async init(ctx?: InitContext): Promise<void> {
         await this.getBackend(ctx?.onProgress)
+    }
+
+    /**
+     * The model's weights. Its tokenizer is fetched by transformers.js into
+     * that library's own cache, is small, and is not reported here.
+     */
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        const model = getNerModel(this.params.model)
+        return model ? [{ label: model.name, spec: { repo: model.repo, files: model.files } }] : []
     }
 
     private getBackend(onProgress?: ProgressListener): Promise<NerBackend> {

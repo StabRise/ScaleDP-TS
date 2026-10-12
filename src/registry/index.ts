@@ -30,6 +30,14 @@ export type { StageDescriptor } from '../core/pipeline.js'
 export type { PipelineCodeOptions } from './codegen.js'
 export { pipelineCode } from './codegen.js'
 export type {
+    ModelStatus,
+    PipelineModel,
+    PipelineModelsOptions,
+    PrefetchOptions,
+    PrefetchResult,
+} from './models.js'
+export { evictModels, modelStatus, pipelineModels, prefetchModels } from './models.js'
+export type {
     ColumnKind,
     StageCacheSpec,
     StageParamKind,

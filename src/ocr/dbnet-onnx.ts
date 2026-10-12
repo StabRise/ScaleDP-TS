@@ -27,7 +27,13 @@ import {
     toImageData,
     toNchwFloat32,
 } from '../core/image.js'
-import { ensureModelFiles, LazyLoad, type ModelSpec, type ProgressListener } from '../core/model-cache.js'
+import {
+    ensureModelFiles,
+    LazyLoad,
+    type ModelRequirement,
+    type ModelSpec,
+    type ProgressListener,
+} from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import {
     type InitContext,
@@ -234,7 +240,8 @@ export const DBNET_DETECTOR_DEFAULTS: DbnetOnnxDetectorParams = Object.freeze({
     packGutter: 64,
 })
 
-function modelSpec(model: string): ModelSpec {
+/** The files a DBNet `model` param names: a repo's `model.onnx`, or a URL. */
+export function dbnetSpec(model: string): ModelSpec {
     return /^https?:\/\//.test(model)
         ? { repo: 'dbnet', files: [{ path: model }] }
         : { repo: model, files: [{ path: 'model.onnx' }] }
@@ -255,9 +262,13 @@ export class DbnetOnnxDetector extends Stage<DbnetOnnxDetectorParams> {
         await this.getSession(ctx?.onProgress)
     }
 
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return [{ label: this.params.model, spec: dbnetSpec(this.params.model) }]
+    }
+
     private getSession(onProgress?: ProgressListener): Promise<import('onnxruntime-web').InferenceSession> {
         return this.session.get(async (emit) => {
-            const spec = modelSpec(this.params.model)
+            const spec = dbnetSpec(this.params.model)
             const files = await ensureModelFiles(spec, { onProgress: emit, building: true })
             const bytes = files[spec.files[0]?.path ?? '']
             if (!bytes) throw new DetectionError(`Model ${this.params.model} not found`, this.name)

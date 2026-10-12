@@ -49,10 +49,12 @@ import {
     PdfToImage,
 } from '../pdf/index.js'
 import { DATA_TO_IMAGE_DEFAULTS, DataToImage } from '../stages/data-to-image.js'
+import { DOCUMENT_DELTA_DEFAULTS, DocumentDelta } from '../stages/document-delta.js'
 import { FIT_BOXES_TO_INK_DEFAULTS, FitBoxesToInk } from '../stages/fit-boxes-to-ink.js'
 import { IMAGE_CROP_BOXES_DEFAULTS, ImageCropBoxes } from '../stages/image-crop-boxes.js'
 import { IMAGE_DRAW_BOXES_DEFAULTS, ImageDrawBoxes } from '../stages/image-draw-boxes.js'
 import { NER_CONSISTENCY_DEFAULTS, NerConsistency } from '../stages/ner-consistency.js'
+import { NER_MERGER_DEFAULTS, NerMerger } from '../stages/ner-merger.js'
 import { DATE_LOCALES, PATTERN_LABELS, REGEX_NER_DEFAULTS, RegexNer } from '../stages/regex-ner.js'
 import type { ColumnKind, StageParamOption, StageParamSpec, StageSpec } from './types.js'
 
@@ -117,6 +119,15 @@ const LABEL_FIELDS: readonly StageParamOption[] = Object.freeze([
     { value: 'y', label: 'y', title: 'Box: top-left y' },
     { value: 'width', label: 'width', title: 'Box: the longer side' },
     { value: 'height', label: 'height', title: 'Box: the shorter side' },
+])
+
+const NER_MERGE_DEDUPE_OPTIONS: readonly StageParamOption[] = Object.freeze([
+    {
+        value: 'span',
+        label: 'Same span once',
+        title: 'An entity found twice, same span and label, kept at its best score',
+    },
+    { value: 'none', label: 'Keep all', title: 'Every reading of every input, as it came' },
 ])
 
 const CONSISTENCY_SCOPE_OPTIONS: readonly StageParamOption[] = Object.freeze([
@@ -542,6 +553,28 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
                 kind: 'boolean',
                 label: 'Keep empty pages',
                 help: 'Emit the page with an errored image when it has none, so its text layer is not lost.',
+            },
+        ],
+    },
+    {
+        type: 'DocumentDelta',
+        label: 'Added text',
+        group: 'Transform',
+        subpath: '@stabrise/scaledp',
+        summary:
+            'The text a later reading of a page added, as its own Document — so NER reads only what is new.',
+        consumes: ['document', 'document'],
+        produces: 'document',
+        defaults: asRecord(DOCUMENT_DELTA_DEFAULTS),
+        params: [
+            ...baseParams({ input: 'unused' }),
+            {
+                key: 'inputCols',
+                kind: 'columns',
+                label: 'Input columns',
+                arity: 2,
+                accepts: ['document', 'document'],
+                help: 'The first reading, then the reading that may have added to it — the text layer, then the page merged with its pictures’ text.',
             },
         ],
     },
@@ -1275,6 +1308,39 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
         ],
     },
     {
+        type: 'NerMerger',
+        label: 'Merge entities',
+        group: 'Understand',
+        subpath: '@stabrise/scaledp',
+        summary:
+            'Merge several NER readings of a page into one, with offsets into the page as it finally stands.',
+        consumes: ['ner', 'document'],
+        produces: 'ner',
+        defaults: asRecord(NER_MERGER_DEFAULTS),
+        params: [
+            ...baseParams({ input: 'unused' }),
+            {
+                key: 'inputCols',
+                kind: 'columns',
+                label: 'NER columns',
+                minArity: 1,
+                accepts: ['ner'],
+                help: 'The NER outputs to merge. A column a skipped stage never wrote counts as no entities.',
+            },
+            column('documentCol', 'Document column', {
+                accepts: ['document'],
+                help: 'The Document the merged offsets point into — the merged page. Empty keeps every entity’s offsets as they came.',
+            }),
+            {
+                key: 'dedupe',
+                kind: 'enum',
+                label: 'Duplicates',
+                options: NER_MERGE_DEDUPE_OPTIONS,
+                help: 'Keep an entity two inputs both found once, at its higher score, or keep every reading.',
+            },
+        ],
+    },
+    {
         type: 'RegexNer',
         label: 'Pattern entities',
         group: 'Understand',
@@ -1528,6 +1594,7 @@ export const STAGE_SPECS: readonly StageSpec[] = Object.freeze([
 export const STAGE_CLASSES = Object.freeze({
     DataToImage,
     DbnetOnnxDetector,
+    DocumentDelta,
     FaceDetector,
     FitBoxesToInk,
     GlinerNer,
@@ -1535,6 +1602,7 @@ export const STAGE_CLASSES = Object.freeze({
     ImageDrawBoxes,
     LineOrientationDetector,
     NerConsistency,
+    NerMerger,
     PaddleRecognizer,
     PaddleTextDetector,
     PaddleTextRecognizer,

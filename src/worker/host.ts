@@ -147,6 +147,23 @@ export function startScaleDpWorker(
     /** Requests that may still be cancelled, by id. */
     const controllers = new Map<number, AbortController>()
 
+    /**
+     * Tokens asked of the client and not yet answered, by id.
+     *
+     * `auth` cannot cross postMessage, so a worker used to need its own copy
+     * of the app's token logic in its entry file. Relayed, the main thread --
+     * where the session and its cookies already live -- stays the only place
+     * that knows how to get one.
+     */
+    const tokens = new Map<number, (token: string | undefined) => void>()
+    let nextTokenId = 0
+    const relayAuth = (repo: string) =>
+        new Promise<string | undefined>((resolve) => {
+            const requestId = ++nextTokenId
+            tokens.set(requestId, resolve)
+            post({ type: 'auth', requestId, repo })
+        })
+
     const evict = async (keep: ReadonlySet<string>) => {
         while (stages.size > maxCachedStages) {
             const oldest = [...stages.keys()].find((key) => !keep.has(key))
@@ -261,6 +278,7 @@ export function startScaleDpWorker(
                     onProgress: throttled(interval, (progress) =>
                         post({ type: 'progress', requestId: message.requestId, progress })
                     ),
+                    ...(message.relayAuth ? { auth: relayAuth } : {}),
                 })
                 post({ type: 'configured', requestId: message.requestId, environment: environment() })
                 return
@@ -335,12 +353,20 @@ export function startScaleDpWorker(
                 return
             }
             case 'cancel':
+            case 'authToken':
                 return
         }
     }
 
     scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const message = event.data
+
+        // A token is awaited by a request already running, so it cannot queue.
+        if (message.type === 'authToken') {
+            tokens.get(message.requestId)?.(message.token)
+            tokens.delete(message.requestId)
+            return
+        }
 
         // A cancel must not wait behind the run it cancels.
         if (message.type === 'cancel') {

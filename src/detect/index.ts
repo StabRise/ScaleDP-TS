@@ -15,6 +15,7 @@ export {
     nonMaximumSuppression,
     YOLO_DETECTOR_DEFAULTS,
     YoloOnnxDetector,
+    yoloSpec,
 } from './yolo-onnx.js'
 
 /** Signature detection, mirroring ScaleDP's `SignatureDetector`. */

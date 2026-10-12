@@ -46,6 +46,7 @@ transcription of it.
 
 | Stage | Reads | Writes | Needs |
 | --- | --- | --- | --- |
+| [DocumentDelta](/docs/stages/transform/document-delta) | document, document | document | — |
 | [PdfMergeImageText](/docs/stages/transform/pdf-merge-image-text) | document, document | document | — |
 | [LineOrientationDetector](/docs/stages/transform/line-orientation-detector) | image, boxes | image | `onnxruntime-web` |
 | [ImageDrawBoxes](/docs/stages/transform/image-draw-boxes) | image, boxes | image | — |
@@ -58,6 +59,7 @@ transcription of it.
 | --- | --- | --- | --- |
 | [GlinerNer](/docs/stages/understand/gliner-ner) | document | ner | `@huggingface/transformers` |
 | [NerConsistency](/docs/stages/understand/ner-consistency) | ner, document | ner | — |
+| [NerMerger](/docs/stages/understand/ner-merger) | ner, document | ner | — |
 | [RegexNer](/docs/stages/understand/regex-ner) | document | ner | — |
 
 {/* /generated:catalogue */}

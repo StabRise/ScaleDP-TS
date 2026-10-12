@@ -8,6 +8,7 @@
 
 import { OcrError, upstreamError } from '../core/errors.js'
 import { decodeImage, imageDataToCanvas } from '../core/image.js'
+import type { ModelRequirement } from '../core/model-cache.js'
 import { BASE_STAGE_DEFAULTS, type BaseStageParams, resolveParams } from '../core/params.js'
 import { type InitContext, type Row, Stage, type StageContext } from '../core/pipeline.js'
 import { boxesToFormattedText, boxesToText } from '../core/text.js'
@@ -85,6 +86,14 @@ async function toCanvas(input: unknown): Promise<OffscreenCanvas> {
     }
 }
 
+/**
+ * A preset's full file set, imported on demand: only `requiredModels()`
+ * needs it, and a test standing in for paddle-service need not provide it.
+ */
+async function presetSpec(preset: string) {
+    return (await import('./paddle-service.js')).presetModelSpec(preset)
+}
+
 /** Text detection only: image -> word boxes, no recognition. */
 export class PaddleTextDetector extends Stage<PaddleTextDetectorParams> {
     readonly name = 'PaddleTextDetector'
@@ -100,6 +109,11 @@ export class PaddleTextDetector extends Stage<PaddleTextDetectorParams> {
     /** Every stage on the full service shares its sessions. */
     override resources(): string[] {
         return [PADDLE_SERVICE_RESOURCE]
+    }
+
+    /** The configured preset; one chosen per row by `presetCol` is not known in advance. */
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return [{ label: `PaddleOCR ${this.params.preset}`, spec: await presetSpec(this.params.preset) }]
     }
 
     private loadOptions(ctx?: InitContext): PaddleLoadOptions {
@@ -217,6 +231,11 @@ export class PaddleTextRecognizer extends Stage<PaddleTextRecognizerParams> {
     override resources(): string[] {
         // Word-level reading also runs the recognition-only session.
         return [PADDLE_SERVICE_RESOURCE, PADDLE_RECOGNIZER_RESOURCE]
+    }
+
+    /** The configured preset; one chosen per row by `presetCol` is not known in advance. */
+    override async requiredModels(): Promise<ModelRequirement[]> {
+        return [{ label: `PaddleOCR ${this.params.preset}`, spec: await presetSpec(this.params.preset) }]
     }
 
     private loadOptions(ctx?: InitContext): PaddleLoadOptions {
