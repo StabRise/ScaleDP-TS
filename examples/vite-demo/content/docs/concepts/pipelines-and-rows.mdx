@@ -13,6 +13,20 @@ const pipeline = new Pipeline([stageA, stageB, stageC])
 const rows = await pipeline.transform(input)
 ```
 
+`transform` runs in Python's order: every row through one stage before the next.
+`Pipeline.run` takes the same input and returns the same rows in the same order,
+but streams: once a document is split into pages, each page walks the remaining
+stages on its own, with events and row updates as it goes.
+
+```ts
+const rows = await pipeline.run(file, {
+    onEvent: (event) => console.log(event.type),
+})
+```
+
+Everything below applies to both. Events, per-run stage toggles, `when`
+conditions and barriers are covered in [Streaming](/docs/concepts/streaming).
+
 ## What `transform` accepts
 
 ```ts

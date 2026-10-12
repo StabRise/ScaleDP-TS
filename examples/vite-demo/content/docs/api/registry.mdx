@@ -9,14 +9,19 @@ import {
     STAGE_CLASSES,
     getStageSpec,
     createStage,
+    pipelineStage,
     pipelineFromDescriptors,
     describeStage,
     describePipeline,
     pipelineCode,
+    pipelineModels,
+    modelStatus,
+    prefetchModels,
+    evictModels,
 } from '@stabrise/scaledp/registry'
 ```
 
-Importing this module pulls in all fifteen stage classes and **no ML runtime** —
+Importing this module pulls in every stage class and **no ML runtime** —
 every engine is behind a dynamic `import()`. That is why it is a separate subpath
 rather than part of the root barrel.
 
@@ -28,14 +33,39 @@ For the narrative version, see
 | | |
 | --- | --- |
 | `getStageSpec(type)` | `StageSpec \| undefined` |
-| `createStage(descriptor)` | A live `Stage`. Throws on an unknown type; the stage's own validators still run. |
-| `pipelineFromDescriptors(descriptors)` | A `Pipeline` |
-| `describeStage(stage)` | `StageDescriptor` with **fully resolved** options |
-| `describePipeline(pipeline)` | `StageDescriptor[]` |
+| `createStage(descriptor)` | A live `Stage`, with `descriptor.runtime` applied (`withRuntime`). Throws on an unknown type; the stage's own validators still run. |
+| `pipelineStage(descriptor)` | A `PipelineStage`: the live stage plus the descriptor's `id`, `enabled`, `when` and `barrier` |
+| `pipelineFromDescriptors(descriptors)` | A `Pipeline`, keeping each descriptor's `id`, `enabled`, `when`, `barrier` and `runtime` |
+| `describeStage(stage)` | `StageDescriptor` with **fully resolved** options — `type` and `options` only |
+| `describePipeline(pipeline)` | `StageDescriptor[]`, round-tripping the run settings above |
 | `pipelineCode(descriptors, options?)` | TypeScript source that builds the pipeline |
+
+`describePipeline` writes run settings only where they differ from the default —
+an `id` other than the derived one, `enabled: false`, a `when`, `barrier: true`, a
+non-empty `runtime` — so a plain pipeline describes as plain descriptors.
 
 `STAGE_CLASSES` maps type name to constructor — useful for `registerStages` in a
 worker entry when you genuinely want all of them.
+
+## `StageDescriptor`
+
+```ts
+interface StageDescriptor {
+    type: string                        // exported class name, e.g. 'PdfToImage'
+    options?: Record<string, unknown>   // constructor options; structured-cloneable
+    id?: string                         // default: the stage name, or `Name#index` when it repeats
+    enabled?: boolean                   // default true; RunOptions.enabled overrides per run
+    when?: Condition                    // run on matching rows only
+    barrier?: boolean                   // wait for every page before this stage
+    runtime?: StageRuntime              // { executionProviders?: readonly string[] }
+}
+```
+
+Re-exported from the core; the same shape the [worker](/docs/api/worker) protocol
+sends. `id`, `enabled`, `when` and `barrier` are explained in
+[Streaming runs](/docs/concepts/streaming); `runtime` overrides
+`configure({ executionProviders })` for one stage, see
+[Performance](/docs/guides/performance).
 
 ## `StageSpec`
 
@@ -120,6 +150,66 @@ interface PipelineCodeOptions {
 Emits only options that differ from each stage's defaults, groups imports by
 subpath (root first, then alphabetical), and wraps one option per line once the
 call exceeds 100 characters.
+
+## Models
+
+What a pipeline will download, before it runs. Every stage reports its own
+models through [`Stage.requiredModels()`](/docs/api/pipeline#stage); these gather
+them for a whole pipeline. The narrative version is
+[Managing models](/docs/guides/managing-models).
+
+```ts
+pipelineModels(source: Pipeline | readonly StageDescriptor[], options?: PipelineModelsOptions): Promise<PipelineModel[]>
+modelStatus(models: readonly PipelineModel[]): Promise<ModelStatus[]>
+prefetchModels(models: readonly PipelineModel[], options?: PrefetchOptions): Promise<PrefetchResult[]>
+evictModels(models: readonly PipelineModel[]): Promise<void>
+
+interface PipelineModelsOptions {
+    enabled?: Readonly<Record<string, boolean>>   // as RunOptions.enabled, by stage id or name
+}
+
+interface PipelineModel {
+    key: string        // `${repo}@${revision ?? 'main'}`
+    label: string      // a name for people
+    spec: ModelSpec    // every file of this model any stage needs
+    stages: string[]   // ids of the stages that need it
+}
+
+interface ModelStatus extends PipelineModel {
+    cached: boolean    // every file is in the cache
+    bytes: number      // download size; 0 when unknown
+}
+
+interface PrefetchOptions {
+    onProgress?: (model: PipelineModel, progress: ModelProgress) => void   // each ends with `ready`
+    signal?: AbortSignal   // stops waiting; downloads shared with a run carry on into the cache
+}
+
+interface PrefetchResult { model: PipelineModel; ok: boolean; error?: string }
+```
+
+`pipelineModels` returns one entry per repo and revision, merging stages that
+share it — PaddleOCR's recogniser-only stage and its full stage on one preset are
+one download. A disabled stage's models are left out; a stage gated by `when` is
+included, since whether any page matches is not known before the run.
+
+`modelStatus` sizes each model with [`downloadSize`](/docs/api/model-cache) and
+checks it with `isCached`. `prefetchModels` never throws for a model that cannot
+be fetched — a private repo with no token is a normal state — it returns
+`ok: false` with the reason; it rejects only when `signal` aborts. It builds no
+sessions. `evictModels` deletes each model's files.
+
+```ts
+const models = await pipelineModels(descriptors, { enabled: { ner: settings.ner } })
+const status = await modelStatus(models)
+const missing = status.filter((m) => !m.cached)
+const mb = missing.reduce((sum, m) => sum + m.bytes, 0) / 1e6
+if (missing.length && confirm(`Download ${mb.toFixed(0)} MB?`)) await prefetchModels(missing)
+```
+
+Prefetching on the main thread and running in a worker needs nothing extra: the
+cache is shared IndexedDB, and downloads are coordinated across realms, so the
+worker reads what the page fetched.
 
 ## Keeping it honest
 

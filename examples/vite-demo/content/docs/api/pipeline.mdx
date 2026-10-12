@@ -7,13 +7,13 @@ description: The two classes everything else is built on.
 
 ```ts
 class Pipeline {
-    constructor(stages: (Stage | PipelineStage)[])
+    constructor(stages: readonly (Stage | PipelineStage)[])
     readonly stages: Stage[]
-    readonly entries: PipelineEntry[]          // each stage with its id, enabled, when, barrier
+    readonly entries: readonly PipelineEntry[]
 
     transform(input: PipelineInput, options?: PipelineOptions & RunOptions): Promise<Row[]>  // stage order
-    run(input: PipelineInput, options?: RunOptions): Promise<Row[]>                          // page order
-    events(input: PipelineInput, options?: RunOptions): AsyncIterable<PipelineEvent> & { result: Promise<Row[]> }
+    run(input: PipelineInput, options?: RunOptions & PipelineOptions): Promise<Row[]>        // page order
+    events(input: PipelineInput, options?: Omit<RunOptions, 'onEvent'>): AsyncIterable<PipelineEvent> & { result: Promise<Row[]> }
     dispose(): Promise<void>
 }
 
@@ -24,7 +24,20 @@ interface PipelineStage {
     when?: Condition     // run on matching rows only
     barrier?: boolean    // wait for every page before this stage
 }
+
+interface PipelineEntry {               // a PipelineStage, resolved
+    readonly stage: Stage
+    readonly id: string
+    readonly index: number              // position, counting disabled stages
+    readonly timingKey: string          // key in execution_time.stages
+    readonly enabled: boolean
+    readonly when?: Condition
+    readonly barrier: boolean
+}
 ```
+
+A `StageDescriptor` with these fields, plus `runtime`, builds the same thing from
+JSON — see [`pipelineFromDescriptors`](/docs/api/registry#functions).
 
 ```ts
 interface PipelineOptions {
@@ -38,11 +51,15 @@ interface RunOptions {
     pagesInFlight?: number                        // default 1
     enabled?: Record<string, boolean>             // by stage id or name
     vars?: Record<string, Json>                   // for `{ var }` conditions
-    stages?: Record<string, { maxConcurrency?: number }>  // can only lower a stage's own
+    stages?: Record<string, StageRunOptions>      // by stage id or name
     initRetry?: 'run' | 'row'                     // default 'run'
     rowUpdates?: { payload?: 'delta' | 'full' | 'none'; stages?: string[]; stripBinary?: boolean }
     onEvent?: (event: PipelineEvent) => void
     onRow?: (update: RowUpdate) => void
+}
+
+interface StageRunOptions {
+    maxConcurrency?: number   // can only lower the stage's own
 }
 ```
 
@@ -52,14 +69,18 @@ reaches it, and a failed `init` lands on that stage's rows rather than throwing.
 See [Streaming runs](/docs/concepts/streaming) for events, row updates, `when`
 and barriers.
 
-`stages` is a plain array and is not frozen — pushing an `ImageDrawBoxes` onto an
-existing pipeline is a supported way to add an annotation pass.
+`entries` is fixed when the pipeline is constructed, and that is what runs:
+`stages` is a copy taken from it, so pushing onto `stages` adds nothing to a run. To add
+an annotation pass, build a new pipeline —
+`new Pipeline([...pipeline.entries, new ImageDrawBoxes()])` keeps every entry's
+settings. Use `RunOptions.enabled` to switch a stage off without rebuilding.
 
 ## `Stage`
 
 ```ts
 abstract class Stage<P extends BaseStageParams = BaseStageParams> {
     abstract readonly name: string
+    readonly uid: number                           // unique per instance
     constructor(readonly params: P)
 
     async init(ctx?: InitContext): Promise<void>   // lazy, idempotent; ctx.onProgress for this stage
@@ -75,11 +96,31 @@ abstract class Stage<P extends BaseStageParams = BaseStageParams> {
     get maxConcurrency(): number                // 1; raise for pure or network-bound stages
     resources(): ResourceClaim[]                // []; shared sessions a call holds
     planPages(row, ctx): Promise<number[] | null>   // null; PDF stages list their pages
+    requiredModels(): Promise<ModelRequirement[]>   // []; the models init() will download
     writes(): string[]                          // [outputCol]; what a row update carries
+    reads(): string[]                           // [inputCol, ...inputCols]
     runtime: StageRuntime                       // { executionProviders? }
-    withRuntime(runtime): this
+    withRuntime(runtime: StageRuntime | undefined): this
+
+    failRows(rows: readonly Row[], message: string, ms?: number): Row[]   // every row as if apply had failed
 }
 ```
+
+`requiredModels()` lists, from the params alone, the model files the stage will
+fetch when it first runs — nothing is downloaded. Engine-free stages return `[]`.
+It is what [`pipelineModels`](/docs/api/registry#models) gathers, and a custom
+stage that loads a model should override it so the pipeline's downloads can be
+shown, prefetched and evicted before a run. See
+[Managing models](/docs/guides/managing-models).
+
+`runtime` is read when the stage first builds its session, so set it (or call
+`withRuntime`) before the stage runs. Thread count is not in it: onnxruntime-web
+fixes one per realm, so stages that need different counts go in different
+workers — see [Performance](/docs/guides/performance).
+
+`failRows` is what the scheduler uses when a stage cannot start at all (a failed
+`init`): each row gets the stage's `onError` value, honouring `keepInputData`, and
+is charged `ms` spread across the rows.
 
 `name` is also the `StageDescriptor.type`. The full contract, including why
 `onError` must return a well-formed empty schema instance, is in

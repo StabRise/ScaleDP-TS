@@ -10,7 +10,7 @@ abstract class Stage<P extends BaseStageParams = BaseStageParams> {
     abstract readonly name: string
     constructor(readonly params: P)
 
-    async init(): Promise<void>                    // once per run
+    async init(ctx?: InitContext): Promise<void>   // lazily, once per run
     protected abstract apply(input, row, ctx): Promise<unknown>
     protected expand(input, row, ctx): Promise<Row[] | null>  // default: null
     protected abstract onError(message: string, row: Row): unknown
@@ -22,12 +22,22 @@ abstract class Stage<P extends BaseStageParams = BaseStageParams> {
 
 ## `init()`
 
-Called once per run, before the first row. This is where a model is downloaded
-and a session created, which is why it is separate from `apply`: forty pages
-should not mean forty downloads.
+Called lazily, just before the first row that actually reaches the stage, and
+once per run. This is where a model is downloaded and a session created, which
+is why it is separate from `apply`: forty pages should not mean forty downloads.
+It runs on every run, so it must be idempotent.
+
+A stage no row reaches never initialises: one that is disabled, one whose
+`when` matches nothing, or one whose every input row already failed upstream.
+Its model is never downloaded.
+
+`init()` runs inside the error contract. A failure (a model that will not
+download) is recorded on that stage's rows, through `failRows`, and the rest of
+the pipeline completes; `propagateError: true` still throws. See
+[The error contract](/docs/concepts/error-contract).
 
 It is also why per-row timings do not sum to the run total — `init()` is charged
-to the run, not to any row. See [Timings](/docs/concepts/timings).
+to the stage's run time, not to any row. See [Timings](/docs/concepts/timings).
 
 ## `apply()` — one row in, one value out
 
@@ -75,6 +85,25 @@ stack appended.
 
 Release sessions, workers and services. The base implementation does nothing;
 `Pipeline.dispose()` calls every stage's.
+
+## Scheduling hooks
+
+The base class also carries what the scheduler needs to stream pages. Every one
+has a default, so a simple stage overrides none of them.
+
+| Member | Default | Meaning |
+| --- | --- | --- |
+| `scope` | `'row'` | `'group'` sees one page's rows together; `'document'` sees every row and makes the stage a barrier |
+| `maxConcurrency` | `1` | Calls that may run at once; 1 is the only safe value for a stage holding an ONNX session |
+| `resources()` | `[]` | Shared resources a call holds, such as the session every PaddleOCR stage on one preset shares |
+| `planPages(row)` | `null` | The pages a PDF stage would expand a row into, so the document is split before it runs |
+| `writes()` / `reads()` | `[outputCol]` / `[inputCol, …inputCols]` | Columns written and read; a row update carries what the stage wrote |
+| `failRows(rows, message)` | — | The rows as if every one had failed with `message`; used when `init()` fails |
+| `runtime` / `withRuntime()` | `{}` | Session settings, e.g. `executionProviders` for this stage only |
+| `requiredModels()` | `[]` | The model files the stage would download, for listing and prefetching |
+
+How the scheduler uses them is in [Streaming](/docs/concepts/streaming); the
+signatures are in the [Pipeline API](/docs/api/pipeline).
 
 ## Parameters
 

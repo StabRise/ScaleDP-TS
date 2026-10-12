@@ -67,20 +67,25 @@ apart from the rest of its word. Never crossing one across the line is what keep
 two lines from merging. Two passes are made, so a swash leaving the box at a
 corner is reached along the text and then its top across it.
 
-**A box never grows into another box.** Each edge may move at most to the nearest
-box beyond it: along the line for left and right, among boxes overlapping it for
-top and bottom. In a PDF text layer each word's box runs almost to the next
-word's start, a gap of a few pixels, well inside the letter-gap tolerance, so ink
-alone would merge every word with the next. A box counts as beyond an edge only
-when its centre is, so an invisible text layer's box stacked on the same word
-doesn't pin the OCR box in place.
+**A box never grows into another box.** Each edge may move at most halfway to
+the nearest box beyond it: along the line for left and right, among boxes
+overlapping it for top and bottom. Halfway, because both boxes may be growing
+towards each other: two neighbours can end up touching, never overlapping. In a
+PDF text layer each word's box runs almost to the next word's start, a gap of a
+few pixels, well inside the letter-gap tolerance, so ink alone would merge every
+word with the next. A box counts as beyond an edge only when its centre is, so
+an invisible text layer's box stacked on the same word doesn't pin the OCR box
+in place.
 
 **Thin rules don't count.** A column needs a tenth of the line's height in ink to
 carry a box along, so an underline or a table rule running out of the box, one
 or two pixels thick, cannot drag it sideways.
 
 **Rotated boxes** are fitted in their own frame, along and across their line, and
-keep their angle.
+keep their angle. Their neighbour limits are measured in that frame too: each
+neighbour is projected onto the box's own axes, so a box on the same turned line
+stops its ends and one in the same turned column stops its sides. Without that, a
+quarter-turned word would grow across a 3 px word gap into the next one.
 
 {/* generated:params */}
 

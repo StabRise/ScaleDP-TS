@@ -6,7 +6,8 @@ description: The same DBNet ONNX text detector ScaleDP runs server-side, in the 
 <StageMeta type="DbnetOnnxDetector" />
 
 A direct mirror of ScaleDP's `DBNetOnnxDetector` — same model, same thresholds —
-so a detection result can be compared across the two runtimes. About 4.8 MB.
+so a detection result can be compared across the two runtimes, with
+`squareInput: true` for exact parity (see below). About 4.8 MB.
 
 ```ts
 import { Pipeline } from '@stabrise/scaledp'
@@ -57,12 +58,38 @@ it does something.
 `model` accepts a Hugging Face repo id or a URL. A URL is treated as a
 single-file model spec and bypasses `modelHost` entirely.
 
+## Input shape: the picture's own, or ScaleDP's square
+
+The picture is scaled so its longer side fits 1280, never distorted, and padded
+at the bottom and right with white. How far it is padded is the choice:
+
+- **`squareInput: false`** (default) pads only to the next multiple of 32, which
+  is all the network's strides need. The scale is the same; the input is just
+  smaller. Up to 4× faster on a small or wide picture (a 1000×300 crop: 450 →
+  115 ms) and about 1.3× on a page.
+- **`squareInput: true`** pads to the full 1280×1280 square, as ScaleDP does,
+  and reproduces its boxes exactly.
+
+The model was trained on padded squares and its output depends on the white
+around the text, so with the default some boxes move and some lines split
+differently from ScaleDP's. Turn `squareInput` on when the result must match
+Python.
+
+## Packing small pictures
+
+A square input costs a full 1280×1280 inference whatever is on it. `pack`
+(opt-in) lays several of a page's pictures onto shared squares, separated by
+`packGutter` pixels of white, with the upscale capped at `packMaxScale`, so a
+page with three small pictures runs once instead of three times. A picture
+alone on its input comes out exactly as unpacked; pictures sharing one can read
+differently, since the network sees its neighbours.
+
 ## Preprocessing, for the record
 
-Letterboxed to 1280×1280 padding at the end, white fill, then normalised with
-ImageNet mean and standard deviation **in BGR channel order**. That last part
-reproduces a quirk of the Python implementation — BGR pixels with RGB statistics
-— and is required for parity. It is not a bug on this side.
+After padding, the image is normalised with ImageNet mean and standard
+deviation **in BGR channel order**. That reproduces a quirk of the Python
+implementation — BGR pixels with RGB statistics — and is required for parity.
+It is not a bug on this side.
 
 {/* generated:params */}
 

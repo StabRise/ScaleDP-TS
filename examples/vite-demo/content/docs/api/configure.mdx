@@ -35,7 +35,7 @@ interface ScaleDpConfig {
     numThreads: number                     // 0 = auto
     ortWasmPaths?: string
     pdf: { workerSrc?; cMapUrl?; standardFontDataUrl?; wasmUrl? }
-    tesseract: { workerUrl?; dataUrl? }
+    tesseract: { workerUrl?; dataUrl?; osdWorkerPath?; osdCorePath?; osdLangPath?; osdGzip? }
     hf: { remoteHost?; remotePathTemplate? }
 }
 ```
@@ -51,7 +51,7 @@ interface ScaleDpConfig {
 | `numThreads` | `0` derives from `hardwareConcurrency`. Only has effect on a cross-origin-isolated page. |
 | `ortWasmPaths` | Where onnxruntime-web's `.wasm`/`.mjs` live. Defaults to a version-matched CDN. |
 | `pdf` | pdf.js worker and data files. |
-| `tesseract` | Tesseract worker and `traineddata`. |
+| `tesseract` | Tesseract worker and `traineddata`; the `osd*` keys locate tesseract.js for script detection and default to its CDN. |
 | `hf` | `@huggingface/transformers` host overrides, for proxying gated tokenizers. |
 
 ## `ModelProgress`
@@ -69,6 +69,17 @@ interface ModelProgress {
 `total` can be `0` when neither the catalogue nor a `HEAD` request could supply a
 size — render an indeterminate state rather than dividing by it.
 
+| Phase | When |
+| --- | --- |
+| `downloading` | Bytes are arriving, from this realm's fetch or one another realm is running ([one download per origin](/docs/api/model-cache#ensuremodelfiles)). |
+| `initializing` | Files are in hand and an engine stage is building its ONNX session. |
+| `ready` | Usable. A plain `ensureModelFiles` or `prefetchModels` ends here once the files are cached; an engine stage reports it only after its session exists. |
+
+Every load ends with `ready`, cache hit or not, so a progress indicator can be
+cleared on it without a timer. Inside a run the same events also arrive as
+`model:progress`, attributed to a stage — see
+[Streaming runs](/docs/concepts/streaming).
+
 ```ts
 configure({
     onProgress: ({ repo, file, loaded, total, phase }) => {
@@ -85,9 +96,12 @@ subscribes to, rather than rebuilding the config on every render.
 
 ## In a worker
 
-`auth` and `onProgress` are functions and do not survive `postMessage`. The
-worker client's `configure` excludes them by type; set `auth` inside the worker
-entry and take progress from the client's own `onProgress`. See
+`auth` and `onProgress` are functions and do not survive `postMessage`, so the
+worker client's `configure` excludes them by type. Give `auth` to
+`createScaleDpWorker({ auth })` (or the pool) instead: the worker asks the main
+thread for each token, and the entry file needs no token logic of its own.
+Progress comes back through the client's own `onProgress`. See
+[`@stabrise/scaledp/worker`](/docs/api/worker#auth-relay) and
 [Workers](/docs/concepts/workers).
 
 ## Threads

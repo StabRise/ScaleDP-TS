@@ -11,6 +11,291 @@ The package is pre-1.0. Defaults still move when a better default is found, and
 every such move is called out below rather than left to be discovered on a
 Monday morning.
 
+## 0.6.0 — 12 October 2026
+
+One pipeline per document: streamed page by page, with stages switched per run,
+models loaded only for the pages that need them, and configurable parallelism.
+
+<Callout title="Defaults that changed">
+Several, most of them in what a stage or the worker reports rather than in the
+text it reads:
+
+- [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector) now defaults
+  to `squareInput: false`: it pads the picture to the next multiple of 32
+  instead of to a 1280×1280 square. Up to 4× faster on a small or wide picture,
+  about 1.3× on a page, but some boxes differ from ScaleDP's. Set
+  `squareInput: true` for exact parity.
+- Paddle recognition reads one line per inference. `recBatchSize` defaults to
+  1, down from 6, in `PaddleRecognizer`, and `PaddleTextRecognizer` gains the
+  same parameter. A batch padded shorter lines with white paper, which the
+  models misread; on the sample scans a batch of 6 garbled 8 of 22 and 10 of 16
+  lines. A batch of 1 has no padding and is about 20% faster.
+- A stage's `init()` failure no longer throws out of `transform`. It is recorded
+  in `exception` on that stage's rows and the rest of the pipeline completes.
+  `propagateError: true` still throws.
+- `init()` is called lazily, just before the first row that reaches the stage.
+  A stage no row reaches never initialises.
+- `ensureModelFiles` ends with `ready` after a download as well as on a cache
+  hit. Engine stages end their download on `initializing` and report `ready`
+  once the session exists, so a model is no longer shown as ready while its
+  session is still being built.
+- Concurrent loads of the same model files share one download. Aborting one
+  caller's signal stops that caller waiting; the download still finishes into
+  the cache.
+- The worker host caches stage instances, not pipelines. Changing stages no
+  longer disposes the previous ones at once; up to `maxCachedStages` (default
+  12) are kept and disposed least recently used first.
+- Worker results carry `contentRef` back, rather than a copy of the file on
+  every page row, for rows that were sent by reference.
+- `ScaleDpWorkerOptions.onProgress` and `onStage` receive a trailing
+  `requestId`.
+- [`FitBoxesToInk`](/docs/stages/transform/fit-boxes-to-ink) takes at most
+  half the gap to a neighbour, where it used to take all of it, and turned
+  boxes now get neighbour limits too. Two boxes growing towards each other can
+  touch but no longer overlap.
+</Callout>
+
+### Streaming runs
+
+`Pipeline.run` streams by page: once a document is split into pages, each page
+walks the remaining stages on its own. It returns the same rows in the same
+order as `transform`, which keeps Python's stage order. See
+[Streaming runs](/docs/concepts/streaming).
+
+```ts
+const rows = await pipeline.run(file, {
+    pagesInFlight: 2,
+    enabled: { faces: settings.detectFaces },
+    onEvent: (event) => status.update(event),
+    onRow: (update) => overlay.draw(update.unit.page, update.row),
+})
+```
+
+- **Events** (`onEvent`, or `pipeline.events()` as an async iterable) cover the
+  run, each stage's model loading and progress, each stage over each page,
+  skips, row errors and barriers. Every page event carries
+  `unit: { key, input, page, path }`.
+- **Row updates** (`onRow`) report each stage's rows per page, as a delta of
+  what the stage wrote or in full, optionally with binary data stripped.
+- **Per-run stage toggles.** Give a descriptor an `id` and switch it with
+  `RunOptions.enabled`. No rebuild, no reload, and a disabled stage never
+  touches its model.
+- **`when` conditions**, serialisable per-row tests (`path` / `var`, `eq`, `in`,
+  `gte`, `all` / `any` / `not`, …). Rows that do not match pass through
+  untouched. `usableTextLayer()` from `/pdf` is `hasUsableTextLayer` as a
+  condition, so text-layer-or-OCR is one pipeline.
+- **Barriers.** A stage with `scope: 'document'`, such as document-scope
+  `NerConsistency`, waits for every page; `barrier: true` forces one.
+- `planPages` on `PdfToDocument`, `PdfToImage` and `PdfEmbeddedImages` splits a
+  document before the first PDF stage runs, not after it has rendered every
+  page.
+
+The whole shape is in the recipe
+[One pipeline per document](/docs/recipes/one-pipeline-per-document).
+
+### Parallelism and the worker
+
+- `pagesInFlight` runs several pages at once, with the oldest page getting a
+  free stage first. Stages declare `maxConcurrency` and the shared sessions they
+  hold, so PaddleOCR stages on one preset share a lock.
+- `StageDescriptor.runtime.executionProviders` sets providers per stage.
+- **`createScaleDpWorkerPool`** (`/worker`) spreads pages over several workers
+  and looks like one worker from outside. On a page that is not cross-origin
+  isolated it is the only CPU parallelism there is.
+- `resolveParallelism('auto' | 'conservative' | partial, probeEnvironment())`
+  picks workers, threads per worker, pages in flight and providers for the
+  machine. See [Performance](/docs/guides/performance) and the measured numbers
+  on [Benchmarks](/docs/benchmarks).
+- `client.run()` returns a `RunHandle` (async iterable, `result`, `cancel()`),
+  and a cancel bypasses the queue. `configure` resolves with the worker's
+  effective environment: `numThreads`, `crossOriginIsolated`, `webgpu`.
+- `createScaleDpWorker({ auth })` and `createScaleDpWorkerPool({ auth })` answer
+  the worker's token requests from the main thread, so a worker entry no longer
+  needs its own copy of the token logic.
+
+### Models
+
+- **PaddleOCR runs on WebGPU.** The `.ort` files ppu catalogues had no WebGPU
+  kernel for their convolutions, so every session fell back to WASM. The library
+  now fetches the `.onnx` twin of each model. On WebGPU, recognising 26 lines
+  takes 275 ms instead of 1945 (`v6-small`) and detection 60 ms instead of 442;
+  on WASM the output is bit-identical. The models download once more under their
+  new URLs.
+- **Model management** in `/registry`: `pipelineModels` lists what a pipeline
+  will download, `modelStatus` reports what is cached and how large it is,
+  `prefetchModels` downloads ahead of time with per-model progress, and
+  `evictModels` deletes. See [Managing models](/docs/guides/managing-models).
+- **One download per origin.** Each model file is fetched under a Web Lock named
+  after its cache key, so when the page and its workers want the same file, one
+  downloads it and the others read it from the cache, seeing the download's
+  progress meanwhile.
+
+### New stages
+
+- **[`NerMerger`](/docs/stages/understand/ner-merger)** merges several NER
+  readings of a page into one, rebasing every entity's offsets onto one document
+  by its boxes. An entity two readings both found is kept once, at its best
+  score, and one failed reading does not cost the page the others.
+- **[`DocumentDelta`](/docs/stages/transform/document-delta)** emits the boxes a
+  later reading of a page added — the text-layer page merged with its pictures'
+  text — as a `Document` of its own, so a second NER pass reads only what is
+  new. Gated with `when` on `delta.bboxes.length`, a page whose pictures added
+  nothing costs one NER call.
+- `DbnetOnnxDetector` gains an opt-in `pack`, detecting several of a page's
+  pictures in one 1280×1280 inference. A picture alone on its input comes out
+  exactly as unpacked; pictures sharing one can read differently.
+
+### Fixes and performance
+
+- **`PdfMergeImageText` no longer lets a stray reading delete real lines.** A
+  photograph read as one letter over the whole picture used to count as a
+  repeat of every line beneath it, and those lines were dropped.
+- **`FitBoxesToInk` no longer grows boxes into each other** (see above). On the
+  extraction-conditions benchmark page fitting used to create 17 overlapping
+  pairs; it now creates none.
+- `FitBoxesToInk` reads only the bands of the page its boxes can reach: about
+  25 ms on a 300 DPI page, down from 48 ms.
+
+## 0.5.0 — 6 October 2026
+
+<Callout title="Defaults that changed">
+These change output with no type error to warn you. Each has a switch that
+restores the previous behaviour, which is also Python ScaleDP's:
+
+- [`PdfMergeImageText`](/docs/stages/transform/pdf-merge-image-text) keeps
+  visible words a mismatched text layer covers. With the new `matchText` (on by
+  default) a covered box is dropped only when the box covering it reads the same
+  words, so an invisible `CONFIDENTIAL` over a picture of a name no longer
+  erases the name. `matchText: false` restores coverage-only dropping.
+- `PdfMergeImageText` de-duplicates OCR readings against each other, where a
+  page draws one picture over another. `strategy: 'union'` still keeps
+  everything.
+- `PdfMergeImageText` joins words OCR split apart (`joinFragments`, on by
+  default): `F` + `reya` back into `Freya`.
+- `PaddleRecognizer` and `TesseractRecognizer` read wider crops. `endPadding:
+  0.3` extends each region along its line, stopping at the next region, so a
+  handwritten capital the detector left off is read; `dropNested: true` skips a
+  region lying mostly inside a larger one. `endPadding: 0, dropNested: false`
+  restores the previous crops.
+- "No embedded images" is a skip, not a failure. Downstream stages carry
+  `This page has no embedded images to read.` verbatim in `exception` instead of
+  an `Upstream stage failed` wrapper with a stack trace. Test for it with the new
+  `isSkipped(exception)`.
+</Callout>
+
+On the extraction-conditions benchmark the hybrid PDF pipeline now reads 53 of
+54 names in full (46 before), with no duplicated boxes.
+
+### Pattern-based PII
+
+**[`RegexNer`](/docs/stages/understand/regex-ner)** is an engine-free stage that
+finds `DATE`, `PHONE`, `EMAIL`, `URL`, `IBAN`, `CREDIT_CARD`, `PESEL`, `SSN`,
+`ZIP_CODE` and `COUNTRY` in OCR text. Patterns match loosely and candidates are
+validated strictly — Luhn, the PESEL checksum, IBAN mod 97, the calendar, the
+SSN allocation rules. A failed check lowers the score rather than dropping the
+match.
+
+- OCR lookalikes (`O`→`0`, `l`→`1`, `S`→`5`…) are repaired inside numbers
+  without changing the text's length, so offsets still land on their boxes.
+- `libphonenumber-js` and `chrono-node` are optional peers, loaded lazily, that
+  add phone and date readings when installed.
+- Entities carry `source: 'pattern'`, which `NerConsistency` now preserves.
+- `FuzzyRegex`, the approximate regular expressions behind it, is exported in
+  plain TypeScript; the Node `fuzzy-regex` package is a native addon and cannot
+  run in a browser.
+
+### Boxes that cover their ink
+
+**[`FitBoxesToInk`](/docs/stages/transform/fit-boxes-to-ink)** grows boxes,
+pixel by pixel, until they cover the ink they belong to: a capital a detector
+missed, a descender, a text-layer box sized from font metrics. It never grows
+into a neighbouring box, and rotated boxes are fitted along their own lines.
+
+### Also
+
+- `isSkipped`, `SkipError`, `upstreamError` and `NO_EMBEDDED_IMAGES` are
+  exported from the root, for telling a page with nothing to read from a
+  failure. The merge helpers `textsAgree`, `dedupeReadings` and
+  `joinWordFragments` are exported from `/pdf`, and the validators (`ibanValid`,
+  `luhnValid`, `peselValid`, `ssnValid`, `dateValid`, `ISO_COUNTRIES`) from the
+  root.
+- `showBoxes` prints a rotated box's coordinates to one decimal.
+
+## 0.4.0 — 22 September 2026
+
+### A worker can hold a file
+
+A worker can now be given a document once and referenced from then on.
+`ScaleDpWorkerClient.putContent(key, bytes)` registers it; a row carries
+`contentRef: key` (`CONTENT_REF_COL`) in place of `content`; `dropContent(key)`
+releases it, and `dispose` clears everything.
+
+```ts
+await client.putContent('doc', bytes)
+const rows = await client.transform(stages, [{ contentRef: 'doc', path: file.name }])
+```
+
+Structured clone copies every byte of every message, so several pipelines over
+one file paid for the whole file per page, per pipeline — a 20 MB, 100-page
+document moved roughly 6 GB through `postMessage`. It also defeated the
+0.3.1 document cache, which keys on `Uint8Array` identity; a referenced buffer
+is the same object each time, so the cache now hits. Rows carrying `content`
+directly keep working unchanged. See [Workers](/docs/concepts/workers).
+
+## 0.3.2 — 22 September 2026
+
+### Fixes
+
+- **PDF stages work inside a Worker.** Every PDF stage threw
+  `ReferenceError: document is not defined` in a worker as soon as
+  `configure()` supplied asset URLs — the normal configuration — so OCR,
+  rendering and embedded-image extraction all failed there. pdf.js was reaching
+  for `document.baseURI` to decide `useWorkerFetch`; the library now passes it
+  explicitly, and supplies an `OffscreenCanvas`-based `CanvasFactory` for the
+  scratch canvases rendering needs.
+
+## 0.3.1 — 22 September 2026
+
+### Performance
+
+- **The worker host reuses its pipeline across transforms.** It used to rebuild
+  the whole pipeline on every `transform` request, so a host driven one page at
+  a time re-read the weights from IndexedDB and built a new `InferenceSession`
+  for every page. The pipeline is now kept while the incoming `StageDescriptor[]`
+  is unchanged, and dropped after a run that throws.
+- **PDF stages share a parsed document.** `PdfToDocument`, `PdfToImage` and
+  `PdfEmbeddedImages` each parsed the file on their own, which per page meant
+  parsing a 100-page document hundreds of times. They now go through
+  `withPdfDocument`, which keeps the last two parsed documents. The cache is
+  keyed on the identity of the `Uint8Array`, not its contents, so a caller that
+  builds a fresh array per call simply gets the previous behaviour.
+  `resetPdfDocuments` drops every cached document; a host that tears its engine
+  down between documents should call it.
+
+## 0.3.0 — 22 September 2026
+
+<Callout title="Defaults that changed">
+- `showBoxes` adds a text filter above its table whenever more than one row is
+  shown. Pass `{ search: false }` as its third argument for the bare table.
+  Rows keep their `data-box-index`, so click handlers keep working.
+- `PdfToDocument` reports rotated text with its real `angle` and a tight box,
+  instead of an axis-aligned envelope at `angle: 0`. A vertical run now reports
+  about 60×12 at `angle` 90 where it used to report 12×60 at `angle` 0. Upright
+  text is unchanged.
+- `mergeBoxes` keeps the orientation of rotated boxes, taking `minAreaRect` over
+  both boxes' corners. Axis-aligned pairs are unchanged. This departs from
+  Python ScaleDP, which still resets the angle.
+</Callout>
+
+### Fixes
+
+- Word splitting in `PdfToDocument` walks each run along its real reading
+  direction, so right-to-left, bottom-to-top and rotated runs split correctly.
+- **A blocked IndexedDB open now warns instead of hanging silently.** Another
+  tab holding the model cache across a version change used to make model loading
+  hang with no signal; the warning names the database and says to close or
+  reload the other tabs.
+
 ## 0.2.0 — 15 September 2026
 
 <Callout title="Defaults that changed">

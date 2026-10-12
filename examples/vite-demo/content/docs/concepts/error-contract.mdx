@@ -23,6 +23,28 @@ for (const row of rows) {
 }
 ```
 
+## A stage that cannot start
+
+`init()` is inside the contract too. When a stage fails to initialise (a model
+that will not download, a session that will not build), the failure is recorded
+on that stage's rows in the same `exception` field, and the stages after it
+still run. Only `propagateError: true` turns it back into a throw.
+
+How often the stage retries is a run option:
+
+```ts
+await pipeline.run(file, { initRetry: 'row' })
+```
+
+- **`'run'`** (default): after one failure, the stage's rows fail for the rest
+  of the run without retrying, so a forty-page document does not attempt the
+  download forty times.
+- **`'row'`**: retry for every page.
+
+The next run always retries. A stage whose input rows all failed upstream does
+not initialise at all, so a dead page never triggers a download whose own
+failure would bury the real cause.
+
 ## What a message looks like
 
 ```

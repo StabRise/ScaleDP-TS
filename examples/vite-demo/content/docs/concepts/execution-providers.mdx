@@ -12,8 +12,8 @@ straight to onnxruntime-web when a session is created.
 
 ## Prefer WebGPU
 
-It is typically 2–5× faster and needs **no cross-origin isolation**, which makes
-it the simpler answer wherever it exists:
+It is usually several times faster than single-threaded WASM and needs **no
+cross-origin isolation**, which makes it the simpler answer wherever it exists:
 
 ```ts
 import { isWebGpuAvailable } from '@stabrise/scaledp/ocr'
@@ -32,6 +32,29 @@ WASM — see [the warning](/docs/concepts/models-and-cache#ner). And
 onnxruntime-web deprecated the WebGL and JSEP providers in 1.29; the native
 WebGPU provider is the supported path.
 
+PaddleOCR runs on WebGPU too. ppu catalogues its v6 models as `.ort` files,
+onnxruntime's pre-optimised format, whose kernel table has no WebGPU
+convolution, so those sessions failed and fell back to WASM. The library
+fetches the `.onnx` twin each `.ort` model has in the same repository instead:
+bit-identical on WASM at the same speed, and several times faster on WebGPU.
+The numbers per stage and provider are on [Benchmarks](/docs/benchmarks).
+
+## Per stage
+
+`configure()` sets the providers for every session. A stage can override it
+through its descriptor's `runtime`, or `withRuntime()` on an instance:
+
+```ts
+pipelineFromDescriptors([
+    { type: 'PdfToImage' },
+    { type: 'PaddleTextRecognizer', runtime: { executionProviders: ['webgpu', 'wasm'] } },
+    { type: 'GlinerNer', runtime: { executionProviders: ['wasm'] } },
+])
+```
+
+It is read when the stage first builds its session, so set it before the stage
+runs.
+
 ## Threads
 
 ```ts
@@ -47,8 +70,11 @@ will not say.
 import { defaultNumThreads, resolveNumThreads } from '@stabrise/scaledp'
 ```
 
-The value is baked into a session when it is created, so changing it later
-requires a fresh stage.
+The value is one per realm, fixed when the realm's first session is created:
+changing it later is ignored, and two stages in one worker cannot differ in it.
+That is why `runtime` has no thread count. A different thread count means a
+different worker — see `threadsPerWorker` on
+[the worker pool](/docs/concepts/workers#several-workers).
 
 ## Threads need cross-origin isolation
 
@@ -83,12 +109,15 @@ the whole page, which is the other reason WebGPU is usually the easier path.
 
 | | WebGPU | WASM, threaded | WASM, single |
 | --- | --- | --- | --- |
-| Speed | fastest | middle | slowest |
+| Speed | usually fastest | middle | slowest |
 | Needs COOP/COEP | no | **yes** | no |
 | Availability | recent browsers, real GPU | any, with headers | everywhere |
 | GLiNER2 | unusable — drops entities | fine | fine |
 
-The demo's own configuration is the general-purpose answer:
+Measured numbers for DBNet and PaddleOCR on each provider are on
+[Benchmarks](/docs/benchmarks); on a fast CPU with eight threads, WASM can beat
+WebGPU for a small model like DBNet. The demo's own configuration is the
+general-purpose answer:
 
 ```ts
 const webgpu = await isWebGpuAvailable()

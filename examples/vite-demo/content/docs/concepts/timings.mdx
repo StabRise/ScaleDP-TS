@@ -13,9 +13,17 @@ rows[0].execution_time
 ```
 
 One number per stage, covering every row that stage processed, and **the same
-object on every row**. This is what Python's ScaleDP records, and it keeps that
-meaning exactly. It cannot say how long page 7 took, because each stage's number
-covers every page at once.
+object on every row**. This is what Python's ScaleDP records, and under
+`transform` it keeps that meaning exactly. It cannot say how long page 7 took,
+because each stage's number covers every page at once.
+
+A stage's number includes its `init()`: the clock starts before the model is
+loaded, so a first run's download shows up here.
+
+Under `Pipeline.run`, which streams page by page, each stage's number is its
+busy time summed across pages, and `total` is wall-clock time. With several
+pages in flight the stages can add up to more than `total`. See
+[Streaming](/docs/concepts/streaming#order-and-timing).
 
 Two stages of the same class disambiguate by position:
 
@@ -38,10 +46,15 @@ change to it — the question "which page was slow" has no answer in
 
 ## Why the row totals do not sum to `execution_time.total`
 
-The difference is `stage.init()`: downloading models and creating sessions, once
-for the whole run rather than per page. A pipeline whose first run downloads
-333 MB of GLiNER weights will show a `total` far larger than the sum of its
-rows, and every subsequent run on a warm cache will show them close.
+The difference is mostly `stage.init()`: downloading models and creating
+sessions, once for the whole run rather than per page. It is charged to the
+stage in `execution_time` but to no row, since `row_time` counts only the work
+done on that row. A pipeline whose first run downloads 333 MB of GLiNER weights
+will show a `total` far larger than the sum of its rows, and every subsequent
+run on a warm cache will show them close.
+
+Time a page spends waiting for a busy stage is in neither: `stage:end` reports
+it separately as `waitMs`.
 
 That is the number to watch when deciding whether to pre-warm a model.
 
@@ -65,8 +78,13 @@ await pipeline.transform(file, {
 })
 ```
 
+Under `Pipeline.run` stages interleave across pages, so `onStage` fires once
+per stage when the run ends; per-page timing comes from the `stage:end` events
+instead (`ms`, and `waitMs`).
+
 The worker client exposes the same callback, so a pipeline running off the main
 thread reports the same shape. See [Workers](/docs/concepts/workers).
 
-Model downloads are a separate channel — `configure({ onProgress })` — because
-they happen inside `init()` and are measured in bytes rather than stages.
+Model downloads are a separate channel — `configure({ onProgress })`, or the
+run's `model:progress` events, attributed to a stage — because they happen
+inside `init()` and are measured in bytes rather than stages.

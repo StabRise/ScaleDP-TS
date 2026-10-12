@@ -32,6 +32,7 @@ rows[0].text.bboxes    // one box per detected region
 This stage detects *and* recognises in a single pass over the page, so boxes
 produced by a separate detector never reach it — rotated boxes in particular.
 To read exactly the regions a detector found, use
+[`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) or
 [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer).
 </Callout>
 
@@ -134,6 +135,21 @@ document that swings between scripts pays for both models.
 A column holding a bare preset id works too, if something else is choosing.
 
 An unknown preset throws `RangeError` from the constructor.
+
+## Batching and WebGPU
+
+Lines are read one per inference by default (`recBatchSize: 1`). A larger batch
+pads shorter lines with white, where PP-OCR's models were trained on zero
+padding, and they garble those lines; it is no faster on WASM either. The
+reasoning is under
+[`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer),
+which shares it.
+
+Both the detection and recognition models run on WebGPU: the library fetches
+the `.onnx` twin of the `.ort` files ppu catalogues, which WebGPU can load. On
+WASM the output is identical. See
+[Execution providers](/docs/concepts/execution-providers) and
+[Benchmarks](/docs/benchmarks#text-recognition).
 
 ## Switching presets mid-session
 

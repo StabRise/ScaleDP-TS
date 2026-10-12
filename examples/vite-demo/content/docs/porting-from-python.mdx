@@ -19,13 +19,22 @@ schemas. What differs is the runtime.
 | `TesseractRecognizer` | [`TesseractRecognizer`](/docs/stages/recognise/tesseract-recognizer) | `onlyRotated` defaults to false; adds `boxLevel` |
 | `EasyOcr`, `SuryaOcr`, `DocTROcr` | [`PaddleTextRecognizer`](/docs/stages/recognise/paddle-text-recognizer) | No browser builds of those engines |
 | — | [`PaddleRecognizer`](/docs/stages/recognise/paddle-recognizer) | No Python equivalent: PP-OCR reading another detector's boxes |
-| `DBNetOnnxDetector` | [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector) | Same model, same thresholds |
+| `DBNetOnnxDetector` | [`DbnetOnnxDetector`](/docs/stages/detect/dbnet-onnx-detector) | Same model and thresholds; `squareInput: true` for ScaleDP's exact input |
+| `TesseractScriptDetector` | [`TesseractScriptDetector`](/docs/stages/detect/tesseract-script-detector) | |
+| — | [`PaddleTextDetector`](/docs/stages/detect/paddle-text-detector) | No Python equivalent: PP-OCR's own detector alone |
 | `CraftTextDetector` | — | PyTorch only |
 | `LayoutDetector` | — | Needs the PaddleOCR Python runtime |
 | `YoloOnnxDetector` | [`YoloOnnxDetector`](/docs/stages/detect/yolo-onnx-detector) | |
 | `SignatureDetector` | [`SignatureDetector`](/docs/stages/detect/signature-detector) | |
 | `FaceDetector` | [`FaceDetector`](/docs/stages/detect/face-detector) | |
 | `Ner` | [`GlinerNer`](/docs/stages/understand/gliner-ner) | GLiNER, not BERT token classification |
+| `NerConsistency` | [`NerConsistency`](/docs/stages/understand/ner-consistency) | |
+| — | [`RegexNer`](/docs/stages/understand/regex-ner) | No Python equivalent: validated pattern entities |
+| — | [`NerMerger`](/docs/stages/understand/ner-merger) | No Python equivalent: merges NER readings onto one document |
+| `PdfEmbeddedImages` | [`PdfEmbeddedImages`](/docs/stages/read/pdf-embedded-images) | |
+| `PdfMergeImageText` | [`PdfMergeImageText`](/docs/stages/transform/pdf-merge-image-text) | Drops a covered box only when the texts agree (`matchText`) |
+| — | [`DocumentDelta`](/docs/stages/transform/document-delta) | No Python equivalent: the text a later reading added |
+| — | [`FitBoxesToInk`](/docs/stages/transform/fit-boxes-to-ink) | No Python equivalent: grows boxes to their ink |
 | `LLMOcr`, `LLMNer`, `LLMExtractor` | — | Any fetch-based OpenAI client works |
 | `TextSplitter`, `TextEmbeddings` | — | Not yet ported |
 | `df.show_image` | `showImage` | Returns an element, not IPython HTML |
@@ -107,6 +116,21 @@ as `keepFormatting` inserts several spaces or a newline, shifting every entity's
 boxes after the first wide gap. Here each box's text is located in the document
 text instead.
 
+**DBNet runs the picture's own shape.** ScaleDP pads every input to the full
+1280×1280 square. Here it is padded only to the next multiple of 32 by
+default, which is up to 4× faster on a small or wide picture. The model was
+trained on squares, so some boxes differ; `squareInput: true` restores
+ScaleDP's input exactly.
+
+**PaddleOCR reads one line per inference.** ScaleDP's `PaddleRecognizer`
+defaults to `recBatchSize: 6`. Here it is 1: see the padding bug below, and
+batching is not faster on WASM anyway.
+
+**A stage initialises lazily, inside the error contract.** `init()` runs just
+before the first row that reaches the stage, so a stage no row reaches never
+downloads its model. A failed `init()` is recorded on that stage's rows like
+any other failure, where ScaleDP raises.
+
 **Box colours are a stable hash.** `colorForGroup` hashes the group name, so a
 label is the same colour on every render. Python picks a random colour per run,
 which makes two renders of the same document impossible to compare.
@@ -122,6 +146,11 @@ them.
   enum and is always false.
 - `YoloOnnxTextDetector` multiplies by the letterbox scale where DBNet divides.
 - `Ner.aggregate_ner_results` builds `new_ner_results` and then discards it.
+- `PaddleRecognizer.read_crops` pads each batched crop with
+  `np.pad(..., mode="edge")`, repeating its last column (white paper on a
+  document). PaddleOCR's own preprocessing, which the models were trained on,
+  pads with zeros. On the sample scans a batch of 6 garbled 8 of 22 and 10 of
+  16 lines; zero padding garbled none. Python's default `recBatchSize` is 6.
 - `TesseractRecognizer` sets `b.conf` but filters on `b.score`, so
   `scoreThreshold` is applied to the detector's score rather than the
   recognizer's.

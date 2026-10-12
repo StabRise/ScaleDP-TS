@@ -40,7 +40,8 @@ const client = createScaleDpWorker({
     onStage: (name, ms) => console.log(`${name}: ${ms}ms`),
 })
 
-await client.configure({ cache: 'indexeddb', pdf: { workerSrc: '/pdf.worker.min.mjs' } })
+const env = await client.configure({ cache: 'indexeddb', pdf: { workerSrc: '/pdf.worker.min.mjs' } })
+// { numThreads, crossOriginIsolated, webgpu, hardwareConcurrency }
 
 const rows = await client.transform(
     [{ type: 'PdfToImage', options: { resolution: 300 } }, { type: 'PaddleTextRecognizer' }],
@@ -54,6 +55,33 @@ The stages are `StageDescriptor[]` — the same `{ type, options }` shape the
 [registry](/docs/api/registry) builds from and an exported pipeline is written
 in. A pipeline is the same data whether it runs here or on the main thread.
 
+`configure` resolves with what the worker actually runs with. Check
+`numThreads` and `crossOriginIsolated` there rather than assuming threads
+engaged.
+
+## Streaming a run
+
+`client.transform` is `Pipeline.transform` across the boundary. `client.run` is
+`Pipeline.run`: it streams by page and returns a handle you can iterate for
+events, await for rows, or cancel.
+
+```ts
+const run = client.run(stages, [{ content: bytes, path: 'invoice.pdf' }], {
+    pagesInFlight: 2,
+    enabled: { FaceDetector: settings.faces },
+    onRow: (update) => show(update),
+})
+cancelButton.onclick = () => run.cancel()
+
+for await (const event of run) console.log(event.type)
+const rows = await run.result   // rejects with an AbortError when cancelled
+```
+
+The run options are those of [`Pipeline.run`](/docs/concepts/streaming); the
+callbacks and the `signal` stay on the main thread and the rest crosses over.
+Row updates strip binary data by default here, since every byte of every
+message is copied.
+
 ## Two things do not cross `postMessage`
 
 `configure()` on the client cannot carry `auth` or `onProgress`: they are
@@ -62,15 +90,71 @@ functions. The client's type says so — `TransferableConfig` is
 
 - **Progress** comes back through the client's own `onProgress` option. The host
   reinstalls a forwarding callback inside the worker.
-- **Auth** has to be set in the worker entry: `configure({ auth })` there,
-  before `startScaleDpWorker()`.
+- **Auth** is relayed from the main thread. Pass it to the client, and the
+  worker asks for a token over its message channel whenever it needs one:
+
+  ```ts
+  createScaleDpWorker({ worker, auth: (repo) => fetchToken(repo) })
+  ```
+
+  The main thread, where the session and its cookies already live, stays the
+  only place that knows how to get a token, and the worker entry needs no copy
+  of that logic. See
+  [Managing models](/docs/guides/managing-models#tokens-for-private-models-from-the-main-thread).
 
 ## Requests are serialised
 
 An onnxruntime-web session runs one inference at a time; a concurrent call fails
 with `Session already started`. Both the client and the host queue requests, so
-several `transform` calls are safe — they simply run in order rather than
-overlapping.
+several `transform` or `run` calls are safe — they simply run in order rather
+than overlapping. A `cancel` bypasses the queue: it stops a running request at
+once, and a queued one before it starts. Pages *within* one run can overlap,
+with `pagesInFlight`, because there the scheduler knows which stages share a
+session.
+
+## Stages are cached, not pipelines
+
+The host keeps live stage instances between requests, keyed on a stage's
+`type`, `options` and `runtime`. Toggling a stage, editing its `when` or
+changing the stages around it reuses the instance and its session; editing one
+stage's options rebuilds that stage alone. Up to `maxCachedStages` (default 12)
+are kept, and the least recently used is disposed first:
+
+```ts
+startScaleDpWorker(self, { maxCachedStages: 6 })
+```
+
+## Several workers
+
+On a page that is not cross-origin isolated, onnxruntime-web runs one thread
+per worker, so more workers are the only CPU parallelism. A pool spreads pages
+over several, gathers them at barriers, and re-keys events so it looks like one
+worker:
+
+```ts
+import { createScaleDpWorkerPool } from '@stabrise/scaledp/worker'
+
+const pool = createScaleDpWorkerPool({
+    createWorker: () => new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    size: 4,
+    threadsPerWorker: 1,
+    auth: (repo) => fetchToken(repo),
+})
+const rows = await pool.run(stages, [{ content: bytes, path: 'invoice.pdf' }]).result
+```
+
+`numThreads` is fixed per realm at its first session, so a different thread
+count also means a different worker. Choosing sizes, and what they measured,
+is in [Performance and parallelism](/docs/guides/performance).
+
+## One download per origin
+
+The page and every worker share one IndexedDB cache, and each model file is
+fetched under a Web Lock named after its cache key. A worker that finds the
+lock taken waits, sees the download's progress relayed over a
+`BroadcastChannel`, and then reads the file from the cache, so four workers
+starting on the same model download it once. See
+[Managing models](/docs/guides/managing-models#one-download-per-origin).
 
 ## Isolation still applies
 
@@ -85,17 +169,28 @@ debugging in the console.
 
 ```ts
 type WorkerRequest =
-    | { type: 'configure'; requestId; config: Partial<ScaleDpConfig> }
-    | { type: 'transform'; requestId; stages: StageDescriptor[]; rows: Row[] }
-    | { type: 'dispose';   requestId }
+    | { type: 'configure';   requestId; config: Partial<ScaleDpConfig>; relayAuth? }
+    | { type: 'authToken';   requestId; token? }        // answers an `auth` message
+    | { type: 'transform';   requestId; stages: StageDescriptor[]; rows: Row[] }
+    | { type: 'run';         requestId; stages; rows; options? }
+    | { type: 'plan';        requestId; stages; rows; options? }
+    | { type: 'cancel';      requestId; target }       // never answered
+    | { type: 'putContent';  requestId; key; content }
+    | { type: 'dropContent'; requestId; key }
+    | { type: 'dispose';     requestId }
 
 type WorkerResponse =
     | { type: 'progress';   requestId; progress: ModelProgress }
     | { type: 'stage';      requestId; name; ms; rows }
+    | { type: 'event';      requestId; event: PipelineEvent }
+    | { type: 'row';        requestId; update: RowUpdate }
+    | { type: 'auth';       requestId; repo }           // the worker needs a token
     | { type: 'result';     requestId; rows: Row[] }
-    | { type: 'configured'; requestId }
+    | { type: 'planned';    requestId; pages; barriers }
+    | { type: 'configured'; requestId; environment? }
+    | { type: 'stored';     requestId }
     | { type: 'disposed';   requestId }
-    | { type: 'error';      requestId; message }
+    | { type: 'error';      requestId; message; aborted? }
 ```
 
 `client.dispose()` sends `dispose`, waits for `disposed`, then terminates the

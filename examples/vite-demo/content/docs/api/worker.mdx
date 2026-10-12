@@ -42,6 +42,7 @@ import { createScaleDpWorker, ScaleDpWorkerClient } from '@stabrise/scaledp/work
 
 interface ScaleDpWorkerOptions {
     worker: Worker                       // you construct it; only your bundler can resolve the URL
+    auth?: ScaleDpConfig['auth']         // token supplier, called on this thread; see Auth relay
     onProgress?: (progress: ModelProgress, requestId: number) => void
     onStage?: (name: string, ms: number, rows: number, requestId: number) => void
 }
@@ -51,6 +52,7 @@ class ScaleDpWorkerClient {
     configure(config: TransferableConfig): Promise<WorkerEnvironment | undefined>
     transform(stages: StageDescriptor[], rows: Row[]): Promise<Row[]>          // stage order
     run(stages: StageDescriptor[], rows: Row[], options?: WorkerRunOptions): RunHandle
+    plan(stages: StageDescriptor[], rows: Row[], options?: TransferableRunOptions): Promise<RunPlan>
     putContent(key: string, content: Uint8Array): Promise<void>
     dropContent(key: string): Promise<void>
     dispose(): Promise<void>              // sends dispose, then terminates
@@ -69,6 +71,11 @@ interface RunHandle extends AsyncIterable<PipelineEvent> {
 
 interface WorkerEnvironment {
     numThreads: number; crossOriginIsolated: boolean; webgpu: boolean; hardwareConcurrency: number
+}
+
+interface RunPlan {
+    pages: (number[] | null)[]   // per input row, the pages the first stage splits it into; null when it does not
+    barriers: number[]           // pipeline positions the run waits at, given this run's `enabled`
 }
 ```
 
@@ -99,8 +106,75 @@ type TransferableConfig = Omit<Partial<ScaleDpConfig>, 'auth' | 'onProgress'>
 
 Those two are excluded by type because functions do not survive `postMessage`.
 The host reinstalls `onProgress` to forward progress messages, and the client
-surfaces them through `options.onProgress`. Set `auth` with `configure({ auth })`
-inside the worker entry.
+surfaces them through `options.onProgress`. `auth` is relayed instead, below.
+
+`plan` lays a run out without running it — the page split and the barriers, by
+the same rules the scheduler uses. Only the first enabled stage's `planPages` is
+called; nothing is transformed and no model is loaded. It is what the pool
+coordinates with.
+
+## Auth relay
+
+```ts
+const client = createScaleDpWorker({
+    worker: new Worker(new URL('./scaledp.worker.ts', import.meta.url), { type: 'module' }),
+    auth: (repo) => session.huggingFaceToken(repo),   // your app's own token source
+})
+```
+
+With `auth` set, every `configure` the client sends carries `relayAuth: true`
+(the client sends one itself on construction, so this holds before your first
+request). The host then installs an `auth` that posts an `auth` message for each
+repo needing a token; the client calls your function on the main thread — where
+the session and its cookies live — and answers with `authToken`. A function that
+throws or returns nothing means an anonymous fetch. Token replies bypass the
+request queue, since the request waiting on them is already running.
+
+Without `auth` on the client nothing is relayed, and an `auth` set by
+`configure({ auth })` inside the worker entry still works. See
+[Managing models](/docs/guides/managing-models) and
+[Private models and auth](/docs/guides/private-models-and-auth).
+
+## Pool — several workers as one
+
+```ts
+import { createScaleDpWorkerPool, ScaleDpWorkerPool } from '@stabrise/scaledp/worker'
+
+interface ScaleDpWorkerPoolOptions {
+    createWorker: (index: number) => Worker   // called `size` times, up front
+    size?: number                             // default 2
+    threadsPerWorker?: number                 // forced as numThreads on every configure
+    pagesPerWorker?: number                   // pages handed to a worker at once, default 1
+    onProgress?: (progress: ModelProgress, worker: number) => void
+    auth?: ScaleDpConfig['auth']              // relayed to every worker
+}
+
+class ScaleDpWorkerPool {
+    constructor(options: ScaleDpWorkerPoolOptions)
+    readonly clients: ScaleDpWorkerClient[]
+    get size(): number
+    configure(config: TransferableConfig): Promise<(WorkerEnvironment | undefined)[]>
+    run(stages: StageDescriptor[], rows: Row[], options?: WorkerRunOptions): RunHandle
+    putContent(key: string, content: Uint8Array): Promise<void>   // to every worker
+    dropContent(key: string): Promise<void>
+    dispose(): Promise<void>
+}
+```
+
+`run` has the client's contract. The first worker `plan`s the run; pages then go
+to whichever worker is free, `pagesPerWorker` at a time. At a barrier every page
+comes back, the barrier stage runs once on the first worker over all of them,
+and the pages are spread out again. Events and row updates are re-keyed into the
+run's own unit keys, with one `run:start` and one `run:end`, so a caller cannot
+tell a pool from one worker except by the speed. `pagesInFlight` is per worker
+here (default `pagesPerWorker`).
+
+Every worker holds its own copy of every model it loads, so size the pool
+against memory as well as cores. On a page that is not cross-origin isolated the
+pool is the only CPU parallelism: leave `threadsPerWorker` at 1 there.
+`resolveParallelism` picks these numbers for the machine — see
+[Performance](/docs/guides/performance). Downloads are shared across the pool's
+workers (one per origin, see [Model cache](/docs/api/model-cache#ensuremodelfiles)).
 
 ## Protocol
 
@@ -108,9 +182,11 @@ Correlated by a numeric `requestId`.
 
 ```ts
 type WorkerRequest =
-    | { type: 'configure';   requestId: number; config: Partial<ScaleDpConfig> }
+    | { type: 'configure';   requestId: number; config: Partial<ScaleDpConfig>; relayAuth?: boolean }
+    | { type: 'authToken';   requestId: number; token?: string }      // answers `auth`, same requestId
     | { type: 'transform';   requestId: number; stages: StageDescriptor[]; rows: Row[] }
     | { type: 'run';         requestId: number; stages: StageDescriptor[]; rows: Row[]; options?: TransferableRunOptions }
+    | { type: 'plan';        requestId: number; stages: StageDescriptor[]; rows: Row[]; options?: TransferableRunOptions }
     | { type: 'cancel';      requestId: number; target: number }     // never answered
     | { type: 'putContent';  requestId: number; key: string; content: Uint8Array }
     | { type: 'dropContent'; requestId: number; key: string }
@@ -120,8 +196,10 @@ type WorkerResponse =
     | { type: 'progress';   requestId: number; progress: ModelProgress }
     | { type: 'stage';      requestId: number; name: string; ms: number; rows: number }
     | { type: 'event';      requestId: number; event: PipelineEvent }
+    | { type: 'auth';       requestId: number; repo: string }       // the worker needs a token
     | { type: 'row';        requestId: number; update: RowUpdate }
     | { type: 'result';     requestId: number; rows: Row[] }
+    | { type: 'planned';    requestId: number; pages: (number[] | null)[]; barriers: number[] }
     | { type: 'configured'; requestId: number; environment?: WorkerEnvironment }
     | { type: 'stored';     requestId: number }
     | { type: 'disposed';   requestId: number }

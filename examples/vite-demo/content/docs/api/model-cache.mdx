@@ -4,24 +4,74 @@ description: Ask what is cached, pre-warm a model, and free the space — before
 ---
 
 ```ts
-import { cacheKey, ensureModelFiles, evict, fileUrl, isCached } from '@stabrise/scaledp'
+import {
+    cachedFiles, cacheKey, downloadSize, ensureModelFiles, evict, fileUrl, isCached,
+    requestPersistentStorage,
+} from '@stabrise/scaledp'
 
 interface ModelFile { path: string; approxBytes?: number }
 interface ModelSpec { repo: string; revision?: string; files: ModelFile[] }
 type ModelFiles = Record<string, ArrayBuffer>   // keyed by repo-relative path
+
+interface ModelRequirement { label: string; spec: ModelSpec }   // what Stage.requiredModels() returns
+interface CachedFile { key: string; bytes: number }              // key as cacheKey()
+type ProgressListener = (progress: ModelProgress) => void
 ```
 
 | | |
 | --- | --- |
 | `isCached(spec)` | `Promise<boolean>` — every file present |
-| `ensureModelFiles(spec, signal?)` | Fetch what is missing, return all of them |
+| `ensureModelFiles(spec, options?)` | Fetch what is missing, return all of them. See below. |
+| `downloadSize(spec)` | `Promise<number>` — bytes from `approxBytes`, else a `HEAD`'s `content-length`; `0` when neither |
+| `cachedFiles()` | `Promise<CachedFile[]>` — everything in the cache, with sizes; `[]` when the cache is unavailable |
 | `evict(spec)` | Remove the spec's files |
 | `cacheKey(spec, path)` | `` `${repo}@${revision ?? 'main'}/${path}` `` |
 | `fileUrl(spec, path)` | The URL a file would be fetched from |
+| `requestPersistentStorage()` | `Promise<boolean>` — ask the browser not to evict the origin's storage |
+
+For whole pipelines rather than single specs — which models, cached or not,
+prefetch, delete — use `pipelineModels`, `modelStatus`, `prefetchModels` and
+`evictModels` from the [registry](/docs/api/registry#models), and see
+[Managing models](/docs/guides/managing-models).
+
+## `ensureModelFiles`
+
+```ts
+ensureModelFiles(spec: ModelSpec, options?: AbortSignal | EnsureModelOptions): Promise<ModelFiles>
+
+interface EnsureModelOptions {
+    signal?: AbortSignal            // stop waiting; a shared download is not cancelled
+    onProgress?: ProgressListener   // this call only, on top of configure({ onProgress })
+    building?: boolean              // caller builds a session next: end on 'initializing'
+}
+```
+
+A bare `AbortSignal` is still accepted as the second argument.
+
+**Concurrent calls share one download.** Two calls for the same files — two
+stages on one repo, or a prefetch still running when a run starts — join the
+load already in flight, and each hears its progress. Aborting one caller's
+`signal` only stops that caller waiting; the download finishes into the cache
+for the others.
+
+**One download per origin.** Each file is fetched under a Web Lock named after
+its cache key. The page and every worker share IndexedDB, so a realm that finds
+the lock taken waits, then reads the file from the cache instead of fetching it
+again. While it waits it still reports progress: the downloading realm
+broadcasts its running total on a `BroadcastChannel`. Without Web Locks, or with
+`cache: 'none'`, each realm simply downloads.
+
+**How it ends.** The last event is `ready`, after a download and on a cache hit
+alike. With `building: true` it is `initializing` instead, and the caller reports
+`ready` itself once its session exists (`reportReady`). Engine stages pass
+`building: true`, so a model is never shown as ready while its ONNX session is
+still being built.
 
 Storage is IndexedDB — database name from `config.cacheDbName`, object store
 `files` — and writes resolve on transaction commit rather than on request, so a
-`ensureModelFiles` that resolves has genuinely persisted.
+`ensureModelFiles` that resolves has genuinely persisted. Any IndexedDB failure
+(quota, private window, a blocked upgrade) is treated as a cache miss and warned
+about once: the model still loads, it is just downloaded again next time.
 
 `fileUrl` has three behaviours: an absolute path passes through untouched; the
 Hugging Face host produces `${host}/${repo}/resolve/${revision}/${path}`; any
@@ -54,17 +104,73 @@ import { isPresetCached, loadPreset, removePreset } from '@stabrise/scaledp/ocr'
 
 await isPresetCached('v6-small')
 await loadPreset('v6-small')      // pre-warm; the first OCR is then instant
+await loadPreset('v6-small', { onProgress, executionProviders: ['webgpu', 'wasm'] })
 await removePreset('v6-medium')
 ```
 
 ## Progress
 
-`ensureModelFiles` reports through `configure({ onProgress })`, aggregated across
-every missing file. A declared `approxBytes` is used as-is; otherwise a `HEAD`
-probe supplies `content-length`, and `total` stays `0` if neither can.
+`ensureModelFiles` reports through `configure({ onProgress })` and the call's own
+`onProgress`, aggregated across every missing file. A declared `approxBytes` is
+used as-is; otherwise a `HEAD` probe supplies `content-length`, and `total` stays
+`0` if neither can. Phases are listed under
+[`ModelProgress`](/docs/api/configure#modelprogress).
 
 Auth headers come from `config.auth(repo)` — see
 [Private models and auth](/docs/guides/private-models-and-auth).
+
+## Helpers for engine stages
+
+The load-once, progress-for-every-waiter pieces the built-in engine stages use,
+exported for custom stages that load their own models.
+
+```ts
+import { LazyLoad, ProgressHub, raceAbort, reportProgress, reportReady } from '@stabrise/scaledp'
+
+class LazyLoad<T> {
+    constructor(repo: () => string)              // names the model in the `ready` event
+    get current(): T | undefined
+    get(load: (emit: ProgressListener) => Promise<T>, listener?: ProgressListener): Promise<T>
+    reset(): T | undefined                       // forget the value; returns what was held
+}
+
+class ProgressHub {
+    emitter(key: string): ProgressListener
+    follow<T>(key: string, promise: Promise<T>, listener?: ProgressListener, repo?: string): Promise<T>
+}
+
+reportProgress(progress: ModelProgress, local?: ProgressListener): void   // global onProgress + local
+reportReady(repo: string, local?: ProgressListener): void                 // phase 'ready'
+raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T>
+```
+
+`LazyLoad` memoises the load, forgets a failure so the next call retries, and
+reports `ready` once the load resolves — including to a listener that arrives
+after it finished, which is how a second run over a reused stage still shows
+the model's state. `ProgressHub` fans one load's progress out to every caller
+waiting on it. `raceAbort` stops *waiting* on a promise when `signal` aborts,
+without cancelling the work behind it.
+
+The shape every built-in engine stage follows (`YoloOnnxDetector`, trimmed):
+
+```ts
+private readonly session = new LazyLoad<InferenceSession>(() => this.params.model)
+
+override async init(ctx?: InitContext) {
+    await this.session.get(async (emit) => {
+        const files = await ensureModelFiles(spec, { onProgress: emit, building: true })
+        return createSession(files[path], { executionProviders: this.runtime.executionProviders })
+    }, ctx?.onProgress)          // LazyLoad reports `ready` once this resolves
+}
+
+override async requiredModels() {
+    return [{ label: this.params.model, spec }]
+}
+
+override async dispose() {
+    await this.session.reset()?.release()
+}
+```
 
 ## What this cache does not hold
 

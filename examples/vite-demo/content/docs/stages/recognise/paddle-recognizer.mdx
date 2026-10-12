@@ -118,19 +118,29 @@ honour.
 </Callout>
 
 <Callout title="Why the crops are stacked">
-PaddleOCR batches several crops into one inference, but only within a single
-call, and it cuts those crops out of one canvas. So the crops are stacked onto a
-sheet canvas and read together: a forty-line page costs a handful of inferences
-rather than forty. The blank width beside a narrow crop is never sampled,
-because each crop is re-cut from its own slot.
+PaddleOCR reads crops out of the one canvas it is handed per call. So the crops
+are stacked onto a sheet canvas and read in one call, rather than one call (and
+one main-thread yield) per line. The blank width beside a narrow crop is never
+sampled, because each crop is re-cut from its own slot.
 
-This is what makes word level affordable. Cutting a page into words produces
-several times as many crops, but they are batched the same way, so the extra
-cost is far below one inference per word.
-
-`recBatchSize` controls how many crops share an inference. Lower it to `1` on a
-memory-constrained device.
+Word level costs nothing extra here: lines are read whole and split afterwards,
+so a word box never needs a crop or an inference of its own.
 </Callout>
+
+<Callout type="warn" title="One line per inference">
+`recBatchSize` is how many lines share one inference, and it defaults to `1`.
+A batch pads every line to the widest in it, and ppu pads by repeating the
+line's last column, which on a document is white paper. PP-OCR's models were
+trained on PaddleOCR's zero padding (mid-grey once normalised), and they misread
+the white: on the sample scans a batch of 6 garbled 8 of 22 and 10 of 16 lines,
+inventing characters or dropping the line. Batching is not faster on WASM
+either, since the padding is computed like any other pixel. Leave it at 1;
+the measurements are on [Benchmarks](/docs/benchmarks#text-recognition).
+</Callout>
+
+The recognition model runs on WebGPU as well as WASM: the library fetches the
+`.onnx` twin of ppu's `.ort` models, which WebGPU can load. See
+[Execution providers](/docs/concepts/execution-providers).
 
 ## Straightening
 

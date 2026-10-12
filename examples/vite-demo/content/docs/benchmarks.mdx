@@ -77,8 +77,8 @@ changes the picture, and WebGPU has not been benchmarked yet.
 
 ## Text detection by provider
 
-`DbnetOnnxDetector` on a 200 DPI page (1700×2200, padded to the model's
-1280×1280 input). Each configuration ran in its own worker, cross-origin
+`DbnetOnnxDetector` on a 200 DPI page (1700×2200), measured with
+`squareInput: true`, so every call runs ScaleDP's full 1280×1280 input. Each configuration ran in its own worker, cross-origin
 isolated, in a visible Chromium window so WebGPU got the real GPU. Apple M5
 Pro, 2026-10-09:
 
