@@ -156,12 +156,15 @@ export {
     rebaseEntities,
 } from './stages/ner-merger.js'
 export type {
+    ChronoLibrary,
     FindPatternOptions,
     LibraryMatch,
     NormalisedText,
     PatternEngines,
     PatternLabel,
+    PatternLibraries,
     PatternMatch,
+    PhoneNumberLibrary,
     RegexNerParams,
 } from './stages/regex-ner.js'
 export {
@@ -175,7 +178,9 @@ export {
     normaliseOcrText,
     PATTERN_DETECTORS,
     PATTERN_LABELS,
+    patternEnginesFrom,
     peselValid,
+    providePatternLibraries,
     REGEX_NER_DEFAULTS,
     RegexNer,
     ssnValid,

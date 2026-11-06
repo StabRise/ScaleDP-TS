@@ -33,7 +33,10 @@ export default defineConfig({
                     include: ['test/browser/**/*.test.ts'],
                     browser: {
                         enabled: true,
-                        provider: playwright(),
+                        // WebGPU on, so tests that need it (ort-serialised-runs)
+                        // run rather than skip. Headless gets SwiftShader, a
+                        // software adapter: fine for correctness, not timing.
+                        provider: playwright({ launchOptions: { args: ['--enable-unsafe-webgpu'] } }),
                         headless: true,
                         instances: [{ browser: 'chromium' }],
                     },

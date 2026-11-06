@@ -50,10 +50,52 @@ export async function loadOrt(): Promise<OrtModule> {
         // this value has no effect -- not an error, just a slower run.
         ort.env.wasm.numThreads = resolveNumThreads()
         ort.env.logLevel = 'error'
+        serialiseRuns(ort)
         return ort
     })()
 
     return modulePromise
+}
+
+/** Marks a prototype already wrapped, shared by every scaledp copy in the realm. */
+const SERIALISED = Symbol.for('scaledp.ort.serialisedRun')
+
+type RunFn = (...args: unknown[]) => Promise<unknown>
+
+/**
+ * Let one `InferenceSession.run()` at a time into this onnxruntime instance.
+ *
+ * The WebGPU (JSEP) build keeps a single "run in progress" slot per wasm
+ * instance, not per session. A run that starts while another is in flight
+ * throws "Session already started", and its cleanup clears the slot -- so the
+ * run it collided with then fails as well, with "Session mismatch". The
+ * scheduler's per-session resources cannot prevent this: DBNet on one page
+ * and PaddleOCR's line-orientation model on another hold different sessions
+ * and still collide.
+ *
+ * Patched on the prototype rather than in `createSession` so sessions built
+ * elsewhere on the same module -- ppu-paddle-ocr's `PaddleOcrService` makes
+ * its own -- queue too. Applied on every provider: the JSEP build guards WASM
+ * sessions the same way, and plain WASM runs block the thread regardless, so
+ * the queue costs nothing there. Only inference waits; pages still overlap
+ * rendering, pre- and post-processing.
+ */
+export function serialiseRuns(ort: Pick<OrtModule, 'InferenceSession'>): void {
+    const proto = (ort.InferenceSession as unknown as { prototype?: Record<PropertyKey, unknown> })?.prototype
+    if (!proto || typeof proto.run !== 'function' || proto[SERIALISED]) return
+
+    const run = proto.run as RunFn
+    let tail: Promise<unknown> = Promise.resolve()
+    proto.run = function (this: unknown, ...args: unknown[]) {
+        const result = tail.then(() => run.apply(this, args))
+        // A failed run must not block the ones queued behind it.
+        tail = result.then(
+            () => undefined,
+            () => undefined
+        )
+        return result
+    }
+    proto[SERIALISED] = true
 }
 
 /** Reset the cached module. Tests only. */

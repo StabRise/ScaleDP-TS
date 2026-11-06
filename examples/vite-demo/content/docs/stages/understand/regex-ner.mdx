@@ -127,6 +127,23 @@ npm i libphonenumber-js chrono-node
 Without them the built-in patterns still run. Set `useLibraries: false` to get
 the same results whatever is installed.
 
+**In a bundled app, pass them in.** The stage imports them by a name bundlers
+are told not to resolve, so an app that never installs them still builds. That
+also means a bundle cannot find them on its own: import them in your code, where
+your bundler includes them, and hand them over before the stage first runs —
+in the worker entry when the stage runs in a worker:
+
+```ts
+import { providePatternLibraries } from '@stabrise/scaledp'
+
+providePatternLibraries({
+    libphonenumber: await import('libphonenumber-js'),
+    chrono: await import('chrono-node'),
+})
+```
+
+Node, and ESM served unbundled, find installed libraries without this.
+
 Phone numbers written without a country code, such as `600 123 456`, need a
 `defaultCountry` before libphonenumber-js will read them. The built-in pattern
 finds them either way, at a lower score.

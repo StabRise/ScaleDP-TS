@@ -3,7 +3,7 @@
  * hand-built strings -- including the OCR misreads the patterns exist to
  * survive.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BASE_STAGE_DEFAULTS, resolveParams } from '../../src/core/params.js'
 import { Pipeline, type Row, Stage } from '../../src/core/pipeline.js'
 import { createBox } from '../../src/schemas/box.js'
@@ -20,6 +20,7 @@ import {
     type PatternEngines,
     type PatternLabel,
     peselValid,
+    providePatternLibraries,
     RegexNer,
     ssnValid,
 } from '../../src/stages/regex-ner.js'
@@ -309,6 +310,22 @@ describe('libraries', () => {
         // A card expiry, not 27 April.
         const engines = await loadPatternEngines()
         expect(findPatternMatches('exp 04/27', { engines })).toEqual([])
+    })
+
+    it('uses libraries the app provides, and runs without ones it withholds', async () => {
+        // A bundled app cannot rely on the lazy import; it passes the modules.
+        const findPhoneNumbersInText = vi.fn(() => [])
+        providePatternLibraries({ libphonenumber: { findPhoneNumbersInText }, chrono: null })
+        try {
+            const engines = await loadPatternEngines()
+            findPatternMatches('call +44 20 7946 0958', { engines })
+            expect(findPhoneNumbersInText).toHaveBeenCalled()
+            expect(engines.findDates).toBeUndefined()
+        } finally {
+            providePatternLibraries({ libphonenumber: undefined, chrono: undefined })
+        }
+        // Back to looking them up.
+        expect((await loadPatternEngines()).findDates).toBeDefined()
     })
 
     it('reads national numbers with a default country', async () => {

@@ -939,10 +939,120 @@ interface ChronoParser {
     }[]
 }
 
+/**
+ * The slice of libphonenumber-js's API used here. Structural, so these types
+ * do not need the package installed to type-check.
+ */
+export interface PhoneNumberLibrary {
+    findPhoneNumbersInText(
+        text: string,
+        options?: { defaultCountry?: never }
+    ): readonly { startsAt: number; endsAt: number }[]
+}
+
+/** The slice of chrono-node's module used here: `strict`, and its locales. */
+export interface ChronoLibrary {
+    strict: unknown
+}
+
+/** The modules `providePatternLibraries` takes, as the packages export them. */
+export interface PatternLibraries {
+    /** `await import('libphonenumber-js')`, or null to run without it. */
+    libphonenumber?: PhoneNumberLibrary | null
+    /** `await import('chrono-node')`, or null to run without it. */
+    chrono?: ChronoLibrary | null
+}
+
+let provided: PatternLibraries | null = null
 let enginesPromise: Promise<PatternEngines> | null = null
 
 /**
- * Import whichever of libphonenumber-js and chrono-node is installed.
+ * Hand RegexNer the optional libraries yourself.
+ *
+ * This is the way to use them in a bundled app. `loadPatternEngines` imports
+ * them by a name bundlers are told not to resolve — otherwise every app that
+ * bundles this library would fail to build without packages it may never use
+ * — so in a bundle that import finds nothing and the built-in patterns run
+ * alone. Import them in your own code instead, where your bundler includes
+ * them, and pass them here:
+ *
+ *   providePatternLibraries({
+ *       libphonenumber: await import('libphonenumber-js'),
+ *       chrono: await import('chrono-node'),
+ *   })
+ *
+ * Per realm, like `configure()`: call it in the worker entry for stages that
+ * run in a worker. Either may be left out; that one is then looked up as
+ * before. Applies to stages that have not loaded their libraries yet.
+ */
+export function providePatternLibraries(libraries: PatternLibraries): void {
+    provided = { ...provided, ...libraries }
+    enginesPromise = null
+}
+
+/**
+ * Import an optional peer, or null when it is not there.
+ *
+ * The specifier is a variable and carries every bundler's ignore comment, so
+ * webpack, Turbopack and Vite leave it alone instead of failing the build
+ * when the package is not installed. Node and unbundled ESM resolve it
+ * normally; in a bundle it resolves to nothing — see `providePatternLibraries`.
+ */
+async function importOptional<T>(name: string): Promise<T | null> {
+    try {
+        return (await import(
+            /* webpackIgnore: true */ /* turbopackIgnore: true */ /* @vite-ignore */ name
+        )) as T
+    } catch {
+        return null
+    }
+}
+
+/** The libraries, adapted to plain functions over a string. */
+export function patternEnginesFrom(libraries: PatternLibraries): PatternEngines {
+    const phone = libraries.libphonenumber ?? null
+    const chrono = libraries.chrono ?? null
+    const engines: PatternEngines = {}
+
+    if (phone) {
+        engines.findPhones = (text, defaultCountry) =>
+            phone
+                .findPhoneNumbersInText(
+                    text,
+                    defaultCountry ? { defaultCountry: defaultCountry as never } : {}
+                )
+                .map((m) => ({
+                    start: m.startsAt,
+                    end: m.endsAt,
+                    // Found numbers are already valid for their country; one
+                    // carrying its own country code is beyond doubt.
+                    score: text[m.startsAt] === '+' ? 0.95 : 0.85,
+                }))
+    }
+
+    if (chrono) {
+        const locales = chrono as unknown as Record<string, { strict?: ChronoParser } | undefined>
+        engines.findDates = (text, wanted) =>
+            wanted.flatMap((locale) => {
+                // Strict mode: formal dates only, never "today" or "next Friday".
+                const parser = locale === 'en' ? (chrono.strict as ChronoParser) : locales[locale]?.strict
+                if (!parser) return []
+                return (
+                    parser
+                        .parse(text)
+                        // A day and month without a year -- `04/27` -- is as often a
+                        // card expiry or a reference as a date.
+                        .filter((r) => (['day', 'month', 'year'] as const).every((c) => r.start.isCertain(c)))
+                        .map((r) => ({ start: r.index, end: r.index + r.text.length, score: 0.85 }))
+                )
+            })
+    }
+    return engines
+}
+
+/**
+ * Whichever of libphonenumber-js and chrono-node is available: provided with
+ * `providePatternLibraries`, or else installed and importable.
  *
  * Neither is required, so a missing one is not an error: its detector falls
  * back to the built-in pattern. The promise is cached, and cleared if loading
@@ -951,48 +1061,13 @@ let enginesPromise: Promise<PatternEngines> | null = null
 export function loadPatternEngines(): Promise<PatternEngines> {
     if (enginesPromise) return enginesPromise
     enginesPromise = (async () => {
-        const [phone, chrono] = await Promise.all([
-            import('libphonenumber-js').catch(() => null),
-            import('chrono-node').catch(() => null),
+        const [libphonenumber, chrono] = await Promise.all([
+            provided?.libphonenumber !== undefined
+                ? provided.libphonenumber
+                : importOptional<PhoneNumberLibrary>('libphonenumber-js'),
+            provided?.chrono !== undefined ? provided.chrono : importOptional<ChronoLibrary>('chrono-node'),
         ])
-        const engines: PatternEngines = {}
-
-        if (phone) {
-            engines.findPhones = (text, defaultCountry) =>
-                phone
-                    .findPhoneNumbersInText(
-                        text,
-                        defaultCountry ? { defaultCountry: defaultCountry as never } : {}
-                    )
-                    .map((m) => ({
-                        start: m.startsAt,
-                        end: m.endsAt,
-                        // Found numbers are already valid for their country; one
-                        // carrying its own country code is beyond doubt.
-                        score: text[m.startsAt] === '+' ? 0.95 : 0.85,
-                    }))
-        }
-
-        if (chrono) {
-            const locales = chrono as unknown as Record<string, { strict?: ChronoParser } | undefined>
-            engines.findDates = (text, wanted) =>
-                wanted.flatMap((locale) => {
-                    // Strict mode: formal dates only, never "today" or "next Friday".
-                    const parser = locale === 'en' ? (chrono.strict as ChronoParser) : locales[locale]?.strict
-                    if (!parser) return []
-                    return (
-                        parser
-                            .parse(text)
-                            // A day and month without a year -- `04/27` -- is as often a
-                            // card expiry or a reference as a date.
-                            .filter((r) =>
-                                (['day', 'month', 'year'] as const).every((c) => r.start.isCertain(c))
-                            )
-                            .map((r) => ({ start: r.index, end: r.index + r.text.length, score: 0.85 }))
-                    )
-                })
-        }
-        return engines
+        return patternEnginesFrom({ libphonenumber, chrono })
     })()
     enginesPromise.catch(() => {
         enginesPromise = null
