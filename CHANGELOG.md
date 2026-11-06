@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.1] - 06.11.2026
+
+### 🐛 Fixes
+
+- **Apps that bundle the library build without `libphonenumber-js` and
+  `chrono-node`.** `RegexNer` imported its optional peers by name, and webpack
+  and Turbopack resolve such an import at build time, so any app importing
+  `@stabrise/scaledp` failed to build — "Module not found: Can't resolve
+  'chrono-node'" — unless it installed both, whether or not it ever ran
+  `RegexNer`. The names are now hidden from bundlers. Node and unbundled ESM
+  still load installed libraries on their own; a bundled app that wants them
+  passes the modules to the new `providePatternLibraries()` (per realm, so in
+  the worker entry for a worker). `patternEnginesFrom()` adapts them for
+  callers that pass `engines` directly.
+- **OCR no longer fails with "Session mismatch" on WebGPU.** onnxruntime-web's
+  WebGPU build allows one inference at a time per runtime, across every
+  session, and with WebGPU the auto parallelism keeps three pages in flight.
+  DBNet on one page and PaddleOCR's line-orientation model on another then ran
+  at once: one failed with "Session already started", the other with "Session
+  mismatch", and some runs hung. The per-session resource locks could not see
+  this, since the two hold different sessions. `loadOrt()` now queues
+  `InferenceSession.run()` for the whole module, which covers sessions
+  ppu-paddle-ocr creates itself too. Pages still overlap everything except
+  inference.
+
 ## [0.6.0] - 12.10.2026
 
 One pipeline per document: streamed page by page, with stages switched per run,
