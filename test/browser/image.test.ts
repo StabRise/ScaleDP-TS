@@ -160,6 +160,37 @@ describe('cropBox', () => {
         expect(crop.height).toBe(30)
     })
 
+    it('crops an upright box padded past the edge of an ImageBitmap', async () => {
+        // Text flush with a picture's corner: padding moves the crop origin to
+        // (-5, -5). WebKit draws nothing for an ImageBitmap source rect that
+        // leaves the bitmap, so on iOS the whole line came out blank.
+        const edge = paint(200, 100, '#ffffff', { x: 0, y: 0, w: 40, h: 30, color: '#ff0000' })
+        const bitmap = await createImageBitmap(edge)
+        const crop = cropBox(bitmap, createBox({ x: 0, y: 0, width: 40, height: 30 }), { padding: 5 })
+        bitmap.close()
+        expect(crop.width).toBe(45)
+        expect(crop.height).toBe(35)
+        const data = toImageData(crop)
+        // Crop (5, 5) is source (0, 0) and crop (43, 33) is source (38, 28):
+        // both inside the red patch, so the content is in place.
+        expect(pixelAt(data, 5, 5)).toEqual([255, 0, 0])
+        expect(pixelAt(data, 43, 33)).toEqual([255, 0, 0])
+        // Crop (2, 2) is source (-3, -3), outside the image: left transparent.
+        expect(data.data[(2 * data.width + 2) * 4 + 3]).toBe(0)
+    })
+
+    it('crops an upright box running past the far edge of an ImageBitmap', async () => {
+        const edge = paint(200, 100, '#ffffff', { x: 160, y: 70, w: 40, h: 30, color: '#ff0000' })
+        const bitmap = await createImageBitmap(edge)
+        const crop = cropBox(bitmap, createBox({ x: 160, y: 70, width: 50, height: 40 }))
+        bitmap.close()
+        const data = toImageData(crop)
+        expect(pixelAt(data, 0, 0)).toEqual([255, 0, 0])
+        expect(pixelAt(data, 39, 29)).toEqual([255, 0, 0])
+        // Past the bitmap's right edge: left transparent.
+        expect(data.data[(5 * data.width + 45) * 4 + 3]).toBe(0)
+    })
+
     it('never returns a zero-sized canvas', () => {
         const crop = cropBox(source, createBox({ x: 0, y: 0, width: 0, height: 0 }))
         expect(crop.width).toBeGreaterThanOrEqual(1)

@@ -208,7 +208,29 @@ export function cropBox(
     const ey: Point = [x2 - ox, y2 - oy]
 
     if (ex[1] === 0 && ey[0] === 0 && ex[0] === 1 && ey[1] === 1) {
-        ctx.drawImage(source, scaled.x, scaled.y, width, height, 0, 0, width, height)
+        // Clip the source rect to the source ourselves. Padding routinely
+        // pushes a crop past the edge of a picture, and WebKit draws nothing
+        // at all for an ImageBitmap whose source rect leaves its bounds -- so
+        // on iOS every upright line touching a picture's edge came out blank
+        // and was never read. Clipped, the part past the edge stays
+        // transparent, which is what Chromium produced all along.
+        const left = Math.max(scaled.x, 0)
+        const top = Math.max(scaled.y, 0)
+        const right = Math.min(scaled.x + width, source.width)
+        const bottom = Math.min(scaled.y + height, source.height)
+        if (right > left && bottom > top) {
+            ctx.drawImage(
+                source,
+                left,
+                top,
+                right - left,
+                bottom - top,
+                left - scaled.x,
+                top - scaled.y,
+                right - left,
+                bottom - top
+            )
+        }
         return canvas
     }
 
