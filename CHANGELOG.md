@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.2] - 11.11.2026
+
+### 🐛 Fixes
+
+- **OCR on iOS and Safari now reads text at the edge of a picture.** Padding
+  often pushes a line's crop past the edge of the image, and WebKit draws
+  nothing at all when part of an `ImageBitmap` source rect falls outside the
+  bitmap. So `cropBox()` returned a blank crop for every upright line touching
+  an edge, and that line was never recognised. The source rect is now clipped
+  to the image before drawing. The part of the crop past the edge stays
+  transparent, which matches what Chromium already produced.
+
 ## [0.6.1] - 06.11.2026
 
 ### 🐛 Fixes
